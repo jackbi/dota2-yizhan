@@ -1,0 +1,44 @@
+---
+import type { Patch } from '../data/types';
+
+interface Props {
+	patch: Patch;
+}
+
+const { patch } = Astro.props;
+
+const KIND: Record<Patch['kind'], { label: string; cls: string }> = {
+	major: { label: '大版本', cls: 'bg-dota/15 text-dota-light' },
+	balance: { label: '平衡调整', cls: 'bg-gold/15 text-gold' },
+	minor: { label: '微调', cls: 'bg-zinc-600/15 text-zinc-400' },
+};
+const kind = KIND[patch.kind];
+---
+
+<article class="group relative overflow-hidden rounded-2xl border border-line bg-surface p-6 transition hover:border-dota/50 hover:bg-surface-2">
+	<div class="flex items-start justify-between gap-4">
+		<div>
+			<div class="flex items-center gap-2">
+				<span class="font-display text-3xl text-gold">{patch.version}</span>
+				<span class:list={['rounded-md px-2 py-1 text-xs font-semibold', kind.cls]}>{kind.label}</span>
+			</div>
+			<p class="mt-1 text-sm text-muted">{patch.title} · {patch.date}</p>
+		</div>
+		<svg class="mt-1 shrink-0 text-faint transition group-hover:text-gold" width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+			<path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+		</svg>
+	</div>
+
+	<p class="mt-4 text-sm leading-relaxed text-muted">{patch.summary}</p>
+
+	<ul class="mt-4 space-y-2">
+		{patch.highlights.map((h) => (
+			<li class="flex items-start gap-2 text-sm text-cream/90">
+				<svg class="mt-1 shrink-0 text-dota-light" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+				<span>{h}</span>
+			</li>
+		))}
+	</ul>
+</article>

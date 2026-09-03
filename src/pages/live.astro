@@ -1,0 +1,19 @@
+---
+import Layout from '../layouts/Layout.astro';
+import LiveGrid from '../components/LiveGrid.astro';
+import { STREAMERS, NAV } from '../data/site';
+---
+
+<Layout title="分屏直播 · DOTA2 驿站" description="网页端分屏直播，聚合观看多位 OB 主播。">
+	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">DOTA2 驿站 · 分屏直播</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">聚合分屏，一屏多路</h1>
+			<p class="mt-3 max-w-2xl text-muted">
+				选择想要观看的主播，切换分屏数量，在一个页面随时掌握多路直播间动态。点击任意画面可放大到该直播间。
+			</p>
+		</div>
+
+		<LiveGrid streamers={STREAMERS} />
+	</section>
+</Layout>

@@ -1,0 +1,36 @@
+---
+import type { Streamer } from '../data/types';
+import { PLATFORM_META } from '../data/site';
+
+interface Props {
+	streamer: Streamer;
+}
+
+const { streamer: s } = Astro.props;
+const meta = PLATFORM_META[s.platform];
+---
+
+<a
+	href="/live"
+	class="group flex items-center gap-3 rounded-xl border border-line bg-ink/60 p-3 transition hover:border-dota/50"
+>
+	<div class="relative h-16 w-28 shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-dota to-dota-deep">
+		<span class="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-ink/70 text-white">
+			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M8 5v14l11-7z" fill="currentColor" />
+			</svg>
+		</span>
+		<span class="absolute bottom-1.5 left-2 text-xs font-semibold text-white">{s.name}</span>
+		<span class="absolute right-1.5 top-1.5 rounded bg-black/50 px-1.5 py-0.5 text-[10px] font-bold" style={`color:${meta.color}`}>
+			{meta.short}
+		</span>
+	</div>
+	<div class="min-w-0 flex-1">
+		<p class="truncate font-medium text-cream group-hover:text-dota-light">{s.name}</p>
+		<p class="truncate text-xs text-muted">{s.tag}</p>
+		<p class="mt-1 flex items-center gap-1 text-xs text-[#4ade80]">
+			<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-[#22c55e]"></span>
+			{(s.viewers / 1000).toFixed(1)}k 人观看
+		</p>
+	</div>
+</a>

@@ -1,0 +1,32 @@
+---
+interface Props {
+	eyebrow?: string;
+	title: string;
+	subtitle?: string;
+	href?: string;
+	linkText?: string;
+}
+
+const { eyebrow, title, subtitle, href, linkText = '查看全部' } = Astro.props;
+---
+
+<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+	<div>
+		{eyebrow && (
+			<p class="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">
+				<span class="h-px w-6 bg-dota-light" aria-hidden="true"></span>
+				{eyebrow}
+			</p>
+		)}
+		<h2 class="font-display text-2xl sm:text-3xl">{title}</h2>
+		{subtitle && <p class="mt-1 max-w-2xl text-sm text-muted">{subtitle}</p>}
+	</div>
+	{href && (
+		<a href={href} class="group inline-flex items-center gap-1.5 rounded-md border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:text-dota-light">
+			{linkText}
+			<svg class="transition group-hover:translate-x-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+		</a>
+	)}
+</div>

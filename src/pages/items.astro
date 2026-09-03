@@ -1,0 +1,55 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ItemCard from '../components/ItemCard.astro';
+import { ITEMS, ITEM_TYPES } from '../data/items';
+---
+
+<Layout title="装备资料 · DOTA2 驿站" description="DOTA2 装备一览，按定位与用途筛选。">
+	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">装备图鉴</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">装备资料库</h1>
+			<p class="mt-3 max-w-2xl text-muted">按用途筛选核心、辅助、法师与功能性装备，价格与合成一目了然。</p>
+		</div>
+
+		<div id="item-filters" class="mb-6 flex flex-wrap items-center gap-2">
+			<button type="button" data-type="all" class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="true">全部</button>
+			{ITEM_TYPES.map((t) => (
+				<button type="button" data-type={t.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="false">{t.label}</button>
+			))}
+			<span id="item-count" class="ml-auto text-sm text-muted">{ITEMS.length} 件装备</span>
+		</div>
+
+		<div id="item-grid" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			{ITEMS.map((item) => (
+				<div data-type={item.type}>
+					<ItemCard item={item} />
+				</div>
+			))}
+		</div>
+	</section>
+</Layout>
+
+<script>
+	(() => {
+		const filters = document.getElementById('item-filters');
+		const grid = document.getElementById('item-grid');
+		const count = document.getElementById('item-count');
+		if (!filters || !grid || !count) return;
+		const cards = Array.from(grid.querySelectorAll<HTMLElement>('[data-type]'));
+		filters.querySelectorAll<HTMLButtonElement>('button[data-type]').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const type = btn.dataset.type!;
+				filters.querySelectorAll('button[data-type]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				let shown = 0;
+				cards.forEach((c) => {
+					const show = type === 'all' || c.dataset.type === type;
+					c.hidden = !show;
+					if (show) shown++;
+				});
+				count.textContent = `${shown} 件装备`;
+			});
+		});
+	})();
+</script>

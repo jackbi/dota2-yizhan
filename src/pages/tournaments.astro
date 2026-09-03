@@ -1,0 +1,59 @@
+---
+import Layout from '../layouts/Layout.astro';
+import TournamentCard from '../components/TournamentCard.astro';
+import { TOURNAMENTS } from '../data/tournaments';
+
+const FILTERS = [
+	{ id: 'all', label: '全部' },
+	{ id: 'live', label: '进行中' },
+	{ id: 'upcoming', label: '即将开始' },
+	{ id: 'completed', label: '已结束' },
+] as const;
+
+const labels = new Set(TOURNAMENTS.map((t) => t.status));
+---
+
+<Layout title="赛事 · DOTA2 驿站" description="DOTA2 官方赛事信息：TI、Major、ESL 等赛程与奖金。">
+	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">官方赛事</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">职业赛场日历</h1>
+			<p class="mt-3 max-w-2xl text-muted">从 TI 到 ESL、Major，掌握全球各大赛事的赛程、奖金池与直播状态。</p>
+		</div>
+
+		<div id="tourney-tabs" class="mb-8 flex flex-wrap gap-2" role="tablist" aria-label="赛事状态">
+			{FILTERS.map((f) => (
+				<button type="button" data-status={f.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed={f.id === 'all' ? 'true' : 'false'}>
+					{f.label}
+				</button>
+			))}
+		</div>
+
+		<div id="tourney-list" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+			{TOURNAMENTS.map((t) => (
+				<div data-status={t.status} class:list={['tourney-card', t.premium ? 'md:col-span-2' : '']}>
+					<TournamentCard event={t} />
+				</div>
+			))}
+		</div>
+	</section>
+</Layout>
+
+<script>
+	(() => {
+		const tabs = document.getElementById('tourney-tabs');
+		const list = document.getElementById('tourney-list');
+		if (!tabs || !list) return;
+		const cards = Array.from(list.querySelectorAll<HTMLElement>('.tourney-card'));
+		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const status = btn.dataset.status!;
+				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				cards.forEach((c) => {
+					c.hidden = status !== 'all' && c.dataset.status !== status;
+				});
+			});
+		});
+	})();
+</script>

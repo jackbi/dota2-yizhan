@@ -1,0 +1,35 @@
+---
+import Layout from '../layouts/Layout.astro';
+import StreamerCard from '../components/StreamerCard.astro';
+import { STREAMERS } from '../data/site';
+
+const sorted = [...STREAMERS].sort((a, b) => Number(b.live) - Number(a.live));
+const liveCount = STREAMERS.filter((s) => s.live).length;
+---
+
+<Layout title="OB 大家庭 · DOTA2 驿站" description="DOTA2 社区人气主播，OB 大家庭成员与开播状态。">
+	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">OB 大家庭</p>
+				<h1 class="mt-2 font-display text-3xl sm:text-4xl">这群老将，就是情怀</h1>
+				<p class="mt-3 max-w-2xl text-muted">从职业赛场到全民直播，他们陪你看了无数场天梯与 TI。点击卡片即可跳转对应直播间。</p>
+			</div>
+			<span class="inline-flex items-center gap-2 rounded-full border border-[#22c55e]/40 bg-[#22c55e]/10 px-4 py-2 text-sm text-[#4ade80]">
+				<span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]"></span>
+				{liveCount} 位主播正在直播
+			</span>
+		</div>
+
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			{sorted.map((s) => <StreamerCard streamer={s} />)}
+		</div>
+
+		<div class="mt-10 rounded-2xl border border-line bg-surface p-6 text-center">
+			<h2 class="font-display text-xl">邀请更多主播</h2>
+			<p class="mx-auto mt-2 max-w-xl text-sm text-muted">
+				数据中的主播信息与房间号皆为示例。你可以编辑 <code class="rounded bg-surface-3 px-1.5 py-0.5 text-gold">src/data/site.ts</code> 添加真实主播与嵌入地址。
+			</p>
+		</div>
+	</section>
+</Layout>

@@ -1,0 +1,53 @@
+---
+import Layout from '../layouts/Layout.astro';
+import NewsCard from '../components/NewsCard.astro';
+import { NEWS, NEWS_TABS } from '../data/news';
+---
+
+<Layout title="新闻 · DOTA2 驿站" description="DOTA2 官方资讯、社区小道消息与赛事动态。">
+	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">资讯中心</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">新闻 & 小道消息</h1>
+			<p class="mt-3 max-w-2xl text-muted">官方公告、战队动态、版本爆料与社区热梗，追踪 DOTA2 的每一次心跳。</p>
+		</div>
+
+		<div id="news-tabs" class="mb-8 flex flex-wrap gap-2" role="tablist" aria-label="新闻分类">
+			{
+				NEWS_TABS.map((tab) => (
+					<button type="button" data-cat={tab.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed={tab.id === 'all' ? 'true' : 'false'}>
+						{tab.label}
+					</button>
+				))
+			}
+		</div>
+
+		<div id="news-list" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+			{NEWS.map((n) => (
+				<div data-category={n.category} class:list={['news-card', n.featured ? 'md:col-span-2' : '']}>
+					<NewsCard item={n} featured={n.featured} />
+				</div>
+			))}
+		</div>
+	</section>
+</Layout>
+
+<script>
+	(() => {
+		const tabs = document.getElementById('news-tabs');
+		const list = document.getElementById('news-list');
+		if (!tabs || !list) return;
+		const cards = Array.from(list.querySelectorAll<HTMLElement>('.news-card'));
+		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const cat = btn.dataset.cat!;
+				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				cards.forEach((c) => {
+					const show = cat === 'all' || c.dataset.category === cat;
+					c.hidden = !show;
+				});
+			});
+		});
+	})();
+</script>

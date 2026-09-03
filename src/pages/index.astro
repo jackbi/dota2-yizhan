@@ -1,11 +1,124 @@
 ---
-import Welcome from '../components/Welcome.astro';
 import Layout from '../layouts/Layout.astro';
+import SectionHeader from '../components/SectionHeader.astro';
+import LiveCard from '../components/LiveCard.astro';
+import NewsCard from '../components/NewsCard.astro';
+import PatchCard from '../components/PatchCard.astro';
+import TournamentCard from '../components/TournamentCard.astro';
+import { LIVE_NOW, STREAMERS } from '../data/site';
+import { NEWS } from '../data/news';
+import { PATCHES } from '../data/patches';
+import { TOURNAMENTS } from '../data/tournaments';
 
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+const featuredNews = NEWS.filter((n) => n.featured).slice(0, 2);
+const upcoming = TOURNAMENTS.filter((t) => t.status !== 'completed').slice(0, 3);
+const latestPatch = PATCHES[0];
+
+const FEATURES = [
+	{ href: '/live', title: '分屏直播', desc: '在一个页面聚合观看多位 OB 主播，自由切换分屏布局。', icon: 'screen' },
+	{ href: '/ob', title: 'OB 大家庭', desc: '认识 DOTA2 社区最受欢迎的老将们，实时关注开播状态。', icon: 'users' },
+	{ href: '/news', title: '新闻 & 小道消息', desc: '官方资讯、赛事动态与社区热梗，一站掌握圈内动向。', icon: 'news' },
+	{ href: '/tournaments', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
+	{ href: '/patches', title: '版本信息', desc: '跟踪最新版本号、平衡性改动与后续更新前瞻。', icon: 'patch' },
+	{ href: '/heroes', title: '英雄与装备', desc: '查阅英雄属性、定位与主流出装思路。', icon: 'sword' },
+] as const;
 ---
 
 <Layout>
-	<Welcome />
+	<!-- Hero -->
+	<section class="relative overflow-hidden">
+		<div class="pointer-events-none absolute -top-24 right-0 h-96 w-96 rounded-full bg-dota/20 blur-[120px]"></div>
+		<div class="pointer-events-none absolute bottom-0 left-0 h-72 w-72 rounded-full bg-gold/10 blur-[120px]"></div>
+		<div class="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
+			<div class="max-w-3xl">
+				<span class="inline-flex items-center gap-2 rounded-full border border-dota/40 bg-dota/10 px-3 py-1 text-xs font-medium text-dota-light">
+					<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-dota-light"></span>
+					OB 天团 · 正在热播
+				</span>
+				<h1 class="mt-6 font-display text-4xl leading-tight sm:text-5xl lg:text-6xl">
+					DOTA2
+					<span class="block text-dota-light">一站式玩家驿站</span>
+				</h1>
+				<p class="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">
+					聚合 OB 大家庭直播、网页端多路分屏、官方新闻与赛事、版本更新，以及英雄装备资料。
+					让每一次打开，都能跟上刀塔世界的最新脉搏。
+				</p>
+				<div class="mt-8 flex flex-wrap gap-3">
+					<a href="/live" class="group inline-flex items-center gap-2 rounded-lg bg-dota px-5 py-3 font-medium text-white shadow-lg shadow-dota/30 transition hover:bg-dota-light">
+						进入分屏直播
+						<svg class="transition group-hover:translate-x-0.5" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+						</svg>
+					</a>
+					<a href="/ob" class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 font-medium text-cream transition hover:border-dota hover:text-dota-light">
+						看 OB 大家庭
+					</a>
+					<a href="/heroes" class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 font-medium text-cream transition hover:border-dota hover:text-dota-light">
+						英雄资料
+					</a>
+				</div>
+			</div>
+
+			<!-- Live now strip -->
+			<div class="mt-12 rounded-2xl border border-line bg-surface/60 p-5 backdrop-blur">
+				<div class="mb-4 flex items-center justify-between">
+					<h2 class="flex items-center gap-2 font-display text-lg">
+						<span class="flex h-2.5 w-2.5 animate-pulse rounded-full bg-[#22c55e]"></span>
+						正在直播
+					</h2>
+					<a href="/live" class="text-sm text-dota-light transition hover:text-gold">全部直播 →</a>
+				</div>
+				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+					{LIVE_NOW.slice(0, 4).map((s) => <LiveCard streamer={s} />)}
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- Features -->
+	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+		<SectionHeader eyebrow="站点板块" title="你想看的，都在这里" subtitle="六大核心板块随心探索，覆盖直播、资讯、赛事与资料。" />
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			{FEATURES.map((f) => (
+				<a href={f.href} class="group flex flex-col rounded-2xl border border-line bg-surface p-6 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2">
+					<span class="flex h-11 w-11 items-center justify-center rounded-lg bg-dota/15 text-dota-light transition group-hover:bg-dota group-hover:text-white">
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							{f.icon === 'screen' && <path d="M3 5h18v11H3zM8 20h8M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+							{f.icon === 'users' && <path d="M16 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM2 20a6 6 0 0 1 12 0M13 20a6 6 0 0 1 12 0" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />}
+							{f.icon === 'news' && <path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+							{f.icon === 'trophy' && <path d="M8 4h8v4a4 4 0 0 1-8 0zM8 5H4v2a3 3 0 0 0 3 3M16 5h4v2a3 3 0 0 1-3 3M12 12v4M8 20h8M9 20v-2h6v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+							{f.icon === 'patch' && <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+							{f.icon === 'sword' && <path d="M14 4l6 6-9 9-5 1 1-5zM4 20l3-3M12 6l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+						</svg>
+					</span>
+					<h3 class="mt-4 font-display text-lg">{f.title}</h3>
+					<p class="mt-2 text-sm leading-relaxed text-muted">{f.desc}</p>
+				</a>
+			))}
+		</div>
+	</section>
+
+	<!-- News preview -->
+	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+		<SectionHeader eyebrow="资讯" title="最新新闻 & 小道消息" href="/news" linkText="全部资讯" />
+		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+			{featuredNews.map((n) => <NewsCard item={n} featured />)}
+		</div>
+	</section>
+
+	<!-- Upcoming tournaments -->
+	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+		<SectionHeader eyebrow="赛事" title="近期官方赛事" href="/tournaments" linkText="全部赛事" />
+		<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+			{upcoming.map((t) => <TournamentCard event={t} />)}
+		</div>
+	</section>
+
+	<!-- Latest patch -->
+	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+		<SectionHeader eyebrow="版本" title="最新版本动态" href="/patches" linkText="全部版本" />
+		<div class="grid grid-cols-1 lg:grid-cols-2">
+			<PatchCard patch={latestPatch} />
+		</div>
+	</section>
 </Layout>

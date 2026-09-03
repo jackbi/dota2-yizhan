@@ -1,0 +1,160 @@
+---
+import type { Streamer } from '../data/types';
+import { PLATFORM_META } from '../data/site';
+
+interface Props {
+	streamers: Streamer[];
+}
+
+const { streamers } = Astro.props;
+const defaultIds = streamers.filter((s) => s.live).map((s) => s.id);
+---
+
+<div class="space-y-6">
+	<div class="rounded-2xl border border-line bg-surface p-5">
+		<div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+			<div>
+				<h2 class="font-display text-lg">选择主播</h2>
+				<p class="mt-1 text-sm text-muted">勾选想在分屏中观看的直播间，实时切换。</p>
+			</div>
+			<div id="layout-switch" class="flex items-center gap-1 rounded-lg border border-line p-1" role="group" aria-label="分屏布局">
+				{[1, 2, 4, 6, 9].map((n) => (
+					<button
+						type="button"
+						data-layout={n}
+						class="min-w-9 rounded-md px-2.5 py-1.5 text-sm font-medium transition"
+						aria-pressed="false"
+					>
+						{n}
+					</button>
+				))}
+			</div>
+		</div>
+
+		<div id="stream-chips" class="mt-4 flex flex-wrap gap-2">
+			{
+				streamers.map((s) => {
+					const meta = PLATFORM_META[s.platform];
+					return (
+						<button
+							type="button"
+							data-id={s.id}
+							class:list={[
+								'group flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition',
+								'border-line text-muted hover:border-dota hover:text-cream',
+							]}
+							aria-pressed={defaultIds.includes(s.id) ? 'true' : 'false'}
+						>
+							<span class:list={['h-2 w-2 rounded-full', s.live ? 'bg-[#22c55e]' : 'bg-zinc-500']} />
+							<span class="font-semibold text-cream">{s.name}</span>
+							<span class="rounded px-1 py-0.5 text-[10px] font-bold" style={`background:${meta.color};color:#fff`}>
+								{meta.short}
+							</span>
+							<span class="hidden text-xs text-faint sm:inline">{s.live ? `${(s.viewers / 1000).toFixed(1)}k` : '离线'}</span>
+						</button>
+					);
+				})
+			}
+		</div>
+	</div>
+
+	<div id="live-grid" class="grid gap-3">
+		{
+			streamers.map((s) => {
+				const meta = PLATFORM_META[s.platform];
+				return (
+					<div
+						class="live-tile"
+						data-id={s.id}
+						data-default={defaultIds.includes(s.id) ? 'true' : 'false'}
+						hidden={!defaultIds.includes(s.id)}
+					>
+						<div class="group relative aspect-video overflow-hidden rounded-xl border border-line bg-ink-2">
+							<iframe
+								data-src={s.embedUrl.startsWith('https://live.bilibili.com/') ? s.embedUrl.replace('live.bilibili.com', 'live.bilibili.com/player') : s.embedUrl}
+								title={`${s.name} 直播间`}
+								class="live-frame h-full w-full"
+								allow="autoplay; fullscreen; picture-in-picture"
+								allowfullscreen
+								loading="lazy"
+							></iframe>
+
+							<div class="live-placeholder pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-2/70 backdrop-blur-sm transition group-hover:bg-ink-2/40">
+								<span class="flex h-14 w-14 items-center justify-center rounded-full bg-dota text-white shadow-lg shadow-dota/40">
+									<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+										<path d="M8 5v14l11-7z" fill="currentColor" />
+									</svg>
+								</span>
+								<span class="flex items-center gap-2 text-sm text-cream/90">
+									<span class:list={['h-2 w-2 rounded-full', s.live ? 'animate-pulse bg-[#22c55e]' : 'bg-zinc-500']} />
+									{s.live ? `${s.name} · 直播中` : `${s.name} · 未开播`}
+								</span>
+								<span class="text-xs text-faint">{meta.label} · 房间 {s.roomId}</span>
+							</div>
+
+							<div class="absolute left-3 top-3 flex items-center gap-2">
+								<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-cream backdrop-blur">{s.name}</span>
+								<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-[#4ade80]">{s.live ? `${(s.viewers / 1000).toFixed(1)}k 人` : '离线'}</span>
+							</div>
+
+							<a
+								href={s.embedUrl}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="absolute bottom-3 right-3 rounded-md bg-dota px-3 py-1.5 text-xs font-medium text-white opacity-0 transition hover:bg-dota-light group-hover:opacity-100"
+							>
+								打开直播间
+							</a>
+						</div>
+					</div>
+				);
+			})
+		}
+	</div>
+</div>
+
+<script>
+	(() => {
+		const grid = document.getElementById('live-grid');
+		const chips = document.getElementById('stream-chips');
+		const layoutSwitch = document.getElementById('layout-switch');
+		if (!grid || !chips || !layoutSwitch) return;
+
+		const tiles = Array.from(grid.querySelectorAll<HTMLElement>('.live-tile'));
+		const selected = new Set(tiles.filter((t) => t.dataset.default === 'true').map((t) => t.dataset.id!));
+
+		const applyLayout = (count: number) => {
+			grid.dataset.layout = String(count);
+			grid.className = 'grid gap-3 ' + (count === 1 ? 'grid-cols-1' : count === 2 ? 'grid-cols-1 sm:grid-cols-2' : count === 4 ? 'grid-cols-2' : count === 6 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4');
+		};
+
+		const render = () => {
+			tiles.forEach((t) => {
+				const on = selected.has(t.dataset.id!);
+				t.hidden = !on;
+			});
+		};
+
+		chips.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const id = btn.dataset.id!;
+				if (selected.has(id)) selected.delete(id);
+				else selected.add(id);
+				btn.setAttribute('aria-pressed', String(selected.has(id)));
+				render();
+			});
+		});
+
+		layoutSwitch.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				const count = Number(btn.dataset.layout);
+				layoutSwitch.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				applyLayout(count);
+			});
+		});
+
+		applyLayout(4);
+		render();
+	})();
+</script>
