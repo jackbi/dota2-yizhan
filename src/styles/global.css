@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+@theme {
+	--font-display: "Russo One", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+	--font-body: "Chakra Petch", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+
+	--color-dota: #ad3d28;
+	--color-dota-dark: #7e2a1b;
+	--color-dota-deep: #541c13;
+	--color-dota-light: #d64a2f;
+	--color-gold: #e0a93f;
+	--color-gold-deep: #b8860b;
+
+	--color-ink: #0e0b09;
+	--color-ink-2: #130f0c;
+	--color-surface: #191311;
+	--color-surface-2: #221a16;
+	--color-surface-3: #2c221c;
+	--color-line: #332822;
+
+	--color-cream: #f2eae2;
+	--color-muted: #a89d90;
+	--color-faint: #6f665c;
+}
+
+html {
+	scroll-behavior: smooth;
+}
+
+body {
+	@apply bg-ink text-cream font-body antialiased;
+	background-image:
+		radial-gradient(60rem 40rem at 80% -10%, rgb(173 61 40 / 0.12), transparent 60%),
+		radial-gradient(50rem 34rem at 0% 0%, rgb(224 169 63 / 0.06), transparent 55%),
+		linear-gradient(rgb(255 255 255 / 0.015) 1px, transparent 1px),
+		linear-gradient(90deg, rgb(255 255 255 / 0.015) 1px, transparent 1px);
+	background-size:
+		100% 100%,
+		100% 100%,
+		64px 64px,
+		64px 64px;
+	background-attachment: fixed;
+}
+
+::selection {
+	background: rgb(173 61 40 / 0.6);
+	color: #fff;
+}
+
+/* Accessible focus rings */
+:focus-visible {
+	outline: 2px solid var(--color-gold);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.font-display {
+	font-family: var(--font-display);
+}
+
+/* Custom scrollbar to match the theme */
+::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+::-webkit-scrollbar-track {
+	background: var(--color-ink);
+}
+::-webkit-scrollbar-thumb {
+	background: var(--color-surface-3);
+	border-radius: 999px;
+	border: 2px solid var(--color-ink);
+}
+::-webkit-scrollbar-thumb:hover {
+	background: var(--color-dota);
+}
+
+.clip-slant {
+	clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+	*,
+	*::before,
+	*::after {
+		transition-duration: 0.01ms !important;
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+	}
+}
