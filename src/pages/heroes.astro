@@ -1,40 +1,69 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import HeroCard from '../components/HeroCard.astro';
-import { HEROES, ATTRIBUTES } from '../data/heroes';
+import { HEROES, ATTRIBUTES, HERO_META } from '../data/heroes';
+
+const updated = new Date(HERO_META.updated * 1000).toLocaleDateString('zh-CN', {
+	year: 'numeric',
+	month: 'long',
+	day: 'numeric',
+});
 ---
 
-<Layout title="英雄资料 · DOTA2 驿站" description="DOTA2 英雄属性、定位与复杂度一览。">
+<Layout
+	title={`英雄资料 · ${HEROES.length} 位英雄 · DOTA2 驿站`}
+	description="DOTA2 英雄资料库，官方 datafeed 数据，支持按属性与关键词筛选。"
+>
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-		<div class="mb-8">
-			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">英雄图鉴</p>
-			<h1 class="mt-2 font-display text-3xl sm:text-4xl">英雄资料库</h1>
-			<p class="mt-3 max-w-2xl text-muted">按属性与定位筛选英雄，快速了解他们的强度定位。数据为示例，可通过官方 datafeed 接入完整英雄列表。</p>
+		<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">英雄图鉴</p>
+				<h1 class="mt-2 font-display text-3xl sm:text-4xl">英雄资料库</h1>
+				<p class="mt-3 max-w-2xl text-muted">
+					数据来自 DOTA2 官方 datafeed，共 {HEROES.length} 位英雄。点击英雄卡片可查看详细数值与技能。
+				</p>
+			</div>
+			<div class="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
+				数据更新：<span class="text-cream">{updated}</span>
+			</div>
 		</div>
 
-		<div id="hero-filters" class="mb-6 flex flex-wrap items-center gap-2">
-			<button type="button" data-attr="all" class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="true">全部</button>
-			{ATTRIBUTES.map((a) => (
-				<button type="button" data-attr={a.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="false">
-					<span style={`color:${a.color}`}>●</span> {a.label}
-				</button>
-			))}
-			<span id="hero-count" class="ml-auto text-sm text-muted">{HEROES.length} 位英雄</span>
+		<div class="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+			<div id="hero-filters" class="flex flex-wrap items-center gap-2" role="group" aria-label="按属性筛选">
+				<button type="button" data-attr="all" class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="true">全部</button>
+				{ATTRIBUTES.map((a) => (
+					<button type="button" data-attr={a.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="false">
+						<span style={`color:${a.color}`}>●</span> {a.label}
+					</button>
+				))}
+			</div>
+
+			<label class="relative block md:w-72">
+				<span class="sr-only">搜索英雄</span>
+				<svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
+					<path d="M21 21l-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+				</svg>
+				<input
+					id="hero-search"
+					type="search"
+					placeholder="搜索英雄名（中文 / 英文）"
+					class="w-full rounded-lg border border-line bg-surface py-2 pl-10 pr-3 text-sm text-cream placeholder:text-faint focus:border-dota focus:outline-none"
+				/>
+			</label>
 		</div>
 
-		<div id="hero-grid" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+		<div class="mb-4 flex items-center justify-between">
+			<h2 class="text-sm text-muted" id="hero-count">共 {HEROES.length} 位英雄</h2>
+			<span class="text-xs text-faint">当前筛选</span>
+		</div>
+
+		<div id="hero-grid" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
 			{HEROES.map((h) => (
-				<div data-attribute={h.attribute}>
+				<div data-attribute={h.attr} data-name={`${h.name} ${h.nameEn}`.toLowerCase()}>
 					<HeroCard hero={h} />
 				</div>
 			))}
-		</div>
-
-		<div class="mt-10 rounded-2xl border border-line bg-surface p-6 text-sm text-muted">
-			下方数据为演示用途的精选英雄。要获得全部 120+ 英雄与详细技能，可使用官方数据接口：
-			<code class="mt-2 block whitespace-pre-wrap rounded bg-surface-3 p-3 text-gold">
-				https://www.dota2.com/datafeed/herodata?language=schinese
-			</code>
 		</div>
 	</section>
 </Layout>
@@ -44,21 +73,35 @@ import { HEROES, ATTRIBUTES } from '../data/heroes';
 		const filters = document.getElementById('hero-filters');
 		const grid = document.getElementById('hero-grid');
 		const count = document.getElementById('hero-count');
+		const search = document.getElementById('hero-search') as HTMLInputElement | null;
 		if (!filters || !grid || !count) return;
 		const cards = Array.from(grid.querySelectorAll<HTMLElement>('[data-attribute]'));
+		let attr = 'all';
+		let q = '';
+
+		const apply = () => {
+			let shown = 0;
+			cards.forEach((c) => {
+				const matchesAttr = attr === 'all' || c.dataset.attribute === attr;
+				const matchesQ = !q || (c.dataset.name ?? '').includes(q);
+				c.hidden = !(matchesAttr && matchesQ);
+				if (c.hidden === false) shown++;
+			});
+			count.textContent = `共 ${shown} 位英雄`;
+		};
+
 		filters.querySelectorAll<HTMLButtonElement>('button[data-attr]').forEach((btn) => {
 			btn.addEventListener('click', () => {
-				const attr = btn.dataset.attr!;
+				attr = btn.dataset.attr!;
 				filters.querySelectorAll('button[data-attr]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
 				btn.setAttribute('aria-pressed', 'true');
-				let shown = 0;
-				cards.forEach((c) => {
-					const show = attr === 'all' || c.dataset.attribute === attr;
-					c.hidden = !show;
-					if (show) shown++;
-				});
-				count.textContent = `${shown} 位英雄`;
+				apply();
 			});
+		});
+
+		search?.addEventListener('input', () => {
+			q = (search.value ?? '').trim().toLowerCase();
+			apply();
 		});
 	})();
 </script>

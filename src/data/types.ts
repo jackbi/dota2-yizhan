@@ -52,14 +52,57 @@ export interface Patch {
 export type Attribute = 'STR' | 'AGI' | 'INT' | 'UNI';
 export type Attack = 'melee' | 'ranged';
 
-export interface Hero {
-	id: string;
+export interface HeroRole {
+	key: string;
+	label: string;
+	level: number;
+}
+
+export interface HeroStats {
+	strBase: number;
+	strGain: number;
+	agiBase: number;
+	agiGain: number;
+	intBase: number;
+	intGain: number;
+	damageMin: number;
+	damageMax: number;
+	attackRate: number;
+	attackRange: number;
+	armor: number;
+	magicResistance: number;
+	moveSpeed: number;
+	maxHealth: number;
+	healthRegen: number;
+	maxMana: number;
+	manaRegen: number;
+	sightDay: number;
+	sightNight: number;
+}
+
+export interface HeroAbility {
 	name: string;
-	cn: string;
-	attribute: Attribute;
-	attack: Attack;
-	roles: string[];
+	nameLoc: string;
+	desc: string;
+	img: string;
+}
+
+export interface Hero {
+	id: number;
+	name: string;
+	nameEn: string;
+	attr: Attribute;
 	complexity: 1 | 2 | 3;
+	attack: Attack;
+	roles: HeroRole[];
+	img: string;
+	imgCrop: string;
+	imgTop: string;
+	bio: string;
+	hype: string;
+	npe: string;
+	stats: HeroStats;
+	abilities: HeroAbility[];
 }
 
 export type ItemType =
