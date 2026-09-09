@@ -155,7 +155,7 @@ const ATTR_ICON: Record<string, string> = {
 </style>
 
 <script>
-	import { fetchHeroList, ATTRIBUTE_META } from '../lib/heroApi';
+	import { fetchHeroList } from '../lib/heroApi';
 
 	(() => {
 		const grid = document.getElementById('hero-grid');
@@ -171,17 +171,25 @@ const ATTR_ICON: Record<string, string> = {
 		let level = 0;
 		let q = '';
 
+		const ATTR_ICON: Record<string, string> = {
+			STR: 'https://www.dota2.com.cn/herostatic/icons/hero_strength.png',
+			AGI: 'https://www.dota2.com.cn/herostatic/icons/hero_agility.png',
+			INT: 'https://www.dota2.com.cn/herostatic/icons/hero_intelligence.png',
+			UNI: '/hero-filters/universal.png',
+		};
+
 		const esc = (s: string) =>
 			s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 		const renderCard = (h: (typeof heroes)[number]) => {
-			const color = ATTRIBUTE_META[h.attr as keyof typeof ATTRIBUTE_META]?.color ?? '#999';
 			return `
 				<a href="/heroes/${h.id}" class="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface transition hover:border-dota/60 hover:shadow-lg hover:shadow-dota/10" data-attribute="${h.attr}" data-name="${esc((h.name + ' ' + h.nameEn).toLowerCase())}">
 					<div class="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-surface-2 to-surface-3">
 					<img src="${esc(h.img)}" alt="${esc(h.name)}" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover object-top transition duration-300 group-hover:scale-105">
 						<div class="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-surface via-surface/40 to-transparent"></div>
-						<span class="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-line bg-ink/70 text-[11px] font-bold backdrop-blur" style="color:${color}">${h.attr}</span>
+						<span class="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full border border-line bg-ink/80 backdrop-blur" title="${h.attr}">
+							<img src="${ATTR_ICON[h.attr]}" alt="${h.attr}" referrerpolicy="no-referrer" loading="lazy" class="h-6 w-6 object-contain">
+						</span>
 					</div>
 					<div class="flex flex-1 flex-col p-3.5">
 						<h3 class="font-display text-base leading-tight">${esc(h.name)}</h3>
