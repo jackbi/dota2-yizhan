@@ -100,7 +100,6 @@ import Layout from '../layouts/Layout.astro';
 
 		const esc = (s: string) =>
 			s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-		const fmtCost = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(n));
 		const fullCost = (n: number) => n.toLocaleString('en-US');
 		const clean = (s: string) => cleanItemText(s);
 		const MANA_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/mana.png';
@@ -116,7 +115,7 @@ import Layout from '../layouts/Layout.astro';
 				<span class="flex min-w-0 items-center justify-between gap-2 px-3 pb-3 pt-2">
 					<span class="min-w-0 flex-1">
 						<span class="block break-words text-sm font-medium leading-snug text-cream">${esc(it.nameLoc)}</span>
-						<span class="mt-0.5 block text-xs tabular-nums text-gold">${fmtCost(it.cost)}</span>
+						<span class="mt-0.5 block text-xs tabular-nums text-gold">${fullCost(it.cost)}</span>
 					</span>
 					<svg class="h-4 w-4 shrink-0 text-faint transition group-hover:text-gold" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
 				</span>
