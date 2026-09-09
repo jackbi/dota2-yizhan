@@ -152,8 +152,14 @@ export function stripHtml(input: string): string {
 /**
  * 官方素材部分走 cdn.akamai.steamstatic.com / cdn.cloudflare.steamstatic.com（部分网络不可达），
  * 统一重写到可访问的 img.dota2.com.cn 静态目录。
+ *
+ * heroKey 为英雄的内部名（如 npc_dota_hero_elder_titan），用于正确拼出：
+ * - 普通技能：herostatic/<heroKey>/<file>
+ * - 魔晶/神杖升级：herostatic/upgrade/<heroKey>/<file>
+ * 不能依赖 steamstatic URL 的“上一段目录”，因为图片路径为 .../images/dota_react/abilities/<file>
+ * 上一段是 abilities，而视频路径为 .../videos/dota_react/abilities/<hero>/<file>，上一段才是英雄名。
  */
-function normalizeCdn(url: string): string {
+function normalizeCdn(url: string, heroKey?: string): string {
 	if (!url) return url;
 	let host = '';
 	try {
@@ -165,8 +171,11 @@ function normalizeCdn(url: string): string {
 	if (host.endsWith('steamstatic.com')) {
 		const parts = url.split('/');
 		const file = parts.pop();
-		const folder = parts.pop();
-		return `https://img.dota2.com.cn/dota2static/herostatic/npc_dota_hero_${folder}/${file}`;
+		const isUpgrade = url.includes('/upgrade/');
+		const dir = isUpgrade
+			? `upgrade/${heroKey || `npc_dota_hero_${parts.pop()}`}`
+			: heroKey || `npc_dota_hero_${parts.pop()}`;
+		return `https://img.dota2.com.cn/dota2static/herostatic/${dir}/${file}`;
 	}
 	return url;
 }
@@ -264,19 +273,19 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			name: a.name,
 			nameLoc: a.name_loc,
 			desc: resolveTemplate(stripHtml(a.desc_loc), specialMap),
-			img: a.ability_is_innate || a.is_inborn ? INNATE_ICON : normalizeCdn(a.img),
-			videoMp4: normalizeCdn(a.video_mp4),
-			videoWebm: normalizeCdn(a.video_webm),
-			videoPoster: normalizeCdn(a.video_jpg || a.img),
+			img: a.ability_is_innate || a.is_inborn ? INNATE_ICON : normalizeCdn(a.img, h.name),
+			videoMp4: normalizeCdn(a.video_mp4, h.name),
+			videoWebm: normalizeCdn(a.video_webm, h.name),
+			videoPoster: normalizeCdn(a.video_jpg || a.img, h.name),
 			hasScepter: Boolean(a.video_scepter_webm) || Boolean(a.video_scepter_mp4),
 			hasShard: Boolean(a.video_shard_webm) || Boolean(a.video_shard_mp4),
 			isInborn: Boolean(a.is_inborn) || Boolean(a.ability_is_innate),
-			scepterMp4: normalizeCdn(a.video_scepter_mp4),
-			scepterWebm: normalizeCdn(a.video_scepter_webm),
-			scepterPoster: normalizeCdn(a.video_scepter_jpg || a.img),
-			shardMp4: normalizeCdn(a.video_shard_mp4),
-			shardWebm: normalizeCdn(a.video_shard_webm),
-			shardPoster: normalizeCdn(a.video_shard_jpg || a.img),
+			scepterMp4: normalizeCdn(a.video_scepter_mp4, h.name),
+			scepterWebm: normalizeCdn(a.video_scepter_webm, h.name),
+			scepterPoster: normalizeCdn(a.video_scepter_jpg || a.img, h.name),
+			shardMp4: normalizeCdn(a.video_shard_mp4, h.name),
+			shardWebm: normalizeCdn(a.video_shard_webm, h.name),
+			shardPoster: normalizeCdn(a.video_shard_jpg || a.img, h.name),
 		})),
 		talents: (h.talents ?? []).map((t) => ({
 			id: t.id,
