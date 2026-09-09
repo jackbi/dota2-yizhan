@@ -142,24 +142,41 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 				const heroStatic = (p: string) => `https://www.dota2.com.cn/herostatic/${p}`;
 				const attrIcon = (k: string) => heroStatic(`icons/hero_${k}.png`);
 				const statIcon = (k: string) => heroStatic(`stats/icon_${k}.png`);
+				const ATTR_NAMES: Record<string, string> = { strength: '力量', agility: '敏捷', intelligence: '智力' };
+				const STAT_NAMES: Record<string, string> = {
+					damage: '攻击力',
+					attack_time: '攻击间隔',
+					attack_range: '攻击距离',
+					projectile_speed: '投射物速度',
+					armor: '护甲',
+					magic_resist: '魔法抗性',
+					movement_speed: '移动速度',
+					turn_rate: '转身速率',
+					vision: '视野范围',
+				};
 				const attrRow = (k: string, base: number, gain: number) =>
-					`<div class="flex items-center gap-2">
-						<img src="${attrIcon(k)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-5 w-5 opacity-90">
-						<span class="font-display text-base text-cream">${base}</span>
-						<span class="text-xs text-emerald-400">+${Number(gain).toFixed(1)}</span>
+					`<div class="flex items-center gap-2.5">
+						<img src="${attrIcon(k)}" alt="" aria-hidden="true" referrerpolicy="no-referrer" loading="lazy" class="h-5 w-5 opacity-90">
+						<span class="w-8 shrink-0 text-xs text-muted">${ATTR_NAMES[k]}</span>
+						<span class="min-w-[2ch] font-display text-base text-cream tabular-nums">${base}</span>
+						<span class="font-display text-xs text-emerald-400 tabular-nums">+${Number(gain).toFixed(1)}</span>
 					</div>`;
 				const statRow = (k: string, text: string) =>
-					`<div class="flex items-center gap-2 py-0.5">
-						<img src="${statIcon(k)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-4 w-4 opacity-80">
-						<span class="text-sm text-cream">${text}</span>
+					`<div class="flex items-center justify-between gap-3 py-0.5" title="${STAT_NAMES[k]}">
+						<span class="flex items-center gap-2 text-xs text-muted">
+							<img src="${statIcon(k)}" alt="" aria-hidden="true" referrerpolicy="no-referrer" loading="lazy" class="h-4 w-4 opacity-80">
+							${STAT_NAMES[k]}
+						</span>
+						<span class="font-display text-sm text-cream tabular-nums">${text}</span>
 					</div>`;
 				const roleRow = (level: number, label: string) => {
 					const w = (Math.min(3, level) / 3) * 100;
 					return `<div class="flex items-center gap-3">
 						<span class="w-11 shrink-0 text-xs text-muted">${esc(label)}</span>
-						<div class="h-2 flex-1 overflow-hidden rounded-full bg-surface-3">
-							<div class="h-full rounded-full bg-gradient-to-r from-dota to-dota-light" style="width:${w}%"></div>
+						<div class="h-1.5 flex-1 overflow-hidden rounded-full bg-surface-3">
+							<div class="h-full rounded-full bg-gradient-to-r from-dota to-dota-light transition-all" style="width:${w}%"></div>
 						</div>
+						<span class="hidden w-7 shrink-0 text-right text-[11px] text-gold/80 sm:inline" aria-hidden="true">${level ? '★'.repeat(level) : '—'}</span>
 					</div>`;
 				};
 
@@ -297,50 +314,55 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 					<div class="mt-10">${abilitiesBlock}</div>
 			<div class="mt-10">${talentBlock}</div>
 
-				<!-- 官方 DetailsBar 风格：属性 / 定位 / 数值 三段 -->
-				<div class="mt-10 overflow-hidden rounded-2xl border border-line bg-gradient-to-r from-[#252728] to-[#101415] shadow-[0_0_8px_rgba(0,0,0,0.45)]">
-					<div class="flex flex-col gap-6 px-5 py-6 sm:px-8 lg:flex-row lg:items-stretch lg:gap-0">
-						<div class="flex flex-col lg:w-[340px] lg:shrink-0">
-							<div class="mb-4 border-b border-line/60 pb-2 text-center text-xs tracking-widest text-faint">属性</div>
-							<div class="flex items-center justify-center gap-5">
-								<div class="flex flex-col items-center gap-1">
-									<div class="overflow-hidden rounded-lg border border-line bg-ink-2">
-										<img src="${esc(h.img)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-28 w-28 object-cover">
+			<!-- 官方 DetailsBar 风格：属性 / 定位 / 数值 三段 -->
+				<div class="mt-10 overflow-hidden rounded-2xl border border-line bg-gradient-to-r from-[#252728] to-[#101415] shadow-[0_10px_30px_rgba(0,0,0,0.45)]">
+					<div class="flex flex-col gap-8 px-5 py-8 sm:px-8 lg:flex-row lg:items-stretch lg:gap-0 lg:px-10">
+						<!-- 属性 -->
+						<section class="flex flex-col lg:w-[340px] lg:shrink-0" aria-label="英雄属性">
+							<h3 class="mb-5 flex items-center gap-3 text-xs font-semibold tracking-widest text-gold"><span class="h-px flex-1 bg-gradient-to-r from-gold/40 to-transparent"></span><span class="shrink-0">属性</span><span class="h-px flex-1 bg-gradient-to-l from-gold/40 to-transparent"></span></h3>
+							<div class="flex items-center justify-center gap-6">
+								<div class="flex flex-col items-center gap-2">
+									<div class="overflow-hidden rounded-xl border border-line bg-ink-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+										<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" loading="lazy" class="h-32 w-32 object-cover">
 									</div>
-									<div class="h-1.5 w-28 overflow-hidden rounded-full bg-ink"><div class="h-full w-full bg-[#C0392B]"></div></div>
-									<div class="flex w-28 items-center justify-between text-xs">
-										<span class="font-display text-cream">${fmt(s.maxHealth)}</span>
-										<span class="text-emerald-400">+${fmt(s.healthRegen, 1)}</span>
-									</div>
-									<div class="h-1.5 w-28 overflow-hidden rounded-full bg-ink"><div class="h-full w-full bg-[#2980B9]"></div></div>
-									<div class="flex w-28 items-center justify-between text-xs">
-										<span class="font-display text-cream">${fmt(s.maxMana)}</span>
-										<span class="text-sky-400">+${fmt(s.manaRegen, 1)}</span>
+									<div class="w-32 space-y-1.5">
+										<div class="flex items-center gap-2">
+											<div class="h-1.5 flex-1 overflow-hidden rounded-full bg-ink"><div class="h-full w-full bg-[#C0392B]"></div></div>
+											<span class="font-display text-sm text-cream tabular-nums">${fmt(s.maxHealth)}</span>
+										</div>
+										<p class="text-right text-[11px] leading-none text-muted tabular-nums">生命 +${fmt(s.healthRegen, 1)}</p>
+										<div class="flex items-center gap-2">
+											<div class="h-1.5 flex-1 overflow-hidden rounded-full bg-ink"><div class="h-full w-full bg-[#2980B9]"></div></div>
+											<span class="font-display text-sm text-cream tabular-nums">${fmt(s.maxMana)}</span>
+										</div>
+										<p class="text-right text-[11px] leading-none text-muted tabular-nums">魔法 +${fmt(s.manaRegen, 1)}</p>
 									</div>
 								</div>
-								<div class="flex flex-col gap-2">
+								<div class="flex flex-col justify-center gap-3">
 									${attrRow('strength', s.strBase, s.strGain)}
 									${attrRow('agility', s.agiBase, s.agiGain)}
 									${attrRow('intelligence', s.intBase, s.intGain)}
 								</div>
 							</div>
-						</div>
+						</section>
 
-						<div class="hidden w-px bg-line/60 lg:block"></div>
+						<div class="hidden w-px bg-line/70 lg:block"></div>
 
-						<div class="flex flex-col lg:w-1/3">
-							<div class="mb-4 border-b border-line/60 pb-2 text-center text-xs tracking-widest text-faint">定位</div>
-							<div class="flex-1 space-y-2">${(h.roleBars || []).map((r) => roleRow(r.level, r.label)).join('')}</div>
-						</div>
+						<!-- 定位 -->
+						<section class="flex flex-col lg:w-1/3" aria-label="英雄定位">
+							<h3 class="mb-5 flex items-center gap-3 text-xs font-semibold tracking-widest text-gold"><span class="h-px flex-1 bg-gradient-to-r from-gold/40 to-transparent"></span><span class="shrink-0">定位</span><span class="h-px flex-1 bg-gradient-to-l from-gold/40 to-transparent"></span></h3>
+							<div class="flex flex-1 flex-col justify-center gap-2.5">${(h.roleBars || []).map((r) => roleRow(r.level, r.label)).join('')}</div>
+						</section>
 
-						<div class="hidden w-px bg-line/60 lg:block"></div>
+						<div class="hidden w-px bg-line/70 lg:block"></div>
 
-						<div class="flex flex-col lg:w-1/3">
-							<div class="mb-4 border-b border-line/60 pb-2 text-center text-xs tracking-widest text-faint">数值</div>
-							<div class="grid flex-1 grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-3 lg:grid-cols-1">
+						<!-- 数值 -->
+						<section class="flex flex-col lg:w-1/3" aria-label="英雄数值">
+							<h3 class="mb-5 flex items-center gap-3 text-xs font-semibold tracking-widest text-gold"><span class="h-px flex-1 bg-gradient-to-r from-gold/40 to-transparent"></span><span class="shrink-0">数值</span><span class="h-px flex-1 bg-gradient-to-l from-gold/40 to-transparent"></span></h3>
+							<div class="grid flex-1 grid-cols-1 gap-x-8 gap-y-4 sm:grid-cols-3 lg:grid-cols-1">
 								<div>
-									<div class="mb-1 text-xs text-gold">攻击</div>
-									<div>
+									<p class="mb-2 text-xs font-medium tracking-widest text-gold/90">攻击</p>
+									<div class="space-y-0.5">
 										${statRow('damage', `${fmt(s.damageMin)}-${fmt(s.damageMax)}`)}
 										${statRow('attack_time', fmt(s.attackRate, 1))}
 										${statRow('attack_range', fmt(s.attackRange))}
@@ -348,22 +370,22 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 									</div>
 								</div>
 								<div>
-									<div class="mb-1 text-xs text-gold">防御</div>
-									<div>
+									<p class="mb-2 text-xs font-medium tracking-widest text-gold/90">防御</p>
+									<div class="space-y-0.5">
 										${statRow('armor', fmt(s.armor, 1))}
 										${statRow('magic_resist', fmt(s.magicResistance) + '%')}
 									</div>
 								</div>
 								<div>
-									<div class="mb-1 text-xs text-gold">机动性</div>
-									<div>
+									<p class="mb-2 text-xs font-medium tracking-widest text-gold/90">机动性</p>
+									<div class="space-y-0.5">
 										${statRow('movement_speed', fmt(s.moveSpeed))}
 										${statRow('turn_rate', fmt(s.turnRate, 1))}
 										${statRow('vision', `${s.sightDay} / ${s.sightNight}`)}
 									</div>
 								</div>
 							</div>
-						</div>
+						</section>
 					</div>
 				</div>`;
 
