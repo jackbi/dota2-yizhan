@@ -20,9 +20,11 @@ export interface HeroStats {
 	damageMax: number;
 	attackRate: number;
 	attackRange: number;
+	projectileSpeed: number;
 	armor: number;
 	magicResistance: number;
 	moveSpeed: number;
+	turnRate: number;
 	maxHealth: number;
 	healthRegen: number;
 	maxMana: number;
@@ -70,6 +72,7 @@ export interface HeroListEntry {
 export interface Hero extends HeroListEntry {
 	attack: Attack;
 	roles: HeroRole[];
+	roleBars: { key: string; label: string; level: number }[];
 	bio: string;
 	hype: string;
 	stats: HeroStats;
@@ -102,7 +105,7 @@ export const ROLE_LABEL: Record<string, string> = {
 	nuker: '爆发',
 	disabler: '控制',
 	jungler: '打野',
-	durable: '肉盾',
+	durable: '耐久',
 	escape: '逃生',
 	pusher: '推进',
 	initiator: '先手',
@@ -234,6 +237,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 	const roles = ROLE_ORDER.map((key, i) => ({ key, label: ROLE_LABEL[key], level: h.role_levels?.[i] ?? 0 }))
 		.filter((r) => r.level > 0)
 		.sort((a, b) => b.level - a.level);
+	const roleBars = ROLE_ORDER.map((key, i) => ({ key, label: ROLE_LABEL[key], level: h.role_levels?.[i] ?? 0 }));
 	return {
 		id: h.id,
 		name: h.name_loc,
@@ -242,6 +246,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 		complexity: h.complexity,
 		attack: h.attack_capability === 2 ? 'ranged' : 'melee',
 		roles,
+		roleBars,
 		img: h.index_img,
 		imgCrop: h.crops_img,
 		bio: stripHtml(h.bio_loc),
@@ -259,9 +264,11 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			damageMax: h.damage_max,
 			attackRate: h.attack_rate,
 			attackRange: h.attack_range,
+			projectileSpeed: h.projectile_speed,
 			armor: h.armor,
 			magicResistance: h.magic_resistance,
 			moveSpeed: h.movement_speed,
+			turnRate: h.turn_rate,
 			maxHealth: h.max_health,
 			healthRegen: h.health_regen,
 			maxMana: h.max_mana,
