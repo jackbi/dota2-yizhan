@@ -110,14 +110,14 @@ import Layout from '../layouts/Layout.astro';
 				<span class="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-surface-2 to-surface-3">
 					<img src="${esc(it.imgUrl)}" alt="${esc(it.nameLoc)}" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-contain p-3 transition duration-300 group-hover:scale-105">
 					<span class="absolute left-2 top-2 rounded-md bg-ink/70 px-1.5 py-0.5 text-[11px] text-muted backdrop-blur">${esc(grpName)}</span>
+					<span class="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-ink/70 px-1.5 py-0.5 text-xs font-medium tabular-nums text-gold backdrop-blur">
+						<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#e0a93f"/><circle cx="12" cy="12" r="6.5" fill="#b8860b"/></svg>
+						${fullCost(it.cost)}
+					</span>
 					<span class="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-surface/70 to-transparent" aria-hidden="true"></span>
 				</span>
-				<span class="flex min-w-0 items-center justify-between gap-2 px-3 pb-3 pt-2">
-					<span class="min-w-0 flex-1">
+				<span class="block min-w-0 px-3 pb-3 pt-2">
 						<span class="block break-words text-sm font-medium leading-snug text-cream">${esc(it.nameLoc)}</span>
-						<span class="mt-0.5 block text-xs tabular-nums text-gold">${fullCost(it.cost)}</span>
-					</span>
-					<svg class="h-4 w-4 shrink-0 text-faint transition group-hover:text-gold" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
 				</span>
 			</button>`;
 
