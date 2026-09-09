@@ -103,6 +103,8 @@ import Layout from '../layouts/Layout.astro';
 		const fmtCost = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(n));
 		const fullCost = (n: number) => n.toLocaleString('en-US');
 		const clean = (s: string) => cleanItemText(s);
+		const MANA_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/mana.png';
+		const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.png';
 
 		const tile = (it: import('../lib/itemApi').ItemListItem, grpName: string) => `
 			<button type="button" data-item="${esc(it.name)}" class="group flex flex-col overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-[0_1px_0_rgba(255,255,255,0.03)] transition duration-200 hover:-translate-y-0.5 hover:border-dota/40 hover:bg-surface-2 hover:shadow-lg hover:shadow-dota/10">
@@ -215,7 +217,13 @@ import Layout from '../layouts/Layout.astro';
 					<span>${esc(c?.nameLoc || key)}</span>
 				</span>`;
 			}).join('');
-			const meta = [d?.cd ? `冷却 ${esc(d.cd)}` : '', d?.mc ? `魔法消耗 ${esc(d.mc)}` : ''].filter(Boolean).join('　·　');
+			const metaRow =
+				(d?.cd
+					? `<span class="flex items-center gap-1.5 text-sm text-cream tabular-nums"><img src="${CD_ICON}" alt="冷却时间" title="冷却时间" referrerpolicy="no-referrer" loading="lazy" class="h-[18px] w-[18px] object-contain"><span>${esc(d.cd)}</span></span>`
+					: '') +
+				(d?.mc
+					? `<span class="flex items-center gap-1.5 text-sm text-cream tabular-nums"><img src="${MANA_ICON}" alt="魔法消耗" title="魔法消耗" referrerpolicy="no-referrer" loading="lazy" class="h-[18px] w-[18px] object-contain"><span>${esc(d.mc)}</span></span>`
+					: '');
 			const desc = clean(d?.desc || '');
 			const attrib = clean(d?.attrib || '');
 			const notes = clean(d?.notes || '');
@@ -226,7 +234,7 @@ import Layout from '../layouts/Layout.astro';
 				(notes ? sectionText('备注', notes) : '') +
 				(lore ? sectionText('背景故事', lore) : '') +
 				(compChips ? sectionHtml('合成配方', `<div class="flex flex-wrap gap-2">${compChips}</div>`) : '') +
-				(meta ? sectionText('基础信息', meta) : '');
+				(metaRow ? sectionHtml('基础信息', `<div class="flex flex-wrap items-center gap-x-5 gap-y-2">${metaRow}</div>`) : '');
 
 			tip.innerHTML = `
 				<div class="flex items-start gap-3">
