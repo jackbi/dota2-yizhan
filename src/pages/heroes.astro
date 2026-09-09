@@ -1,31 +1,19 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import HeroCard from '../components/HeroCard.astro';
-import { HEROES, ATTRIBUTES, HERO_META } from '../data/heroes';
-
-const updated = new Date(HERO_META.updated * 1000).toLocaleDateString('zh-CN', {
-	year: 'numeric',
-	month: 'long',
-	day: 'numeric',
-});
+import { ATTRIBUTES } from '../lib/heroApi';
 ---
 
 <Layout
-	title={`英雄资料 · ${HEROES.length} 位英雄 · DOTA2 驿站`}
-	description="DOTA2 英雄资料库，官方 datafeed 数据，支持按属性与关键词筛选。"
+	title="英雄资料 · DOTA2 驿站"
+	description="DOTA2 英雄资料库，实时从官方 datafeed 获取，支持按属性与关键词筛选。"
 >
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-		<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
-			<div>
-				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">英雄图鉴</p>
-				<h1 class="mt-2 font-display text-3xl sm:text-4xl">英雄资料库</h1>
-				<p class="mt-3 max-w-2xl text-muted">
-					数据来自 DOTA2 官方 datafeed，共 {HEROES.length} 位英雄。点击英雄卡片可查看详细数值与技能。
-				</p>
-			</div>
-			<div class="rounded-lg border border-line bg-surface px-3 py-2 text-xs text-muted">
-				数据更新：<span class="text-cream">{updated}</span>
-			</div>
+		<div class="mb-8">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">英雄图鉴</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">英雄资料库</h1>
+			<p class="mt-3 max-w-2xl text-muted">
+				数据实时来自 DOTA2 官方 datafeed。点击英雄卡片可进入详情页查看数值与技能。
+			</p>
 		</div>
 
 		<div class="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -54,14 +42,28 @@ const updated = new Date(HERO_META.updated * 1000).toLocaleDateString('zh-CN', {
 		</div>
 
 		<div class="mb-4 flex items-center justify-between">
-			<h2 class="text-sm text-muted" id="hero-count">共 {HEROES.length} 位英雄</h2>
-			<span class="text-xs text-faint">当前筛选</span>
+			<h2 id="hero-count" class="text-sm text-muted">正在加载英雄数据…</h2>
+			<a href="https://www.dota2.com.cn/datafeed/heroList?task=herolist" target="_blank" rel="noopener noreferrer" class="text-xs text-faint underline-offset-2 transition hover:text-gold hover:underline">
+				官方数据源
+			</a>
+		</div>
+
+		<div id="hero-status" class="hidden rounded-2xl border border-line bg-surface p-8 text-center">
+			<p class="text-muted">英雄数据加载失败，请检查网络后重试。</p>
+			<button id="hero-retry" type="button" class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-light">
+				重新加载
+			</button>
 		</div>
 
 		<div id="hero-grid" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-			{HEROES.map((h) => (
-				<div data-attribute={h.attr} data-name={`${h.name} ${h.nameEn}`.toLowerCase()}>
-					<HeroCard hero={h} />
+			{Array.from({ length: 10 }).map(() => (
+				<div class="flex animate-pulse flex-col overflow-hidden rounded-2xl border border-line bg-surface">
+					<div class="aspect-[4/3] bg-surface-2"></div>
+					<div class="space-y-2 p-3.5">
+						<div class="h-4 rounded bg-surface-3"></div>
+						<div class="h-3 rounded bg-surface-3"></div>
+						<div class="h-3 w-1/2 rounded bg-surface-3"></div>
+					</div>
 				</div>
 			))}
 		</div>
@@ -69,28 +71,78 @@ const updated = new Date(HERO_META.updated * 1000).toLocaleDateString('zh-CN', {
 </Layout>
 
 <script>
+	import { fetchHeroList, ATTRIBUTE_META } from '../lib/heroApi';
+
 	(() => {
-		const filters = document.getElementById('hero-filters');
 		const grid = document.getElementById('hero-grid');
 		const count = document.getElementById('hero-count');
+		const filters = document.getElementById('hero-filters');
 		const search = document.getElementById('hero-search') as HTMLInputElement | null;
-		if (!filters || !grid || !count) return;
-		const cards = Array.from(grid.querySelectorAll<HTMLElement>('[data-attribute]'));
+		const status = document.getElementById('hero-status');
+		const retry = document.getElementById('hero-retry') as HTMLButtonElement | null;
+		if (!grid || !count) return;
+
+		let heroes: { id: number; name: string; nameEn: string; attr: string; complexity: number; img: string }[] = [];
 		let attr = 'all';
 		let q = '';
 
-		const apply = () => {
-			let shown = 0;
-			cards.forEach((c) => {
-				const matchesAttr = attr === 'all' || c.dataset.attribute === attr;
-				const matchesQ = !q || (c.dataset.name ?? '').includes(q);
-				c.hidden = !(matchesAttr && matchesQ);
-				if (c.hidden === false) shown++;
-			});
-			count.textContent = `共 ${shown} 位英雄`;
+		const esc = (s: string) =>
+			s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+		const renderCard = (h: (typeof heroes)[number]) => {
+			const color = ATTRIBUTE_META[h.attr as keyof typeof ATTRIBUTE_META]?.color ?? '#999';
+			return `
+				<a href="/heroes/${h.id}" class="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface transition hover:border-dota/60 hover:shadow-lg hover:shadow-dota/10" data-attribute="${h.attr}" data-name="${esc((h.name + ' ' + h.nameEn).toLowerCase())}">
+					<div class="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-surface-2 to-surface-3">
+						<img src="${esc(h.img)}" alt="${esc(h.name)}" loading="lazy" class="h-full w-full object-cover object-top transition duration-300 group-hover:scale-105">
+						<div class="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-surface via-surface/40 to-transparent"></div>
+						<span class="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-line bg-ink/70 text-[11px] font-bold backdrop-blur" style="color:${color}">${h.attr}</span>
+					</div>
+					<div class="flex flex-1 flex-col p-3.5">
+						<h3 class="font-display text-base leading-tight">${esc(h.name)}</h3>
+						<p class="mt-0.5 truncate text-xs text-muted">${esc(h.nameEn)}</p>
+						<div class="mt-3 flex items-center justify-between border-t border-line pt-3 text-xs">
+							<span class="flex items-center gap-1 text-faint"><span class="text-dota-light">${'●'.repeat(h.complexity)}</span><span class="text-surface-3">${'●'.repeat(3 - h.complexity)}</span></span>
+							<span class="text-faint">复杂度</span>
+						</div>
+					</div>
+				</a>`;
 		};
 
-		filters.querySelectorAll<HTMLButtonElement>('button[data-attr]').forEach((btn) => {
+		const apply = () => {
+			const visible = heroes.filter((h) => {
+				const mAttr = attr === 'all' || h.attr === attr;
+				const mQ = !q || (h.name + ' ' + h.nameEn).toLowerCase().includes(q);
+				return mAttr && mQ;
+			});
+			grid.innerHTML = visible.map(renderCard).join('');
+			count.textContent = `共 ${visible.length} 位英雄`;
+		};
+
+		const load = async () => {
+			grid.classList.remove('hidden');
+			if (status) status.classList.add('hidden');
+			count.textContent = '正在加载英雄数据…';
+			try {
+				const list = await fetchHeroList();
+				heroes = list.map((h) => ({
+					id: h.id,
+					name: h.name,
+					nameEn: h.nameEn,
+					attr: h.attr,
+					complexity: h.complexity,
+					img: h.img,
+				}));
+				apply();
+			} catch (e) {
+				console.error(e);
+				grid.classList.add('hidden');
+				if (status) status.classList.remove('hidden');
+				count.textContent = '加载失败';
+			}
+		};
+
+		filters?.querySelectorAll<HTMLButtonElement>('button[data-attr]').forEach((btn) => {
 			btn.addEventListener('click', () => {
 				attr = btn.dataset.attr!;
 				filters.querySelectorAll('button[data-attr]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
@@ -103,5 +155,8 @@ const updated = new Date(HERO_META.updated * 1000).toLocaleDateString('zh-CN', {
 			q = (search.value ?? '').trim().toLowerCase();
 			apply();
 		});
+
+		retry?.addEventListener('click', load);
+		load();
 	})();
 </script>

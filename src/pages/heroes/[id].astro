@@ -1,169 +1,184 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { HEROES, getHeroById, heroNeighbors, ATTRIBUTE_META, fmt } from '../../data/heroes';
+import { fetchHeroList } from '../../lib/heroApi';
 
-export function getStaticPaths() {
-	return HEROES.map((h) => ({ params: { id: String(h.id) } }));
+export async function getStaticPaths() {
+	const list = await fetchHeroList();
+	const order = ['STR', 'AGI', 'INT', 'UNI'];
+	const sorted = [...list].sort((a, b) => order.indexOf(a.attr) - order.indexOf(b.attr) || a.name.localeCompare(b.name, 'zh'));
+	return sorted.map((h, i) => {
+		const prev = sorted[(i - 1 + sorted.length) % sorted.length];
+		const next = sorted[(i + 1) % sorted.length];
+		return {
+			params: { id: String(h.id) },
+			props: {
+				id: h.id,
+				name: h.name,
+				nameEn: h.nameEn,
+				prevId: prev.id,
+				prevName: prev.name,
+				nextId: next.id,
+				nextName: next.name,
+			},
+		};
+	});
 }
 
-const hero = getHeroById(Astro.params.id)!;
-
-function stripHtml(input: string): string {
-	if (!input) return '';
-	return input
-		.replace(/<br\s*\/?>/gi, '\n')
-		.replace(/<[^>]+>/g, '')
-		.replace(/&nbsp;/g, ' ')
-		.replace(/&amp;/g, '&')
-		.replace(/&lt;/g, '<')
-		.replace(/&gt;/g, '>')
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;/g, "'")
-		.replace(/[ \t]+/g, ' ')
-		.replace(/\n{3,}/g, '\n\n')
-		.trim();
-}
-
-const { prev, next } = heroNeighbors(hero.id);
-const attr = ATTRIBUTE_META[hero.attr];
-const bio = stripHtml(hero.bio);
-const hype = stripHtml(hero.hype);
-const s = hero.stats;
+const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as {
+	id: number;
+	name: string;
+	nameEn: string;
+	prevId: number;
+	prevName: string;
+	nextId: number;
+	nextName: string;
+};
 ---
 
-<Layout title={`${hero.name} · 英雄资料 · DOTA2 驿站`} description={`${hero.name}（${hero.nameEn}）英雄详细数据与技能。`}>
+<Layout title={`${name} · 英雄资料 · DOTA2 驿站`} description={`${name}（${nameEn}）英雄详细数据与技能，实时来自官方接口。`}>
 	<section class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
 			<a href="/heroes" class="transition hover:text-dota-light">英雄资料</a>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
-			<span class="text-cream">{hero.name}</span>
+			<span class="text-cream">{name}</span>
 		</nav>
 
-		<!-- Hero header -->
-		<div class="overflow-hidden rounded-2xl border border-line bg-surface">
-			<div class="grid grid-cols-1 lg:grid-cols-[1fr_360px]">
-				<div class="p-6 lg:p-8">
-					<div class="flex flex-wrap items-center gap-2">
-						<h1 class="font-display text-3xl sm:text-4xl">{hero.name}</h1>
-						<span class="text-lg text-muted">{hero.nameEn}</span>
+		<div id="hero-view" data-hero-id={id}>
+			<!-- 骨架屏（加载完成后由脚本替换） -->
+			<div class="overflow-hidden rounded-2xl border border-line bg-surface">
+				<div class="grid grid-cols-1 lg:grid-cols-[1fr_360px]">
+					<div class="space-y-4 p-8">
+						<div class="h-9 w-48 animate-pulse rounded bg-surface-2"></div>
+						<div class="h-4 w-64 animate-pulse rounded bg-surface-2"></div>
+						<div class="h-24 w-full animate-pulse rounded bg-surface-2"></div>
 					</div>
-					<div class="mt-4 flex flex-wrap gap-2">
-						<span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold" style={`background:${attr.color}22;color:${attr.color}`}>
-							<span style={`color:${attr.color}`}>●</span> {attr.label}
-						</span>
-						<span class="rounded-md bg-surface-3 px-2.5 py-1 text-sm">{hero.attack === 'melee' ? '近战' : '远程'}</span>
-						<span class="rounded-md bg-surface-3 px-2.5 py-1 text-sm">复杂度 {'●'.repeat(hero.complexity)}</span>
-					</div>
-					{hero.roles.length > 0 && (
-						<div class="mt-4 flex flex-wrap gap-1.5">
-							{hero.roles.map((r) => (
-								<span class="rounded bg-dota/10 px-2.5 py-1 text-sm text-dota-light">{r.label}</span>
-							))}
-						</div>
-					)}
-
-					<h2 class="mt-6 font-display text-lg text-gold">英雄定位</h2>
-					<p class="mt-1 leading-relaxed text-muted">{hype}</p>
-
-					<h2 class="mt-6 font-display text-lg text-gold">背景故事</h2>
-					<p class="mt-1 whitespace-pre-line leading-relaxed text-cream/90">{bio}</p>
-				</div>
-
-				<div class="relative hidden min-h-[320px] overflow-hidden border-l border-line lg:block">
-					<img src={hero.img} alt={hero.name} class="absolute inset-0 h-full w-full object-cover object-top" />
-					<div class="absolute inset-0 bg-gradient-to-r from-surface via-transparent to-transparent" aria-hidden="true"></div>
+					<div class="h-[320px] animate-pulse bg-surface-2"></div>
 				</div>
 			</div>
 		</div>
 
-		<!-- Stats -->
-		<h2 class="mt-10 mb-4 font-display text-xl">基础数值</h2>
-		<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-			{[
-				['生命值', fmt(s.maxHealth)],
-				['生命回复', fmt(s.healthRegen, 1)],
-				['魔法值', fmt(s.maxMana)],
-				['魔法回复', fmt(s.manaRegen, 1)],
-				['护甲', fmt(s.armor, 1)],
-				['魔抗', `${fmt(s.magicResistance)}%`],
-				['攻击力', `${fmt(s.damageMin)} - ${fmt(s.damageMax)}`],
-				['攻击间隔', `${fmt(s.attackRate, 2)}s`],
-				['攻击距离', fmt(s.attackRange)],
-				['移动速度', fmt(s.moveSpeed)],
-				['白天视野', fmt(s.sightDay)],
-				['夜晚视野', fmt(s.sightNight)],
-			].map(([label, value]) => (
-				<div class="rounded-xl border border-line bg-surface p-4">
-					<p class="text-xs text-faint">{label}</p>
-					<p class="mt-1 font-display text-lg text-cream">{value}</p>
-				</div>
-			))}
-		</div>
-
-		<!-- Attribute growth -->
-		<h2 class="mt-10 mb-4 font-display text-xl">属性成长</h2>
-		<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-			{[
-				['力量', s.strBase, s.strGain, '#C0392B'],
-				['敏捷', s.agiBase, s.agiGain, '#2E8B57'],
-				['智力', s.intBase, s.intGain, '#2980B9'],
-			].map(([label, base, gain, color]) => (
-				<div class="rounded-xl border border-line bg-surface p-4">
-					<div class="flex items-center justify-between">
-						<p class="text-sm" style={`color:${color}`}>{label as string}</p>
-						<p class="font-display text-lg text-cream">{base as number} +{(gain as number).toFixed(1)}</p>
-					</div>
-					<div class="mt-3 h-2 overflow-hidden rounded-full bg-surface-3">
-						<div class="h-full rounded-full" style={`width:${Math.min(100, ((gain as number) / 5) * 100)}%;background:${color}`}></div>
-					</div>
-				</div>
-			))}
-		</div>
-
-		<!-- Abilities -->
-		<h2 class="mt-10 mb-4 font-display text-xl">技能</h2>
-		<div class="space-y-3">
-			{
-				hero.abilities.map((a) => (
-					<article class="flex gap-4 rounded-2xl border border-line bg-surface p-5">
-						<div class="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-surface-3">
-							{
-								a.img ? (
-									<img src={a.img} alt={a.nameLoc} class="h-full w-full object-cover" loading="lazy" />
-								) : (
-									<div class="flex h-full w-full items-center justify-center font-display text-gold">{a.nameLoc.slice(0, 1)}</div>
-								)
-							}
-						</div>
-						<div class="min-w-0">
-							<h3 class="font-display text-base">{a.nameLoc}</h3>
-							<p class="mt-1 text-sm leading-relaxed text-muted">{stripHtml(a.desc)}</p>
-						</div>
-					</article>
-				))
-			}
-		</div>
-
-		<!-- Prev / Next -->
-		<div class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
-			{prev ? (
-				<a href={`/heroes/${prev.id}`} class="group flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
-					<svg class="transition group-hover:-translate-x-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<path d="M19 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-					</svg>
-					{prev.name}
-				</a>
-			) : <span />}
-			{next ? (
-				<a href={`/heroes/${next.id}`} class="group flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
-					{next.name}
-					<svg class="transition group-hover:translate-x-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-					</svg>
-				</a>
-			) : <span />}
+		<div id="hero-nav" class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
+			<a href={`/heroes/${prevId}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<path d="M19 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+				{prevName}
+			</a>
+			<a href={`/heroes/${nextId}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+				{nextName}
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+					<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+				</svg>
+			</a>
 		</div>
 	</section>
 </Layout>
+
+<script>
+	import { fetchHero, ATTRIBUTE_META, fmt } from '../../lib/heroApi';
+
+	(() => {
+		const view = document.getElementById('hero-view');
+		if (!view) return;
+		const id = view.dataset.heroId!;
+		const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+		const renderError = () => {
+			view.innerHTML = `
+				<div class="rounded-2xl border border-line bg-surface p-10 text-center">
+					<p class="text-muted">英雄数据加载失败，请检查网络后重试。</p>
+					<button data-retry class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-light">重新加载</button>
+				</div>`;
+			view.querySelector('[data-retry]')?.addEventListener('click', load);
+		};
+
+		const statTile = (label: string, value: string) =>
+			`<div class="rounded-xl border border-line bg-surface p-4"><p class="text-xs text-faint">${label}</p><p class="mt-1 font-display text-lg text-cream">${value}</p></div>`;
+
+		const load = async () => {
+			try {
+				const h = await fetchHero(id);
+				const attr = ATTRIBUTE_META[h.attr];
+				const s = h.stats;
+				document.title = `${h.name} · 英雄资料 · DOTA2 驿站`;
+				view.innerHTML = `
+					<div class="overflow-hidden rounded-2xl border border-line bg-surface">
+						<div class="grid grid-cols-1 lg:grid-cols-[1fr_360px]">
+							<div class="p-6 lg:p-8">
+								<div class="flex flex-wrap items-center gap-2">
+									<h1 class="font-display text-3xl sm:text-4xl">${esc(h.name)}</h1>
+									<span class="text-lg text-muted">${esc(h.nameEn)}</span>
+								</div>
+								<div class="mt-4 flex flex-wrap gap-2">
+									<span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold" style="background:${attr.color}22;color:${attr.color}"><span style="color:${attr.color}">●</span> ${attr.label}</span>
+									<span class="rounded-md bg-surface-3 px-2.5 py-1 text-sm">${h.attack === 'melee' ? '近战' : '远程'}</span>
+									<span class="rounded-md bg-surface-3 px-2.5 py-1 text-sm">复杂度 ${'●'.repeat(h.complexity)}</span>
+								</div>
+								${h.roles.length ? `<div class="mt-4 flex flex-wrap gap-1.5">${h.roles.map((r) => `<span class="rounded bg-dota/10 px-2.5 py-1 text-sm text-dota-light">${esc(r.label)}</span>`).join('')}</div>` : ''}
+								<h2 class="mt-6 font-display text-lg text-gold">英雄定位</h2>
+								<p class="mt-1 leading-relaxed text-muted">${esc(h.hype)}</p>
+								<h2 class="mt-6 font-display text-lg text-gold">背景故事</h2>
+								<p class="mt-1 whitespace-pre-line leading-relaxed text-cream/90">${esc(h.bio)}</p>
+							</div>
+							<div class="relative hidden min-h-[320px] overflow-hidden border-l border-line lg:block">
+								<img src="${esc(h.img)}" alt="${esc(h.name)}" class="absolute inset-0 h-full w-full object-cover object-top">
+								<div class="absolute inset-0 bg-gradient-to-r from-surface via-transparent to-transparent"></div>
+							</div>
+						</div>
+					</div>
+
+					<h2 class="mt-10 mb-4 font-display text-xl">基础数值</h2>
+					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+						${statTile('生命值', fmt(s.maxHealth))}
+						${statTile('生命回复', fmt(s.healthRegen, 1))}
+						${statTile('魔法值', fmt(s.maxMana))}
+						${statTile('魔法回复', fmt(s.manaRegen, 1))}
+						${statTile('护甲', fmt(s.armor, 1))}
+						${statTile('魔抗', fmt(s.magicResistance) + '%')}
+						${statTile('攻击力', fmt(s.damageMin) + ' - ' + fmt(s.damageMax))}
+						${statTile('攻击间隔', fmt(s.attackRate, 2) + 's')}
+						${statTile('攻击距离', fmt(s.attackRange))}
+						${statTile('移动速度', fmt(s.moveSpeed))}
+						${statTile('白天视野', fmt(s.sightDay))}
+						${statTile('夜晚视野', fmt(s.sightNight))}
+					</div>
+
+					<h2 class="mt-10 mb-4 font-display text-xl">属性成长</h2>
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+						${[
+							['力量', s.strBase, s.strGain, '#C0392B'],
+							['敏捷', s.agiBase, s.agiGain, '#2E8B57'],
+							['智力', s.intBase, s.intGain, '#2980B9'],
+						]
+							.map(([label, base, gain, color]) => {
+								const w = Math.min(100, ((Number(gain) as number) / 5) * 100);
+								return `<div class="rounded-xl border border-line bg-surface p-4">
+									<div class="flex items-center justify-between"><p class="text-sm" style="color:${color}">${label}</p><p class="font-display text-lg text-cream">${base} +${Number(gain).toFixed(1)}</p></div>
+									<div class="mt-3 h-2 overflow-hidden rounded-full bg-surface-3"><div class="h-full rounded-full" style="width:${w}%;background:${color}"></div></div>
+								</div>`;
+							})
+							.join('')}
+					</div>
+
+					<h2 class="mt-10 mb-4 font-display text-xl">技能</h2>
+					<div class="space-y-3">
+						${h.abilities
+							.map(
+								(a) => `<article class="flex gap-4 rounded-2xl border border-line bg-surface p-5">
+									<div class="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-surface-3">${a.img ? `<img src="${esc(a.img)}" alt="${esc(a.nameLoc)}" class="h-full w-full object-cover" loading="lazy">` : `<div class="flex h-full w-full items-center justify-center font-display text-gold">${esc(a.nameLoc.slice(0, 1))}</div>`}</div>
+									<div class="min-w-0"><h3 class="font-display text-base">${esc(a.nameLoc)}</h3><p class="mt-1 text-sm leading-relaxed text-muted">${esc(a.desc)}</p></div>
+								</article>`,
+							)
+							.join('')}
+					</div>`;
+			} catch (e) {
+				console.error(e);
+				renderError();
+			}
+		};
+
+		load();
+	})();
+</script>

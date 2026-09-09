@@ -9,7 +9,6 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "heroes:fetch": "node scripts/fetch-heroes.mjs",
     "astro": "astro"
   },
   "dependencies": {
