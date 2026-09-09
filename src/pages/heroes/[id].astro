@@ -218,11 +218,14 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 
 				view.innerHTML = `
 					<!-- 动态英雄展示 -->
-					<div class="relative overflow-hidden rounded-2xl border border-line bg-ink">
-						${h.topVideo ? `
-							<video id="hero-top" class="h-[340px] w-full object-cover object-top sm:h-[420px]" autoplay muted loop playsinline preload="auto" referrerpolicy="no-referrer" poster="${esc(h.topImg || h.img)}" src="${esc(h.topVideo)}"></video>` : `
-							<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="h-[340px] w-full object-cover object-top sm:h-[420px]">`}
-						<div class="absolute inset-0 bg-gradient-to-t from-ink via-ink/20 to-transparent" aria-hidden="true"></div>
+					<div class="relative overflow-hidden rounded-3xl border border-line bg-ink-2">
+						<div class="relative h-[420px] sm:h-[540px] lg:h-[640px]">
+							${h.topVideo ? `
+								<video id="hero-top" class="absolute inset-0 h-full w-full object-contain object-center" autoplay muted loop playsinline preload="auto" referrerpolicy="no-referrer" poster="${esc(h.topImg || h.img)}" src="${esc(h.topVideo)}"></video>` : `
+								<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-contain object-center">`}
+							<div class="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_50%_at_50%_45%,rgba(173,61,40,0.18),transparent_70%)]" aria-hidden="true"></div>
+							<div class="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-ink via-ink/40 to-transparent" aria-hidden="true"></div>
+						</div>
 						<div class="absolute inset-x-0 bottom-0 p-6 sm:p-8">
 							<div class="flex flex-wrap items-end gap-x-4 gap-y-2">
 								<h1 class="font-display text-4xl sm:text-5xl">${esc(h.name)}</h1>

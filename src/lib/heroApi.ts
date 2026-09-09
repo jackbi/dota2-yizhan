@@ -149,6 +149,28 @@ export function stripHtml(input: string): string {
 		.trim();
 }
 
+/**
+ * 官方素材部分走 cdn.akamai.steamstatic.com / cdn.cloudflare.steamstatic.com（部分网络不可达），
+ * 统一重写到可访问的 img.dota2.com.cn 静态目录。
+ */
+function normalizeCdn(url: string): string {
+	if (!url) return url;
+	let host = '';
+	try {
+		host = new URL(url).host;
+	} catch {
+		return url;
+	}
+	if (host === 'img.dota2.com.cn') return url;
+	if (host.endsWith('steamstatic.com')) {
+		const parts = url.split('/');
+		const file = parts.pop();
+		const folder = parts.pop();
+		return `https://img.dota2.com.cn/dota2static/herostatic/npc_dota_hero_${folder}/${file}`;
+	}
+	return url;
+}
+
 async function getJson<T>(url: string): Promise<T> {
 	const ctrl = new AbortController();
 	const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -242,19 +264,19 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			name: a.name,
 			nameLoc: a.name_loc,
 			desc: resolveTemplate(stripHtml(a.desc_loc), specialMap),
-			img: a.ability_is_innate || a.is_inborn ? INNATE_ICON : a.img,
-			videoMp4: a.video_mp4,
-			videoWebm: a.video_webm,
-			videoPoster: a.video_jpg || a.img,
+			img: a.ability_is_innate || a.is_inborn ? INNATE_ICON : normalizeCdn(a.img),
+			videoMp4: normalizeCdn(a.video_mp4),
+			videoWebm: normalizeCdn(a.video_webm),
+			videoPoster: normalizeCdn(a.video_jpg || a.img),
 			hasScepter: Boolean(a.video_scepter_webm) || Boolean(a.video_scepter_mp4),
 			hasShard: Boolean(a.video_shard_webm) || Boolean(a.video_shard_mp4),
 			isInborn: Boolean(a.is_inborn) || Boolean(a.ability_is_innate),
-			scepterMp4: a.video_scepter_mp4,
-			scepterWebm: a.video_scepter_webm,
-			scepterPoster: a.video_scepter_jpg || a.img,
-			shardMp4: a.video_shard_mp4,
-			shardWebm: a.video_shard_webm,
-			shardPoster: a.video_shard_jpg || a.img,
+			scepterMp4: normalizeCdn(a.video_scepter_mp4),
+			scepterWebm: normalizeCdn(a.video_scepter_webm),
+			scepterPoster: normalizeCdn(a.video_scepter_jpg || a.img),
+			shardMp4: normalizeCdn(a.video_shard_mp4),
+			shardWebm: normalizeCdn(a.video_shard_webm),
+			shardPoster: normalizeCdn(a.video_shard_jpg || a.img),
 		})),
 		talents: (h.talents ?? []).map((t) => ({
 			id: t.id,
