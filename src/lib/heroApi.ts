@@ -36,6 +36,13 @@ export interface HeroAbility {
 	nameLoc: string;
 	desc: string;
 	img: string;
+	videoMp4: string;
+	videoWebm: string;
+	hasScepter: boolean;
+	hasShard: boolean;
+	isInborn: boolean;
+	scepterVideo: string;
+	shardVideo: string;
 }
 
 export interface HeroListEntry {
@@ -55,6 +62,7 @@ export interface Hero extends HeroListEntry {
 	hype: string;
 	stats: HeroStats;
 	abilities: HeroAbility[];
+	topVideo: string;
 }
 
 export const ATTRIBUTES: { id: Attribute; label: string; color: string }[] = [
@@ -151,6 +159,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 		imgCrop: h.crops_img,
 		bio: stripHtml(h.bio_loc),
 		hype: stripHtml(h.hype_loc),
+		topVideo: h.top_video,
 		stats: {
 			strBase: h.str_base,
 			strGain: h.str_gain,
@@ -177,6 +186,13 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			nameLoc: a.name_loc,
 			desc: stripHtml(a.desc_loc),
 			img: a.img,
+			videoMp4: a.video_mp4,
+			videoWebm: a.video_webm,
+			hasScepter: Boolean(a.video_scepter_webm) || Boolean(a.video_scepter_mp4),
+			hasShard: Boolean(a.video_shard_webm) || Boolean(a.video_shard_mp4),
+			isInborn: Boolean(a.is_inborn),
+			scepterVideo: a.video_scepter_webm || a.video_scepter_mp4,
+			shardVideo: a.video_shard_webm || a.video_shard_mp4,
 		})),
 	};
 }

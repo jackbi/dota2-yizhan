@@ -35,7 +35,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 };
 ---
 
-<Layout title={`${name} · 英雄资料 · DOTA2 驿站`} description={`${name}（${nameEn}）英雄详细数据与技能，实时来自官方接口。`}>
+<Layout title={`${name} · 英雄资料 · DOTA2 驿站`} description={`${name}（${nameEn}）英雄详细数据与技能动画，实时来自官方接口。`}>
 	<section class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
 			<a href="/heroes" class="transition hover:text-dota-light">英雄资料</a>
@@ -54,7 +54,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 						<div class="h-4 w-64 animate-pulse rounded bg-surface-2"></div>
 						<div class="h-24 w-full animate-pulse rounded bg-surface-2"></div>
 					</div>
-					<div class="h-[320px] animate-pulse bg-surface-2"></div>
+					<div class="h-[360px] animate-pulse bg-surface-2"></div>
 				</div>
 			</div>
 		</div>
@@ -83,7 +83,15 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 		const view = document.getElementById('hero-view');
 		if (!view) return;
 		const id = view.dataset.heroId!;
-		const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+		const esc = (s: string | null | undefined) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+		const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		const mediaSources = (mp4: string, webm: string) => {
+			const sources: string[] = [];
+			if (webm) sources.push(`<source src="${esc(webm)}" type="video/webm">`);
+			if (mp4) sources.push(`<source src="${esc(mp4)}" type="video/mp4">`);
+			return sources.join('');
+		};
 
 		const renderError = () => {
 			view.innerHTML = `
@@ -103,31 +111,82 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 				const attr = ATTRIBUTE_META[h.attr];
 				const s = h.stats;
 				document.title = `${h.name} · 英雄资料 · DOTA2 驿站`;
+
+				// 技能交互预览
+				const skillTabs = h.abilities
+					.map(
+						(a, i) => `
+						<button type="button" data-skill="${i}" class="skill-tab group flex items-center gap-3 rounded-xl border border-line bg-surface p-2 text-left transition" aria-selected="${i === 0}">
+							<span class="flex h-12 w-12 shrink-0 overflow-hidden rounded-lg border border-line bg-surface-3">
+								${a.img ? `<img src="${esc(a.img)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-full w-full object-cover">` : `<span class="flex h-full w-full items-center justify-center font-display text-gold">${esc(a.nameLoc.slice(0, 1))}</span>`}
+							</span>
+							<span class="min-w-0">
+								<span class="block truncate text-sm font-medium text-cream">${esc(a.nameLoc)}</span>
+								<span class="block truncate text-xs text-faint">${a.isInborn ? '天生技能' : a.hasScepter || a.hasShard ? '含天赋升级' : '技能'}</span>
+							</span>
+						</button>`,
+					)
+					.join('');
+
+				const first = h.abilities[0];
+				const viewer = `
+					<div class="overflow-hidden rounded-2xl border border-line bg-ink">
+						<div class="relative aspect-video w-full bg-ink-2">
+							${first?.videoWebm || first?.videoMp4 ? `
+								<video id="ability-video" class="h-full w-full object-contain" autoplay muted loop playsinline preload="metadata" referrerpolicy="no-referrer" poster="${esc(first.img)}">${mediaSources(first.videoMp4, first.videoWebm)}</video>` : `
+								<img src="${esc(first?.img)}" alt="${esc(first?.nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain">`}
+						</div>
+						<div class="p-5">
+							<h3 id="ability-name" class="font-display text-lg">${esc(first?.nameLoc ?? '')}</h3>
+							<p id="ability-desc" class="mt-2 text-sm leading-relaxed text-muted">${esc(first?.desc ?? '')}</p>
+							<div id="ability-tags" class="mt-3 flex flex-wrap gap-1.5">${first?.hasScepter ? '<span class="rounded bg-gold/15 px-2 py-0.5 text-xs text-gold">神杖升级</span>' : ''}${first?.hasShard ? '<span class="rounded bg-dota/15 px-2 py-0.5 text-xs text-dota-light">魔晶升级</span>' : ''}${first?.isInborn ? '<span class="rounded bg-zinc-600/15 px-2 py-0.5 text-xs text-zinc-400">天生技能</span>' : ''}</div>
+						</div>
+					</div>`;
+
+				// 技能选择器：左侧列表 + 右侧动态预览
+				const abilitiesBlock = h.abilities.length
+					? `
+						<h2 class="mb-4 font-display text-xl">技能动画</h2>
+						<div class="grid grid-cols-1 gap-4 lg:grid-cols-[300px_1fr]">
+							<div id="skill-list" class="flex flex-row gap-2 overflow-x-auto lg:flex-col" role="tablist" aria-label="技能列表">${skillTabs}</div>
+							<div id="skill-viewer">${viewer}</div>
+						</div>`
+					: '';
+
 				view.innerHTML = `
-					<div class="overflow-hidden rounded-2xl border border-line bg-surface">
-						<div class="grid grid-cols-1 lg:grid-cols-[1fr_360px]">
-							<div class="p-6 lg:p-8">
-								<div class="flex flex-wrap items-center gap-2">
-									<h1 class="font-display text-3xl sm:text-4xl">${esc(h.name)}</h1>
-									<span class="text-lg text-muted">${esc(h.nameEn)}</span>
-								</div>
-								<div class="mt-4 flex flex-wrap gap-2">
-									<span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold" style="background:${attr.color}22;color:${attr.color}"><span style="color:${attr.color}">●</span> ${attr.label}</span>
-									<span class="rounded-md bg-surface-3 px-2.5 py-1 text-sm">${h.attack === 'melee' ? '近战' : '远程'}</span>
-									<span class="rounded-md bg-surface-3 px-2.5 py-1 text-sm">复杂度 ${'●'.repeat(h.complexity)}</span>
-								</div>
-								${h.roles.length ? `<div class="mt-4 flex flex-wrap gap-1.5">${h.roles.map((r) => `<span class="rounded bg-dota/10 px-2.5 py-1 text-sm text-dota-light">${esc(r.label)}</span>`).join('')}</div>` : ''}
-								<h2 class="mt-6 font-display text-lg text-gold">英雄定位</h2>
-								<p class="mt-1 leading-relaxed text-muted">${esc(h.hype)}</p>
-								<h2 class="mt-6 font-display text-lg text-gold">背景故事</h2>
-								<p class="mt-1 whitespace-pre-line leading-relaxed text-cream/90">${esc(h.bio)}</p>
+					<!-- 动态英雄展示 -->
+					<div class="relative overflow-hidden rounded-2xl border border-line bg-ink">
+						${h.topVideo ? `
+							<video id="hero-top" class="h-[340px] w-full object-cover object-top sm:h-[420px]" autoplay muted loop playsinline preload="metadata" referrerpolicy="no-referrer" poster="${esc(h.img)}">${mediaSources('', h.topVideo)}</video>` : `
+							<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="h-[340px] w-full object-cover object-top sm:h-[420px]">`}
+						<div class="absolute inset-0 bg-gradient-to-t from-ink via-ink/20 to-transparent" aria-hidden="true"></div>
+						<div class="absolute inset-x-0 bottom-0 p-6 sm:p-8">
+							<div class="flex flex-wrap items-end gap-x-4 gap-y-2">
+								<h1 class="font-display text-4xl sm:text-5xl">${esc(h.name)}</h1>
+								<span class="pb-1.5 text-lg text-muted">${esc(h.nameEn)}</span>
 							</div>
-							<div class="relative hidden min-h-[320px] overflow-hidden border-l border-line lg:block">
-								<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover object-top">
-								<div class="absolute inset-0 bg-gradient-to-r from-surface via-transparent to-transparent"></div>
+							<div class="mt-3 flex flex-wrap gap-2">
+								<span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-sm font-semibold" style="background:${attr.color}22;color:${attr.color}"><span style="color:${attr.color}">●</span> ${attr.label}</span>
+								<span class="rounded-md bg-ink/60 px-2.5 py-1 text-sm backdrop-blur">${h.attack === 'melee' ? '近战' : '远程'}</span>
+								<span class="rounded-md bg-ink/60 px-2.5 py-1 text-sm backdrop-blur">复杂度 ${'●'.repeat(h.complexity)}</span>
 							</div>
+							${h.roles.length ? `<div class="mt-3 flex flex-wrap gap-1.5">${h.roles.map((r) => `<span class="rounded bg-ink/60 px-2.5 py-1 text-sm text-gold backdrop-blur">${esc(r.label)}</span>`).join('')}</div>` : ''}
 						</div>
 					</div>
+
+					<!-- 定位与背景 -->
+					<div class="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-2">
+						<div class="rounded-2xl border border-line bg-surface p-6">
+							<h2 class="font-display text-lg text-gold">英雄定位</h2>
+							<p class="mt-2 leading-relaxed text-muted">${esc(h.hype)}</p>
+						</div>
+						<div class="rounded-2xl border border-line bg-surface p-6">
+							<h2 class="font-display text-lg text-gold">背景故事</h2>
+							<p class="mt-2 whitespace-pre-line leading-relaxed text-cream/90">${esc(h.bio)}</p>
+						</div>
+					</div>
+
+					<div class="mt-10">${abilitiesBlock}</div>
 
 					<h2 class="mt-10 mb-4 font-display text-xl">基础数值</h2>
 					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -160,19 +219,37 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 								</div>`;
 							})
 							.join('')}
-					</div>
-
-					<h2 class="mt-10 mb-4 font-display text-xl">技能</h2>
-					<div class="space-y-3">
-						${h.abilities
-							.map(
-								(a) => `<article class="flex gap-4 rounded-2xl border border-line bg-surface p-5">
-									<div class="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-surface-3">${a.img ? `<img src="${esc(a.img)}" alt="${esc(a.nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-cover" loading="lazy">` : `<div class="flex h-full w-full items-center justify-center font-display text-gold">${esc(a.nameLoc.slice(0, 1))}</div>`}</div>
-									<div class="min-w-0"><h3 class="font-display text-base">${esc(a.nameLoc)}</h3><p class="mt-1 text-sm leading-relaxed text-muted">${esc(a.desc)}</p></div>
-								</article>`,
-							)
-							.join('')}
 					</div>`;
+
+				// 技能交互
+				const skillList = document.getElementById('skill-list');
+				const viewerEl = document.getElementById('skill-viewer');
+				const heroTop = document.getElementById('hero-top') as HTMLVideoElement | null;
+				if (heroTop && reducedMotion) heroTop.removeAttribute('autoplay');
+
+				const setSkill = (i: number) => {
+					const a = h.abilities[i];
+					if (!a) return;
+					skillList?.querySelectorAll('.skill-tab').forEach((b, idx) => b.setAttribute('aria-selected', String(idx === i)));
+					if (viewerEl) {
+						const hasVideo = Boolean(a.videoWebm || a.videoMp4);
+						viewerEl.innerHTML = `
+							<div class="overflow-hidden rounded-2xl border border-line bg-ink">
+								<div class="relative aspect-video w-full bg-ink-2">
+									${hasVideo ? `<video class="ability-video h-full w-full object-contain" autoplay muted loop playsinline preload="metadata" referrerpolicy="no-referrer" poster="${esc(a.img)}">${mediaSources(a.videoMp4, a.videoWebm)}</video>` : `<img src="${esc(a.img)}" alt="${esc(a.nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain">`}
+								</div>
+								<div class="p-5">
+									<h3 class="font-display text-lg">${esc(a.nameLoc)}</h3>
+									<p class="mt-2 text-sm leading-relaxed text-muted">${esc(a.desc)}</p>
+									<div class="mt-3 flex flex-wrap gap-1.5">${a.hasScepter ? '<span class="rounded bg-gold/15 px-2 py-0.5 text-xs text-gold">神杖升级</span>' : ''}${a.hasShard ? '<span class="rounded bg-dota/15 px-2 py-0.5 text-xs text-dota-light">魔晶升级</span>' : ''}${a.isInborn ? '<span class="rounded bg-zinc-600/15 px-2 py-0.5 text-xs text-zinc-400">天生技能</span>' : ''}</div>
+								</div>
+							</div>`;
+					}
+				};
+
+				skillList?.querySelectorAll('.skill-tab').forEach((btn) => {
+					btn.addEventListener('click', () => setSkill(Number((btn as HTMLElement).dataset.skill)));
+				});
 			} catch (e) {
 				console.error(e);
 				renderError();
