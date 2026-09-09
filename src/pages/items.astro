@@ -112,8 +112,8 @@ import Layout from '../layouts/Layout.astro';
 					<span class="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-surface/70 to-transparent" aria-hidden="true"></span>
 				</span>
 				<span class="flex min-w-0 items-center justify-between gap-2 px-3 pb-3 pt-2">
-					<span class="min-w-0">
-						<span class="block truncate text-sm font-medium leading-tight text-cream">${esc(it.nameLoc)}</span>
+					<span class="min-w-0 flex-1">
+						<span class="block break-words text-sm font-medium leading-snug text-cream">${esc(it.nameLoc)}</span>
 						<span class="mt-0.5 block text-xs tabular-nums text-gold">${fmtCost(it.cost)}</span>
 					</span>
 					<svg class="h-4 w-4 shrink-0 text-faint transition group-hover:text-gold" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
