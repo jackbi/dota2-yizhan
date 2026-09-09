@@ -38,11 +38,22 @@ export interface HeroAbility {
 	img: string;
 	videoMp4: string;
 	videoWebm: string;
+	videoPoster: string;
 	hasScepter: boolean;
 	hasShard: boolean;
 	isInborn: boolean;
-	scepterVideo: string;
-	shardVideo: string;
+	scepterMp4: string;
+	scepterWebm: string;
+	scepterPoster: string;
+	shardMp4: string;
+	shardWebm: string;
+	shardPoster: string;
+}
+
+export interface TalentNode {
+	id: number;
+	name: string;
+	desc: string;
 }
 
 export interface HeroListEntry {
@@ -63,6 +74,8 @@ export interface Hero extends HeroListEntry {
 	stats: HeroStats;
 	abilities: HeroAbility[];
 	topVideo: string;
+	talents: TalentNode[];
+	specialMap: Record<string, number>;
 }
 
 export const ATTRIBUTES: { id: Attribute; label: string; color: string }[] = [
@@ -94,6 +107,9 @@ export const ROLE_LABEL: Record<string, string> = {
 };
 
 const ATTR_MAP: Record<number, Attribute> = { 0: 'STR', 1: 'AGI', 2: 'INT', 3: 'UNI' };
+
+/** 先天技能的固定图标（官方统一使用该素材） */
+export const INNATE_ICON = 'https://img.dota2.com.cn/dota2static/facets/innate_icon.png';
 
 export function stripHtml(input: string): string {
 	if (!input) return '';
@@ -144,6 +160,16 @@ export async function fetchHeroList(): Promise<HeroListEntry[]> {
 export async function fetchHero(id: number | string): Promise<Hero> {
 	const data = await getJson<{ result: { heroes: any } }>(`${BASE}/hero?hero_id=${id}`);
 	const h = data.result.heroes;
+	// 汇总所有技能的特殊数值，用于替换天赋/描述里的 {s:key} 占位
+	const specialMap: Record<string, number> = {};
+	for (const a of h.abilities ?? []) {
+		for (const sv of a.special_values ?? []) {
+			const name = sv.name;
+			if (!name || name in specialMap) continue;
+			const raw = sv.values_float?.length ? sv.values_float : sv.values_shard?.length ? sv.values_shard : sv.values_scepter?.length ? sv.values_scepter : [];
+			if (raw.length) specialMap[name] = Number(raw[0]);
+		}
+	}
 	const roles = ROLE_ORDER.map((key, i) => ({ key, label: ROLE_LABEL[key], level: h.role_levels?.[i] ?? 0 }))
 		.filter((r) => r.level > 0)
 		.sort((a, b) => b.level - a.level);
@@ -185,15 +211,26 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			name: a.name,
 			nameLoc: a.name_loc,
 			desc: stripHtml(a.desc_loc),
-			img: a.img,
+			img: a.ability_is_innate || a.is_inborn ? INNATE_ICON : a.img,
 			videoMp4: a.video_mp4,
 			videoWebm: a.video_webm,
+			videoPoster: a.video_jpg || a.img,
 			hasScepter: Boolean(a.video_scepter_webm) || Boolean(a.video_scepter_mp4),
 			hasShard: Boolean(a.video_shard_webm) || Boolean(a.video_shard_mp4),
-			isInborn: Boolean(a.is_inborn),
-			scepterVideo: a.video_scepter_webm || a.video_scepter_mp4,
-			shardVideo: a.video_shard_webm || a.video_shard_mp4,
+			isInborn: Boolean(a.is_inborn) || Boolean(a.ability_is_innate),
+			scepterMp4: a.video_scepter_mp4,
+			scepterWebm: a.video_scepter_webm,
+			scepterPoster: a.video_scepter_jpg || a.img,
+			shardMp4: a.video_shard_mp4,
+			shardWebm: a.video_shard_webm,
+			shardPoster: a.video_shard_jpg || a.img,
 		})),
+		talents: (h.talents ?? []).map((t) => ({
+			id: t.id,
+			name: t.name_loc,
+			desc: stripHtml(t.desc_loc),
+		})),
+		specialMap,
 	};
 }
 
@@ -205,4 +242,13 @@ export function fmt(n: number, digits = 0): string {
 
 export function heroListUrl(): string {
 	return `${BASE}/heroList?task=herolist`;
+}
+
+/** 替换 {s:key} 占位符；取不到具体数值时用 ? 占位，避免暴露模板 */
+export function resolveTemplate(text: string, map: Record<string, number>): string {
+	if (!text) return '';
+	return text.replace(/\{s:([^}]+)\}/g, (_, key: string) => {
+		const v = map[key];
+		return v != null ? String(Math.round(v * 10) / 10) : '?';
+	});
 }
