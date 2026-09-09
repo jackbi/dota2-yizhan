@@ -137,6 +137,7 @@ import Layout from '../layouts/Layout.astro';
 			}
 			count.textContent = shown ? `共 ${shown} 件装备` : '未找到匹配的装备';
 			grid.innerHTML = html || `<div class="col-span-full rounded-2xl border border-line bg-surface p-10 text-center text-muted">没有符合筛选条件的装备。</div>`;
+			bindTip();
 		};
 
 		const sectionText = (title: string, body: string) =>
@@ -160,21 +161,47 @@ import Layout from '../layouts/Layout.astro';
 				</section>`
 				: '';
 
-		const closeModal = () => {
-			document.getElementById('item-modal')?.remove();
-			document.removeEventListener('keydown', onModalKey);
+		// ---- 悬浮详情（代替弹窗） ----
+		const tip = document.createElement('div');
+		tip.id = 'item-tip';
+		tip.className =
+			'fixed z-[60] w-[380px] max-w-[calc(100vw-16px)] max-h-[70vh] overflow-y-auto rounded-2xl border border-line bg-surface p-5 shadow-2xl opacity-0 pointer-events-none transition-opacity duration-150';
+		tip.setAttribute('role', 'tooltip');
+		tip.style.visibility = 'hidden';
+		tip.style.left = '-9999px';
+		tip.style.top = '0';
+		document.body.appendChild(tip);
+
+		let hideTimer = 0;
+		const hideTip = () => {
+			window.clearTimeout(hideTimer);
+			tip.classList.add('opacity-0', 'pointer-events-none');
+			tip.style.visibility = 'hidden';
 		};
-		const onModalKey = (e: KeyboardEvent) => {
-			if (e.key === 'Escape') closeModal();
+		const scheduleHide = () => {
+			window.clearTimeout(hideTimer);
+			hideTimer = window.setTimeout(hideTip, 120);
+		};
+		const cancelHide = () => window.clearTimeout(hideTimer);
+
+		const positionTip = (anchor: HTMLElement) => {
+			const r = anchor.getBoundingClientRect();
+			const gap = 10;
+			const m = 8;
+			const tw = tip.offsetWidth;
+			const th = tip.offsetHeight;
+			let left = r.right + gap;
+			if (left + tw > window.innerWidth - m) left = r.left - gap - tw;
+			if (left < m) left = Math.min(m, window.innerWidth - tw - m);
+			let top = r.top;
+			if (top + th > window.innerHeight - m) top = window.innerHeight - m - th;
+			if (top < m) top = m;
+			tip.style.left = `${left}px`;
+			tip.style.top = `${top}px`;
 		};
 
-		const openItem = async (name: string, listItem: import('../lib/itemApi').ItemListItem) => {
-			try {
-				if (!detailMap) detailMap = await loadItemDetails();
-			} catch (e) {
-				console.error(e);
-			}
-			const d = detailMap?.[name];
+		const showTip = (anchor: HTMLElement, listItem: import('../lib/itemApi').ItemListItem) => {
+			const d = detailMap?.[listItem.name];
 			const nameLoc = d?.nameLoc || listItem.nameLoc;
 			const nameEn = d?.nameEn || '';
 			const imgUrl = d?.imgUrl || listItem.imgUrl;
@@ -188,57 +215,55 @@ import Layout from '../layouts/Layout.astro';
 					<span>${esc(c?.nameLoc || key)}</span>
 				</span>`;
 			}).join('');
-			const meta = [
-				d?.cd ? `冷却 ${esc(d.cd)}` : '',
-				d?.mc ? `魔法消耗 ${esc(d.mc)}` : '',
-			].filter(Boolean).join('　·　');
+			const meta = [d?.cd ? `冷却 ${esc(d.cd)}` : '', d?.mc ? `魔法消耗 ${esc(d.mc)}` : ''].filter(Boolean).join('　·　');
 			const desc = clean(d?.desc || '');
 			const attrib = clean(d?.attrib || '');
 			const notes = clean(d?.notes || '');
 			const lore = clean(d?.lore || '');
+			const body =
+				(desc ? sectionText('描述', desc) : '') +
+				(attrib ? sectionText('效果', attrib) : '') +
+				(notes ? sectionText('备注', notes) : '') +
+				(lore ? sectionText('背景故事', lore) : '') +
+				(compChips ? sectionHtml('合成配方', `<div class="flex flex-wrap gap-2">${compChips}</div>`) : '') +
+				(meta ? sectionText('基础信息', meta) : '');
 
-			const modal = document.createElement('div');
-			modal.id = 'item-modal';
-			modal.className = 'fixed inset-0 z-50 flex items-center justify-center p-4';
-			modal.setAttribute('role', 'dialog');
-			modal.setAttribute('aria-modal', 'true');
-			modal.innerHTML = `
-				<div class="absolute inset-0 bg-black/70 backdrop-blur-sm" data-close></div>
-				<div class="relative w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-surface p-6 shadow-2xl" style="max-height:86vh">
-					<button type="button" data-close aria-label="关闭" class="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-ink/60 text-muted transition hover:text-cream">✕</button>
-					<div class="flex items-start gap-5 rounded-2xl border border-line/60 bg-gradient-to-br from-surface-2 to-ink p-4 pr-10">
-						<div class="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line/60 bg-ink-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
-							<img src="${esc(imgUrl)}" alt="${esc(nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain p-1">
-						</div>
-						<div class="min-w-0 flex-1">
-							<h3 class="font-display text-xl leading-tight text-cream">${esc(nameLoc)}</h3>
-							<p class="mt-0.5 text-sm text-muted">${esc(nameEn)}</p>
-							<div class="mt-2 flex flex-wrap items-center gap-2">
-								<span class="font-display text-lg text-gold tabular-nums">${fullCost(cost)} <span class="text-xs font-normal text-faint">金币</span></span>
-								<span class="inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${isActive ? 'bg-dota/15 text-dota-light' : 'bg-zinc-600/15 text-zinc-400'}">${isActive ? '主动' : '被动'}</span>
-							</div>
+			tip.innerHTML = `
+				<div class="flex items-start gap-3">
+					<div class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line/60 bg-ink-2">
+						<img src="${esc(imgUrl)}" alt="${esc(nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain p-1">
+					</div>
+					<div class="min-w-0 flex-1">
+						<h3 class="font-display text-base leading-tight text-cream">${esc(nameLoc)}</h3>
+						<p class="mt-0.5 truncate text-xs text-muted">${esc(nameEn)}</p>
+						<div class="mt-1.5 flex flex-wrap items-center gap-2">
+							<span class="font-display text-sm text-gold tabular-nums">${fullCost(cost)} <span class="text-[10px] font-normal text-faint">金币</span></span>
+							<span class="inline-flex rounded px-1.5 py-0.5 text-[11px] font-medium ${isActive ? 'bg-dota/15 text-dota-light' : 'bg-zinc-600/15 text-zinc-400'}">${isActive ? '主动' : '被动'}</span>
 						</div>
 					</div>
-					${sectionText('描述', desc)}
-					${sectionText('效果', attrib)}
-					${sectionText('备注', notes)}
-					${sectionText('背景故事', lore)}
-					${sectionHtml('合成配方', `<div class="flex flex-wrap gap-2">${compChips}</div>`)}
-					${sectionText('基础信息', meta)}
-				</div>`;
-			document.body.appendChild(modal);
-			modal.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', closeModal));
-			document.addEventListener('keydown', onModalKey);
-			(modal.querySelector('button[data-close]') as HTMLButtonElement | null)?.focus();
+				</div>
+				${body ? `<div class="mt-3 border-t border-line/60 pt-1">${body}</div>` : ''}`;
+
+			tip.classList.remove('opacity-0', 'pointer-events-none');
+			tip.style.visibility = 'visible';
+			positionTip(anchor);
+			window.clearTimeout(hideTimer);
 		};
 
-		grid.addEventListener('click', (e) => {
-			const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-item]');
-			if (!btn) return;
-			const name = btn.dataset.item!;
-			const listItem = sections.flatMap((s) => s.groups.flatMap((g) => g.items)).find((it) => it.name === name);
-			if (listItem) openItem(name, listItem);
-		});
+		tip.addEventListener('mouseenter', cancelHide);
+		tip.addEventListener('mouseleave', scheduleHide);
+
+		const bindTip = () => {
+			grid.querySelectorAll<HTMLButtonElement>('button[data-item]').forEach((btn) => {
+				const name = btn.dataset.item!;
+				const listItem = sections.flatMap((s) => s.groups.flatMap((g) => g.items)).find((it) => it.name === name);
+				if (!listItem) return;
+				btn.addEventListener('mouseenter', () => showTip(btn, listItem));
+				btn.addEventListener('mouseleave', scheduleHide);
+				btn.addEventListener('focus', () => showTip(btn, listItem));
+				btn.addEventListener('blur', hideTip);
+			});
+		};
 
 		search?.addEventListener('input', () => {
 			q = search.value ?? '';
@@ -252,6 +277,11 @@ import Layout from '../layouts/Layout.astro';
 			try {
 				sections = await fetchItemSections();
 				render();
+				loadItemDetails()
+					.then((m) => {
+						detailMap = m;
+					})
+					.catch(() => {});
 			} catch (e) {
 				console.error(e);
 				grid.innerHTML = '';
