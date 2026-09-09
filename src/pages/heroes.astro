@@ -94,7 +94,7 @@ import { ATTRIBUTES } from '../lib/heroApi';
 			return `
 				<a href="/heroes/${h.id}" class="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface transition hover:border-dota/60 hover:shadow-lg hover:shadow-dota/10" data-attribute="${h.attr}" data-name="${esc((h.name + ' ' + h.nameEn).toLowerCase())}">
 					<div class="relative aspect-[4/3] w-full overflow-hidden bg-gradient-to-br from-surface-2 to-surface-3">
-						<img src="${esc(h.img)}" alt="${esc(h.name)}" loading="lazy" class="h-full w-full object-cover object-top transition duration-300 group-hover:scale-105">
+					<img src="${esc(h.img)}" alt="${esc(h.name)}" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-cover object-top transition duration-300 group-hover:scale-105">
 						<div class="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-surface via-surface/40 to-transparent"></div>
 						<span class="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full border border-line bg-ink/70 text-[11px] font-bold backdrop-blur" style="color:${color}">${h.attr}</span>
 					</div>

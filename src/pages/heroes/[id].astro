@@ -123,7 +123,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 								<p class="mt-1 whitespace-pre-line leading-relaxed text-cream/90">${esc(h.bio)}</p>
 							</div>
 							<div class="relative hidden min-h-[320px] overflow-hidden border-l border-line lg:block">
-								<img src="${esc(h.img)}" alt="${esc(h.name)}" class="absolute inset-0 h-full w-full object-cover object-top">
+								<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover object-top">
 								<div class="absolute inset-0 bg-gradient-to-r from-surface via-transparent to-transparent"></div>
 							</div>
 						</div>
@@ -167,7 +167,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 						${h.abilities
 							.map(
 								(a) => `<article class="flex gap-4 rounded-2xl border border-line bg-surface p-5">
-									<div class="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-surface-3">${a.img ? `<img src="${esc(a.img)}" alt="${esc(a.nameLoc)}" class="h-full w-full object-cover" loading="lazy">` : `<div class="flex h-full w-full items-center justify-center font-display text-gold">${esc(a.nameLoc.slice(0, 1))}</div>`}</div>
+									<div class="h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-surface-3">${a.img ? `<img src="${esc(a.img)}" alt="${esc(a.nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-cover" loading="lazy">` : `<div class="flex h-full w-full items-center justify-center font-display text-gold">${esc(a.nameLoc.slice(0, 1))}</div>`}</div>
 									<div class="min-w-0"><h3 class="font-display text-base">${esc(a.nameLoc)}</h3><p class="mt-1 text-sm leading-relaxed text-muted">${esc(a.desc)}</p></div>
 								</article>`,
 							)
