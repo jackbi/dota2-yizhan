@@ -74,6 +74,7 @@ export interface Hero extends HeroListEntry {
 	stats: HeroStats;
 	abilities: HeroAbility[];
 	topVideo: string;
+	topImg: string;
 	talents: TalentNode[];
 	specialMap: Record<string, number>;
 }
@@ -110,6 +111,26 @@ const ATTR_MAP: Record<number, Attribute> = { 0: 'STR', 1: 'AGI', 2: 'INT', 3: '
 
 /** 先天技能的固定图标（官方统一使用该素材） */
 export const INNATE_ICON = 'https://img.dota2.com.cn/dota2static/facets/innate_icon.png';
+
+/**
+ * 各英雄天赋树的“官方精确文本”覆盖。
+ * 官方 datafeed 未暴露天赋加成数值，因此对需要与官网一致的关键英雄在此补充。
+ * 未覆盖的英雄会回退到接口 talents 数据渲染。
+ */
+export const HERO_TALENT_OVERRIDE: Record<
+	number,
+	{ attackIcon: string; levels: { level: number; left: string; right: string }[] }
+> = {
+	103: {
+		attackIcon: 'https://static.pwesports.cn/esportsadmin/DOTA2/2022-7-6/6d2ae286-20bc-4989-9798-96b41cc4f737.svg',
+		levels: [
+			{ level: 25, left: '+100% 分裂', right: '-60秒 裂地沟壑冷却' },
+			{ level: 20, left: '+150 自然秩序范围', right: '+30 灵体游魂触碰英雄攻击力' },
+			{ level: 15, left: '20%移速加成转为攻速', right: '+75 回音重踏伤害' },
+			{ level: 10, left: '+150 回音重踏唤醒伤害', right: '+2.5% 灵体游魂触碰英雄移速' },
+		],
+	},
+};
 
 export function stripHtml(input: string): string {
 	if (!input) return '';
@@ -186,6 +207,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 		bio: stripHtml(h.bio_loc),
 		hype: stripHtml(h.hype_loc),
 		topVideo: h.top_video,
+		topImg: h.top_img,
 		stats: {
 			strBase: h.str_base,
 			strGain: h.str_gain,
