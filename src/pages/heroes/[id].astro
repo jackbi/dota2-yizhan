@@ -91,14 +91,34 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 		// 使用单一 src（而非 <source>），确保 video 的 referrerpolicy 真正作用到资源请求
 		const mediaSrc = (mp4: string, webm: string) => mp4 || webm;
 
-		// 视频通过 innerHTML 注入后不会自动触发 autoplay，显式调用 play() 确保直接播放
+		// 视频通过 innerHTML 注入后不会自动触发 autoplay，需显式触发播放。
+		// 在 load() 完成前调用 play() 可能时机过早，因此监听 canplay/loadeddata 再播；
+		// 若被浏览器自动播放策略拦截（NotAllowedError），则等首次用户交互后再补播。
 		const playMedia = (root: ParentNode) => {
 			root.querySelectorAll('video').forEach((v) => {
 				const vid = v as HTMLVideoElement;
 				vid.muted = true;
+				vid.defaultMuted = true;
+				vid.playsInline = true;
+				vid.loop = true;
 				vid.autoplay = true;
-				const p = vid.play();
-				if (p) p.catch(() => {});
+				vid.preload = 'auto';
+				const tryPlay = () => {
+					const p = vid.play();
+					if (p) {
+						p.catch((err) => {
+							if (err?.name === 'NotAllowedError') {
+								const once = () => vid.play().catch(() => {});
+								['pointerdown', 'touchstart', 'keydown'].forEach((ev) =>
+									document.addEventListener(ev, once, { once: true, capture: true }),
+								);
+							}
+						});
+					}
+				};
+				vid.addEventListener('canplay', tryPlay);
+				vid.addEventListener('loadeddata', tryPlay);
+				tryPlay();
 			});
 		};
 
