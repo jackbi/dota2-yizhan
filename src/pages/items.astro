@@ -152,11 +152,26 @@ import Layout from '../layouts/Layout.astro';
 			grid.innerHTML = html || `<div class="col-span-full rounded-2xl border border-line bg-surface p-10 text-center text-muted">没有符合筛选条件的装备。</div>`;
 		};
 
-		const section = (title: string, body: string) => `
-			<div class="mt-5">
-				<h4 class="mb-2 text-xs font-semibold tracking-widest text-gold/90">${esc(title)}</h4>
-				<p class="whitespace-pre-line text-sm leading-relaxed text-muted">${esc(body)}</p>
-			</div>`;
+		const sectionText = (title: string, body: string) =>
+			body
+				? `<section class="mt-5">
+					<h4 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-widest text-gold">
+						<span class="h-1.5 w-1.5 rounded-full bg-gold"></span>${esc(title)}
+					</h4>
+					<div class="rounded-xl border border-line/60 bg-surface-2/40 px-4 py-3">
+						<p class="whitespace-pre-line text-sm leading-relaxed text-cream/90">${esc(body)}</p>
+					</div>
+				</section>`
+				: '';
+		const sectionHtml = (title: string, html: string) =>
+			html
+				? `<section class="mt-5">
+					<h4 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-widest text-gold">
+						<span class="h-1.5 w-1.5 rounded-full bg-gold"></span>${esc(title)}
+					</h4>
+					<div class="rounded-xl border border-line/60 bg-surface-2/40 px-4 py-3">${html}</div>
+				</section>`
+				: '';
 
 		const closeModal = () => {
 			document.getElementById('item-modal')?.remove();
@@ -202,25 +217,27 @@ import Layout from '../layouts/Layout.astro';
 			modal.setAttribute('aria-modal', 'true');
 			modal.innerHTML = `
 				<div class="absolute inset-0 bg-black/70 backdrop-blur-sm" data-close></div>
-				<div class="relative w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-surface p-6 shadow-2xl" style="max-height:86vh">
+				<div class="relative w-full max-w-3xl overflow-y-auto rounded-2xl border border-line bg-surface p-6 shadow-2xl" style="max-height:86vh">
 					<button type="button" data-close aria-label="关闭" class="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full border border-line bg-ink/60 text-muted transition hover:text-cream">✕</button>
-					<div class="flex items-start gap-4 pr-10">
-						<div class="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-ink-2">
-							<img src="${esc(imgUrl)}" alt="${esc(nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain">
+					<div class="flex items-start gap-5 rounded-2xl border border-line/60 bg-gradient-to-br from-surface-2 to-ink p-4 pr-10">
+						<div class="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line/60 bg-ink-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+							<img src="${esc(imgUrl)}" alt="${esc(nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain p-1">
 						</div>
 						<div class="min-w-0 flex-1">
 							<h3 class="font-display text-xl leading-tight text-cream">${esc(nameLoc)}</h3>
 							<p class="mt-0.5 text-sm text-muted">${esc(nameEn)}</p>
-							<p class="mt-2 font-display text-lg text-gold tabular-nums">${fullCost(cost)} <span class="text-xs text-faint">金币</span></p>
-							<span class="mt-2 inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${isActive ? 'bg-dota/15 text-dota-light' : 'bg-zinc-600/15 text-zinc-400'}">${isActive ? '主动' : '被动'}</span>
+							<div class="mt-2 flex flex-wrap items-center gap-2">
+								<span class="font-display text-lg text-gold tabular-nums">${fullCost(cost)} <span class="text-xs font-normal text-faint">金币</span></span>
+								<span class="inline-flex rounded-md px-2 py-0.5 text-xs font-medium ${isActive ? 'bg-dota/15 text-dota-light' : 'bg-zinc-600/15 text-zinc-400'}">${isActive ? '主动' : '被动'}</span>
+							</div>
 						</div>
 					</div>
-					${desc ? section('描述', desc) : ''}
-					${attrib ? section('效果', attrib) : ''}
-					${notes ? section('备注', notes) : ''}
-					${lore ? section('背景', lore) : ''}
-					${compChips ? section('合成配方', `<div class="flex flex-wrap gap-2">${compChips}</div>`) : ''}
-					${meta ? section('基础信息', meta) : ''}
+					${sectionText('描述', desc)}
+					${sectionText('效果', attrib)}
+					${sectionText('备注', notes)}
+					${sectionText('背景故事', lore)}
+					${sectionHtml('合成配方', `<div class="flex flex-wrap gap-2">${compChips}</div>`)}
+					${sectionText('基础信息', meta)}
 				</div>`;
 			document.body.appendChild(modal);
 			modal.querySelectorAll('[data-close]').forEach((el) => el.addEventListener('click', closeModal));

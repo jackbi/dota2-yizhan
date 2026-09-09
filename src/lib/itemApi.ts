@@ -93,13 +93,40 @@ export async function fetchItemSections(): Promise<ItemSection[]> {
 
 let detailCache: Promise<Record<string, ItemDetail>> | null = null;
 
+/**
+ * JSONP 加载：items/json 是 JSONP 接口，响应没有 Access-Control-Allow-Origin，
+ * fetch 会被 CORS 拦截，因此用 <script> 注入方式加载（绕过跨域）。
+ */
+function loadJsonp(url: string, callbackName: string): Promise<any> {
+	return new Promise((resolve, reject) => {
+		const script = document.createElement('script');
+		script.src = url;
+		script.async = true;
+		const win = window as any;
+		const prev = win[callbackName];
+		win[callbackName] = (data: any) => {
+			cleanup();
+			resolve(data);
+		};
+		const cleanup = () => {
+			delete win[callbackName];
+			if (prev) win[callbackName] = prev;
+			script.remove();
+		};
+		script.onerror = () => {
+			cleanup();
+			reject(new Error('装备详情加载失败'));
+		};
+		document.head.appendChild(script);
+	});
+}
+
 /** 懒加载全部装备详情（JSONP），缓存复用。 */
 export function loadItemDetails(): Promise<Record<string, ItemDetail>> {
 	if (!detailCache) {
 		detailCache = (async () => {
-			const text = await (await fetch(DETAIL_URL)).text();
-			const json = text.replace(/^[^(]+\(/, '').replace(/\)\s*;?\s*$/, '');
-			const itemdata = JSON.parse(json).itemdata;
+			const payload = await loadJsonp(DETAIL_URL, 'HeropediaDFReceive');
+			const itemdata = payload.itemdata;
 			const map: Record<string, ItemDetail> = {};
 			for (const [key, v] of Object.entries<any>(itemdata)) {
 				map[key] = {
