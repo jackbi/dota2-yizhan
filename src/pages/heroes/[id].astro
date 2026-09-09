@@ -36,6 +36,9 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 ---
 
 <Layout title={`${name} · 英雄资料 · DOTA2 驿站`} description={`${name}（${nameEn}）英雄详细数据、技能动画与天赋树，实时来自官方接口。`}>
+	<Fragment slot="head">
+		<meta name="referrer" content="no-referrer" />
+	</Fragment>
 	<section class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
 			<a href="/heroes" class="transition hover:text-dota-light">英雄资料</a>
@@ -85,12 +88,8 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 		const id = view.dataset.heroId!;
 		const esc = (s: string | null | undefined) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-		const mediaSources = (mp4: string, webm: string) => {
-			const out = [];
-			if (webm) out.push(`<source src="${esc(webm)}" type="video/webm">`);
-			if (mp4) out.push(`<source src="${esc(mp4)}" type="video/mp4">`);
-			return out.join('');
-		};
+		// 使用单一 src（而非 <source>），确保 video 的 referrerpolicy 真正作用到资源请求
+		const mediaSrc = (mp4: string, webm: string) => mp4 || webm;
 
 		// 视频通过 innerHTML 注入后不会自动触发 autoplay，显式调用 play() 确保直接播放
 		const playMedia = (root: ParentNode) => {
@@ -150,7 +149,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 					const media = variantOf(a, v);
 					const hasVideo = Boolean(media.mp4 || media.webm);
 					return `<div class="relative aspect-video w-full bg-ink-2">
-						${hasVideo ? `<video class="h-full w-full object-contain" autoplay muted loop playsinline preload="metadata" referrerpolicy="no-referrer" poster="${esc(media.poster)}">${mediaSources(media.mp4, media.webm)}</video>` : `<img src="${esc(media.poster)}" alt="${esc(a.nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain">`}
+						${hasVideo ? `<video class="h-full w-full object-contain" autoplay muted loop playsinline preload="auto" referrerpolicy="no-referrer" poster="${esc(media.poster)}" src="${esc(mediaSrc(media.mp4, media.webm))}"></video>` : `<img src="${esc(media.poster)}" alt="${esc(a.nameLoc)}" referrerpolicy="no-referrer" class="h-full w-full object-contain">`}
 					</div>`;
 				};
 
@@ -196,7 +195,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 						const level = (i / 2 + 1) * 5 + 5;
 						const a = h.talents[i];
 						const b = h.talents[i + 1] || { name: '', desc: '' };
-						rows.push({ level, left: resolveTemplate(a.name, h.specialMap), right: resolveTemplate(b.name, h.specialMap) });
+						rows.push({ level, left: resolveTemplate(a.name, h.specialMap, a.key), right: resolveTemplate(b.name, h.specialMap, b.key) });
 					}
 					rows.reverse();
 					talentBlock = `	<h2 class="mt-10 mb-4 font-display text-xl">天赋树</h2>
@@ -221,7 +220,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 					<!-- 动态英雄展示 -->
 					<div class="relative overflow-hidden rounded-2xl border border-line bg-ink">
 						${h.topVideo ? `
-							<video id="hero-top" class="h-[340px] w-full object-cover object-top sm:h-[420px]" autoplay muted loop playsinline preload="auto" referrerpolicy="no-referrer" poster="${esc(h.topImg || h.img)}">${mediaSources('', h.topVideo)}</video>` : `
+							<video id="hero-top" class="h-[340px] w-full object-cover object-top sm:h-[420px]" autoplay muted loop playsinline preload="auto" referrerpolicy="no-referrer" poster="${esc(h.topImg || h.img)}" src="${esc(h.topVideo)}"></video>` : `
 							<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="h-[340px] w-full object-cover object-top sm:h-[420px]">`}
 						<div class="absolute inset-0 bg-gradient-to-t from-ink via-ink/20 to-transparent" aria-hidden="true"></div>
 						<div class="absolute inset-x-0 bottom-0 p-6 sm:p-8">

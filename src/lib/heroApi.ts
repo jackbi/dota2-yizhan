@@ -52,6 +52,7 @@ export interface HeroAbility {
 
 export interface TalentNode {
 	id: number;
+	key: string;
 	name: string;
 	desc: string;
 }
@@ -186,9 +187,17 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 	for (const a of h.abilities ?? []) {
 		for (const sv of a.special_values ?? []) {
 			const name = sv.name;
-			if (!name || name in specialMap) continue;
-			const raw = sv.values_float?.length ? sv.values_float : sv.values_shard?.length ? sv.values_shard : sv.values_scepter?.length ? sv.values_scepter : [];
-			if (raw.length) specialMap[name] = Number(raw[0]);
+			if (name) {
+				// 技能描述里的 {s:name} 用基础值
+				if (!(name in specialMap)) {
+					const raw = sv.values_float?.length ? sv.values_float : sv.values_shard?.length ? sv.values_shard : sv.values_scepter?.length ? sv.values_scepter : [];
+					if (raw.length) specialMap[name] = Number(raw[0]);
+				}
+				// 天赋加成用 bonus_<name>，数值在 bonuses[].value
+				for (const b of sv.bonuses ?? []) {
+					if (b.value != null) specialMap[`bonus_${name}`] = Number(b.value);
+				}
+			}
 		}
 	}
 	const roles = ROLE_ORDER.map((key, i) => ({ key, label: ROLE_LABEL[key], level: h.role_levels?.[i] ?? 0 }))
@@ -232,7 +241,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 		abilities: (h.abilities ?? []).map((a) => ({
 			name: a.name,
 			nameLoc: a.name_loc,
-			desc: stripHtml(a.desc_loc),
+			desc: resolveTemplate(stripHtml(a.desc_loc), specialMap),
 			img: a.ability_is_innate || a.is_inborn ? INNATE_ICON : a.img,
 			videoMp4: a.video_mp4,
 			videoWebm: a.video_webm,
@@ -249,6 +258,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 		})),
 		talents: (h.talents ?? []).map((t) => ({
 			id: t.id,
+			key: t.name,
 			name: t.name_loc,
 			desc: stripHtml(t.desc_loc),
 		})),
@@ -266,11 +276,16 @@ export function heroListUrl(): string {
 	return `${BASE}/heroList?task=herolist`;
 }
 
-/** 替换 {s:key} 占位符；取不到具体数值时用 ? 占位，避免暴露模板 */
-export function resolveTemplate(text: string, map: Record<string, number>): string {
+/** 替换 {s:key} 占位符；取不到时优先从天赋内部名称解析结尾数值，其次用 ? 占位 */
+export function resolveTemplate(text: string, map: Record<string, number>, fallbackName?: string): string {
 	if (!text) return '';
 	return text.replace(/\{s:([^}]+)\}/g, (_, key: string) => {
 		const v = map[key];
-		return v != null ? String(Math.round(v * 10) / 10) : '?';
+		if (v != null) return String(Math.round(v * 10) / 10);
+		if (key === 'value' && fallbackName) {
+			const m = fallbackName.match(/_(\d+(?:\.\d+)?)$/);
+			if (m) return m[1];
+		}
+		return '?';
 	});
 }
