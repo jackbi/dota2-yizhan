@@ -1,6 +1,13 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { ATTRIBUTES } from '../lib/heroApi';
+
+const ATTR_ICON: Record<string, string> = {
+	STR: 'https://www.dota2.com.cn/herostatic/icons/hero_strength.png',
+	AGI: 'https://www.dota2.com.cn/herostatic/icons/hero_agility.png',
+	INT: 'https://www.dota2.com.cn/herostatic/icons/hero_intelligence.png',
+	UNI: '/hero-filters/universal.png',
+};
 ---
 
 <Layout
@@ -16,19 +23,41 @@ import { ATTRIBUTES } from '../lib/heroApi';
 			</p>
 		</div>
 
-		<div class="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-			<div id="hero-filters" class="flex flex-wrap items-center gap-2" role="group" aria-label="按属性筛选">
-				<button type="button" data-attr="all" class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="true">全部</button>
-				{ATTRIBUTES.map((a) => (
-					<button type="button" data-attr={a.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed="false">
-						<span style={`color:${a.color}`}>●</span> {a.label}
-					</button>
-				))}
+		<div id="hero-filters" class="mb-6 flex flex-wrap items-center gap-x-8 gap-y-4">
+			<!-- 属性筛选 -->
+			<div class="flex items-center gap-3">
+				<span class="shrink-0 text-xs font-medium tracking-wider text-muted">属性</span>
+				<div class="flex items-center gap-2" role="group" aria-label="按属性筛选">
+					<button type="button" data-attr="all" class="filter-chip" aria-pressed="true">全部</button>
+					{ATTRIBUTES.map((a) => (
+						<button type="button" data-attr={a.id} class="filter-icon-btn" aria-pressed="false" aria-label={a.label} title={a.label}>
+							<img src={ATTR_ICON[a.id]} alt={a.label} referrerpolicy="no-referrer" loading="lazy" class="filter-icon" />
+						</button>
+					))}
+				</div>
 			</div>
 
-			<label class="relative block md:w-72">
+			<!-- 复杂程度筛选 -->
+			<div class="flex items-center gap-3">
+				<span class="shrink-0 text-xs font-medium tracking-wider text-muted">复杂程度</span>
+				<div class="flex items-center gap-2" role="group" aria-label="按复杂程度筛选">
+					<button type="button" data-complexity="all" class="filter-chip" aria-pressed="true">全部</button>
+					{[1, 2, 3].map((l) => (
+						<button type="button" data-complexity={l} class="filter-chip" aria-pressed="false" title={`复杂度 ${l}`}>
+							<span class="flex items-center gap-0.5" aria-hidden="true">
+								{[1, 2, 3].map((i) => (
+									<span class={`h-1.5 w-1.5 rounded-full ${i <= l ? 'bg-current' : 'bg-surface-3'}`}></span>
+								))}
+							</span>
+						</button>
+					))}
+				</div>
+			</div>
+
+			<!-- 搜索 -->
+			<label class="relative block w-full md:ml-auto md:w-80">
 				<span class="sr-only">搜索英雄</span>
-				<svg class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-faint" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<svg class="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-faint" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 					<circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8" />
 					<path d="M21 21l-4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
 				</svg>
@@ -36,7 +65,7 @@ import { ATTRIBUTES } from '../lib/heroApi';
 					id="hero-search"
 					type="search"
 					placeholder="搜索英雄名（中文 / 英文）"
-					class="w-full rounded-lg border border-line bg-surface py-2 pl-10 pr-3 text-sm text-cream placeholder:text-faint focus:border-dota focus:outline-none"
+					class="w-full rounded-full border border-line bg-surface py-2.5 pl-11 pr-4 text-sm text-cream placeholder:text-faint focus:border-dota focus:outline-none"
 				/>
 			</label>
 		</div>
@@ -70,6 +99,61 @@ import { ATTRIBUTES } from '../lib/heroApi';
 	</section>
 </Layout>
 
+<style>
+	.filter-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		padding: 5px 12px;
+		border-radius: 999px;
+		border: 1px solid var(--color-line);
+		background: transparent;
+		color: var(--color-muted);
+		font-size: 12px;
+		cursor: pointer;
+		transition: border-color 0.15s, color 0.15s, background 0.15s;
+	}
+	.filter-chip:hover {
+		color: var(--color-cream);
+		border-color: var(--color-dota-light);
+	}
+	.filter-chip[aria-pressed='true'] {
+		background: rgb(173 61 40 / 0.14);
+		border-color: var(--color-dota);
+		color: var(--color-gold);
+	}
+
+	.filter-icon-btn {
+		background: transparent;
+		border: 1px solid transparent;
+		padding: 2px;
+		border-radius: 12px;
+		cursor: pointer;
+		transition: border-color 0.15s;
+	}
+	.filter-icon {
+		display: block;
+		height: 34px;
+		width: 42px;
+		object-fit: contain;
+		filter: brightness(0.5) saturate(0);
+		opacity: 0.5;
+		transition: filter 0.12s ease-in-out, opacity 0.12s ease-in-out;
+	}
+	.filter-icon-btn:hover .filter-icon {
+		filter: brightness(0.9) saturate(0.7);
+		opacity: 0.9;
+	}
+	.filter-icon-btn[aria-pressed='true'] {
+		border-color: var(--color-dota);
+		background: rgb(173 61 40 / 0.08);
+	}
+	.filter-icon-btn[aria-pressed='true'] .filter-icon {
+		filter: brightness(1) saturate(1);
+		opacity: 1;
+	}
+</style>
+
 <script>
 	import { fetchHeroList, ATTRIBUTE_META } from '../lib/heroApi';
 
@@ -84,6 +168,7 @@ import { ATTRIBUTES } from '../lib/heroApi';
 
 		let heroes: { id: number; name: string; nameEn: string; attr: string; complexity: number; img: string }[] = [];
 		let attr = 'all';
+		let level = 0;
 		let q = '';
 
 		const esc = (s: string) =>
@@ -112,8 +197,9 @@ import { ATTRIBUTES } from '../lib/heroApi';
 		const apply = () => {
 			const visible = heroes.filter((h) => {
 				const mAttr = attr === 'all' || h.attr === attr;
+				const mLevel = level === 0 || h.complexity === level;
 				const mQ = !q || (h.name + ' ' + h.nameEn).toLowerCase().includes(q);
-				return mAttr && mQ;
+				return mAttr && mLevel && mQ;
 			});
 			grid.innerHTML = visible.map(renderCard).join('');
 			count.textContent = `共 ${visible.length} 位英雄`;
@@ -146,6 +232,15 @@ import { ATTRIBUTES } from '../lib/heroApi';
 			btn.addEventListener('click', () => {
 				attr = btn.dataset.attr!;
 				filters.querySelectorAll('button[data-attr]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				apply();
+			});
+		});
+
+		filters?.querySelectorAll<HTMLButtonElement>('button[data-complexity]').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				level = Number(btn.dataset.complexity) || 0;
+				filters.querySelectorAll('button[data-complexity]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
 				btn.setAttribute('aria-pressed', 'true');
 				apply();
 			});
