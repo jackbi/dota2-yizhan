@@ -335,6 +335,48 @@ async function writeCache(bundle: TournamentsBundle): Promise<void> {
 	}
 }
 
+// ---------------------------------------------------------------- 缓存刷新
+
+/**
+ * 缓存里"未开始/进行中"的对阵超过这个时长就不可能还成立。
+ * 用来丢弃结果已经不可知的陈旧条目，避免把早已打完的比赛继续显示成未开赛。
+ */
+const STALE_PENDING_SECONDS = 6 * 3600;
+
+/**
+ * 用最新的 OpenDota 赛果刷新上次成功的日历。
+ *
+ * 匹配规则与实时判重一致（双方队伍都相同且开赛时间接近），匹配不上就保留缓存原样；
+ * 既没匹配到新赛果、又早已超过开赛时间的"未开始/进行中"条目直接丢弃——结果不可知，
+ * 继续展示只会给出错误状态（延期场次不受影响）。
+ */
+function refreshCachedMatches(cached: EsportsMatch[], fresh: EsportsMatch[], nowSec: number): EsportsMatch[] {
+	const remaining = [...fresh];
+	const out: EsportsMatch[] = [];
+	for (const match of cached) {
+		const index = remaining.findIndex((candidate) => isSameMatch(match, candidate));
+		let next = match;
+		if (index !== -1) {
+			const [result] = remaining.splice(index, 1);
+			next = {
+				...match,
+				status: result.status,
+				home: { ...match.home, score: result.home.score },
+				away: { ...match.away, score: result.away.score },
+				winner: result.winner,
+			};
+		}
+		if (
+			(next.status === 'upcoming' || next.status === 'live') &&
+			next.startTime + STALE_PENDING_SECONDS < nowSec
+		) {
+			continue;
+		}
+		out.push(next);
+	}
+	return out;
+}
+
 // ---------------------------------------------------------------- 对外入口
 
 function sourceStatus(id: DataSource, ok: boolean, label?: string): DataSourceStatus {
@@ -343,6 +385,7 @@ function sourceStatus(id: DataSource, ok: boolean, label?: string): DataSourceSt
 
 async function assemble(): Promise<TournamentsBundle> {
 	const updatedAt = new Date().toISOString();
+	const nowSec = Math.floor(Date.now() / 1000);
 
 	let opendotaOk = false;
 	/**
@@ -353,6 +396,7 @@ async function assemble(): Promise<TournamentsBundle> {
 	let calendarFromChaofan = false;
 	let calendarMatches: EsportsMatch[] = [];
 	let opendotaLive: EsportsMatch[] = [];
+	let proMatches: EsportsMatch[] = [];
 
 	// `TOURNAMENTS_OFFLINE=1` 跳过所有网络请求，直接走缓存/兜底，
 	// 便于在无网络环境下构建，也用于验证降级链路。
@@ -364,23 +408,26 @@ async function assemble(): Promise<TournamentsBundle> {
 		calendarFromChaofan = calendarMatches.length > 0;
 		opendotaLive = opendotaOk ? liveRes.value : [];
 
-		// 主数据源没拿到赛事，用 OpenDota 的赛果兜一层。
 		if (calendarMatches.length === 0) {
+			// 主源不可用：赛果先留着，既能刷新缓存日历，也是没有缓存时的兜底日历。
 			try {
-				calendarMatches = await fetchOpenDotaPro();
-				if (calendarMatches.length > 0) opendotaOk = true;
+				proMatches = await fetchOpenDotaPro();
+				if (proMatches.length > 0) opendotaOk = true;
 			} catch {
-				calendarMatches = [];
+				proMatches = [];
 			}
 		}
 	}
 
-	// 两条链路都空，读上次成功构建的缓存。
+	// 主源不可用时优先复用上次成功的日历：它比 proMatches 结构完整得多（有赛事分组、
+	// BO 与队标），缺点只是状态是快照，所以用最新赛果刷新一遍再展示。
 	if (calendarMatches.length === 0) {
 		const cached = await readCache();
-		if (cached) {
+		const cachedMatches = cached?.events.flatMap((event) => event.matches ?? []) ?? [];
+		const refreshed = refreshCachedMatches(cachedMatches, proMatches, nowSec);
+		if (cached && refreshed.length > 0) {
 			return {
-				events: cached.events,
+				events: sortEvents(buildEvents(refreshed)),
 				live: dedupeMatches([...(cached.live ?? []), ...opendotaLive]),
 				updatedAt: cached.updatedAt,
 				degraded: true,
@@ -391,7 +438,11 @@ async function assemble(): Promise<TournamentsBundle> {
 				],
 			};
 		}
+		// 没有缓存、或缓存已经全部过期时，才退到 OpenDota 的赛果列表。
+		calendarMatches = proMatches;
+	}
 
+	if (calendarMatches.length === 0) {
 		return {
 			events: sortEvents(seedEvents()),
 			live: dedupeMatches(opendotaLive),
