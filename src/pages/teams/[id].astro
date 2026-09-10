@@ -2,23 +2,32 @@
 import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
 import { formatRange } from '../../lib/format';
+import type { TeamRoster } from '../../lib/opendota';
+import { loadTeamRoster } from '../../lib/opendota';
 import { EVENT_STATUS_META } from '../../lib/statusMeta';
 import type { TeamDetail } from '../../lib/tournamentIndex';
 import { getTournamentIndex } from '../../lib/tournamentIndex';
 
 interface Props {
 	team: TeamDetail;
+	/** OpenDota 的队员名单；该队未被收录时为 null。 */
+	roster: TeamRoster | null;
 }
 
 export async function getStaticPaths() {
 	const index = await getTournamentIndex();
-	return [...index.teams.values()].map((team) => ({
-		params: { id: team.id },
-		props: { team },
-	}));
+	// 串行取阵容：限速是按请求间隔做的，并发会把间隔打乱。
+	const paths = [];
+	for (const team of index.teams.values()) {
+		paths.push({
+			params: { id: team.id },
+			props: { team, roster: await loadTeamRoster({ id: team.id, name: team.name, logo: team.logo }) },
+		});
+	}
+	return paths;
 }
 
-const { team } = Astro.props;
+const { team, roster } = Astro.props;
 const now = Math.floor(Date.now() / 1000);
 
 /** 未打完的对阵（进行中/未开赛/延期）按开赛时间升序，先看最近的。 */
@@ -87,6 +96,48 @@ function initial(name: string): string {
 				<p class="mt-1 font-display text-2xl">{winRate === null ? '—' : `${winRate}%`}</p>
 			</div>
 		</div>
+
+		{
+			roster ? (
+				<section class="mt-10">
+					<div class="flex flex-wrap items-baseline justify-between gap-2">
+						<h2 class="font-display text-xl">队员名单</h2>
+						<a
+							href={`https://www.opendota.com/teams/${roster.teamId}`}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="text-xs text-faint transition hover:text-gold"
+						>
+							数据来自 OpenDota ↗
+						</a>
+					</div>
+					<div class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						{roster.members.map((member) => (
+							<div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+								<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+									{initial(member.name)}
+								</span>
+								<span class="min-w-0 flex-1">
+									<span class="flex items-center gap-1.5">
+										<span class="min-w-0 truncate text-sm text-cream">{member.name}</span>
+										{member.isCurrent ? (
+											<span class="shrink-0 rounded bg-dota/15 px-1.5 py-0.5 text-[10px] text-dota-light">在队</span>
+										) : null}
+									</span>
+									<span class="mt-0.5 block text-xs text-faint">
+										{member.games} 场 · 胜率 {member.games > 0 ? Math.round((member.wins / member.games) * 100) : 0}%
+									</span>
+								</span>
+							</div>
+						))}
+					</div>
+				</section>
+			) : (
+				<p class="mt-10 border-t border-line pt-6 text-xs text-faint">
+					该队暂无队员数据：只有被 OpenDota 收录的职业队伍才能提供阵容。
+				</p>
+			)
+		}
 
 		{
 			scheduled.length > 0 ? (
