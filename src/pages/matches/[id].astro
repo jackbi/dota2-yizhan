@@ -1,0 +1,182 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import MatchRow from '../../components/MatchRow.astro';
+import type { EsportsMatch } from '../../data/types';
+import { formatClock, formatDayWithWeekday, formatMatchTime } from '../../lib/format';
+import { MATCH_STATUS_META } from '../../lib/statusMeta';
+import { getTournamentIndex, headToHead, relatedMatches } from '../../lib/tournamentIndex';
+import { dataSourceLabel } from '../../lib/tournamentsApi';
+
+interface Props {
+	match: EsportsMatch;
+	/** 所属赛事是否有详情页；没有时回退到赛事列表。 */
+	eventExists: boolean;
+	/** 同赛事中开赛时间最接近的几场。 */
+	related: EsportsMatch[];
+	/** 两队在当前数据窗口内的交手记录。 */
+	h2h: EsportsMatch[];
+}
+
+export async function getStaticPaths() {
+	const index = await getTournamentIndex();
+	return index.matchList.map((match) => ({
+		params: { id: match.id },
+		props: {
+			match,
+			eventExists: index.eventIds.has(match.eventId),
+			related: relatedMatches(match, index.matchList),
+			h2h: headToHead(match, index.matchList),
+		},
+	}));
+}
+
+const { match, eventExists, related, h2h } = Astro.props;
+const now = Math.floor(Date.now() / 1000);
+const st = MATCH_STATUS_META[match.status];
+
+const hasScore =
+	(match.status === 'live' || match.status === 'completed') &&
+	typeof match.home.score === 'number' &&
+	typeof match.away.score === 'number';
+
+function initial(name: string): string {
+	return name.trim().slice(0, 2).toUpperCase();
+}
+
+const backHref = eventExists ? `/tournaments/${match.eventId}` : '/tournaments';
+const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
+---
+
+<Layout
+	title={`${match.home.name} vs ${match.away.name} · ${match.eventName} · DOTA2 驿站`}
+	description={`${match.eventName}：${match.home.name} 对阵 ${match.away.name} 的比赛详情，含比分、开赛时间、赛制与两队交手记录。`}
+>
+	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+		<a href={backHref} class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			{backLabel}
+		</a>
+
+		<header class="mt-5">
+			<div class="flex flex-wrap items-center gap-3">
+				<span class:list={['inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-semibold', st.cls]}>
+					{st.dot && <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>}
+					{st.label}
+				</span>
+				{match.bo ? <span class="rounded border border-line px-1.5 py-0.5 text-xs text-faint">BO{match.bo}</span> : null}
+			</div>
+			<h1 class="mt-3 font-display text-3xl leading-tight sm:text-4xl">
+				{match.home.name} <span class="text-faint">vs</span> {match.away.name}
+			</h1>
+			<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+				{
+					eventExists ? (
+						<a href={`/tournaments/${match.eventId}`} class="transition hover:text-gold">
+							{match.eventName}
+						</a>
+					) : (
+						<span>{match.eventName}</span>
+					)
+				}
+				<span class="text-faint">{formatMatchTime(match.startTime, now)}</span>
+			</div>
+		</header>
+
+		<div class="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-2xl border border-line bg-surface px-5 py-8">
+			<div class="flex flex-col items-center gap-3 text-center">
+				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
+					{initial(match.home.name)}
+					{
+						match.home.logo ? (
+							<img
+								src={match.home.logo}
+								alt=""
+								loading="lazy"
+								referrerpolicy="no-referrer"
+								class="absolute inset-0 h-full w-full object-cover"
+							/>
+						) : null
+					}
+				</span>
+				<span class:list={['text-base', match.winner === 'home' ? 'font-semibold text-cream' : 'text-muted']}>
+					{match.home.name}
+				</span>
+			</div>
+
+			<div
+				class:list={[
+					'min-w-[5.5rem] text-center font-display text-3xl tabular-nums',
+					match.status === 'live' ? 'text-[#4ade80]' : 'text-cream',
+				]}
+			>
+				{hasScore ? `${match.home.score} : ${match.away.score}` : 'VS'}
+			</div>
+
+			<div class="flex flex-col items-center gap-3 text-center">
+				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
+					{initial(match.away.name)}
+					{
+						match.away.logo ? (
+							<img
+								src={match.away.logo}
+								alt=""
+								loading="lazy"
+								referrerpolicy="no-referrer"
+								class="absolute inset-0 h-full w-full object-cover"
+							/>
+						) : null
+					}
+				</span>
+				<span class:list={['text-base', match.winner === 'away' ? 'font-semibold text-cream' : 'text-muted']}>
+					{match.away.name}
+				</span>
+			</div>
+		</div>
+
+		<section class="mt-8">
+			<h2 class="font-display text-xl">比赛信息</h2>
+			<dl class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+				<div class="rounded-xl border border-line bg-surface px-4 py-3">
+					<dt class="text-xs text-faint">开赛时间</dt>
+					<dd class="mt-1 text-sm text-cream">{formatDayWithWeekday(match.startTime)} {formatClock(match.startTime)}</dd>
+				</div>
+				<div class="rounded-xl border border-line bg-surface px-4 py-3">
+					<dt class="text-xs text-faint">赛制</dt>
+					<dd class="mt-1 text-sm text-cream">{match.bo ? `BO${match.bo}` : '暂未公布'}</dd>
+				</div>
+				<div class="rounded-xl border border-line bg-surface px-4 py-3">
+					<dt class="text-xs text-faint">数据来源</dt>
+					<dd class="mt-1 text-sm text-cream">{dataSourceLabel(match.source)}</dd>
+				</div>
+			</dl>
+		</section>
+
+		{
+			h2h.length > 0 ? (
+				<section class="mt-10">
+					<h2 class="font-display text-xl">两队交手</h2>
+					<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{h2h.map((item) => (
+							<MatchRow match={item} now={now} showEvent />
+						))}
+					</div>
+				</section>
+			) : null
+		}
+
+		{
+			related.length > 0 ? (
+				<section class="mt-10">
+					<h2 class="font-display text-xl">同赛事其他对阵</h2>
+					<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{related.map((item) => (
+							<MatchRow match={item} now={now} showEvent />
+						))}
+					</div>
+				</section>
+			) : null
+		}
+	</section>
+</Layout>

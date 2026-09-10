@@ -29,7 +29,10 @@ function initial(name: string): string {
 }
 ---
 
-<article class="rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/40 hover:bg-surface-2">
+<a
+	href={`/matches/${match.id}`}
+	class="block rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/40 hover:bg-surface-2"
+>
 	<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
 		<span class:list={['inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-semibold', st.cls]}>
 			{st.dot && <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>}
@@ -69,4 +72,4 @@ function initial(name: string): string {
 			</span>
 		</div>
 	</div>
-</article>
+</a>

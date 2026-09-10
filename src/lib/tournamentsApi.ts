@@ -38,6 +38,11 @@ const SOURCE_LABEL: Record<DataSource, string> = {
 	seed: '本地兜底',
 };
 
+/** 数据源中文名，供页面标注出处。 */
+export function dataSourceLabel(id: DataSource): string {
+	return SOURCE_LABEL[id];
+}
+
 // ---------------------------------------------------------------- 请求工具
 
 async function getJson<T>(url: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<T> {
