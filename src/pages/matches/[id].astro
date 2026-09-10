@@ -3,6 +3,8 @@ import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
 import type { EsportsMatch } from '../../data/types';
 import { formatClock, formatDayWithWeekday, formatMatchTime } from '../../lib/format';
+import type { MatchDraft } from '../../lib/opendota';
+import { loadMatchDrafts } from '../../lib/opendota';
 import { MATCH_STATUS_META } from '../../lib/statusMeta';
 import { getTournamentIndex, headToHead, relatedMatches } from '../../lib/tournamentIndex';
 import { dataSourceLabel } from '../../lib/tournamentsApi';
@@ -15,10 +17,13 @@ interface Props {
 	related: EsportsMatch[];
 	/** 两队在当前数据窗口内的交手记录。 */
 	h2h: EsportsMatch[];
+	/** OpenDota 的 BP 与选手数据；该场未被收录时为 null。 */
+	draft: MatchDraft | null;
 }
 
 export async function getStaticPaths() {
 	const index = await getTournamentIndex();
+	const drafts = await loadMatchDrafts(index.matchList);
 	return index.matchList.map((match) => ({
 		params: { id: match.id },
 		props: {
@@ -26,11 +31,12 @@ export async function getStaticPaths() {
 			eventExists: index.eventIds.has(match.eventId),
 			related: relatedMatches(match, index.matchList),
 			h2h: headToHead(match, index.matchList),
+			draft: drafts.get(match.id) ?? null,
 		},
 	}));
 }
 
-const { match, eventExists, related, h2h } = Astro.props;
+const { match, eventExists, related, h2h, draft } = Astro.props;
 const now = Math.floor(Date.now() / 1000);
 const st = MATCH_STATUS_META[match.status];
 
@@ -42,6 +48,16 @@ const hasScore =
 function initial(name: string): string {
 	return name.trim().slice(0, 2).toUpperCase();
 }
+
+/** 按超凡的主客队把选手拆到两侧，0 = 主队，1 = 客队。 */
+const draftSides = draft
+	? [0, 1].map((side) => ({
+			side,
+			name: side === 0 ? match.home.name : match.away.name,
+			players: draft.players.filter((player) => (player.home ? 0 : 1) === side),
+			picks: draft.picks.filter((hero) => hero.team === side),
+		}))
+	: [];
 
 const backHref = eventExists ? `/tournaments/${match.eventId}` : '/tournaments';
 const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
@@ -162,6 +178,100 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 				</div>
 			</dl>
 		</section>
+
+		{
+			draft ? (
+				<section class="mt-10">
+					<div class="flex flex-wrap items-baseline justify-between gap-2">
+						<h2 class="font-display text-xl">英雄阵容</h2>
+						<a
+							href={`https://www.opendota.com/matches/${draft.matchId}`}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="text-xs text-faint transition hover:text-gold"
+						>
+							数据来自 OpenDota ↗
+						</a>
+					</div>
+
+					<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{draftSides.map((side) => (
+							<div class="rounded-2xl border border-line bg-surface p-4">
+								<p class="truncate text-sm font-semibold text-cream">{side.name}</p>
+								<ul class="mt-3 space-y-2">
+									{side.players.map((player) => (
+										<li class="flex items-center gap-3">
+											{player.heroImg ? (
+												<img
+													src={player.heroImg}
+													alt=""
+													loading="lazy"
+													referrerpolicy="no-referrer"
+													class="h-8 w-14 shrink-0 rounded object-cover"
+												/>
+											) : (
+												<span class="h-8 w-14 shrink-0 rounded bg-surface-2" />
+											)}
+											<span class="min-w-0 flex-1">
+												<span class="block truncate text-sm text-cream">{player.heroName}</span>
+												<span class="block truncate text-xs text-faint">{player.name}</span>
+											</span>
+											<span class="shrink-0 text-xs tabular-nums text-muted">
+												{player.kills}/{player.deaths}/{player.assists}
+											</span>
+										</li>
+									))}
+									{side.players.length === 0
+										? side.picks.map((hero) => (
+												<li class="flex items-center gap-3">
+													{hero.img ? (
+														<img
+															src={hero.img}
+															alt=""
+															loading="lazy"
+															referrerpolicy="no-referrer"
+															class="h-8 w-14 shrink-0 rounded object-cover"
+														/>
+													) : (
+														<span class="h-8 w-14 shrink-0 rounded bg-surface-2" />
+													)}
+													<span class="min-w-0 flex-1 truncate text-sm text-cream">{hero.name}</span>
+												</li>
+											))
+										: null}
+								</ul>
+							</div>
+						))}
+					</div>
+
+					{draft.bans.length > 0 ? (
+						<div class="mt-3 rounded-2xl border border-line bg-surface p-4">
+							<p class="text-xs text-faint">禁用英雄</p>
+							<div class="mt-3 flex flex-wrap gap-2">
+								{draft.bans.map((hero) => (
+									<span class="flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2 py-1 text-[11px] text-muted">
+										{hero.img ? (
+											<img
+												src={hero.img}
+												alt=""
+												loading="lazy"
+												referrerpolicy="no-referrer"
+												class="h-4 w-7 rounded-sm object-cover opacity-70"
+											/>
+										) : null}
+										{hero.name}
+									</span>
+								))}
+							</div>
+						</div>
+					) : null}
+				</section>
+			) : match.status === 'upcoming' ? null : (
+				<p class="mt-10 border-t border-line pt-6 text-xs text-faint">
+					该场暂无英雄数据：只有被 OpenDota 收录的职业比赛才能提供 BP 与选手英雄，未收录的比赛无法补全。
+				</p>
+			)
+		}
 
 		{
 			h2h.length > 0 ? (
