@@ -1,6 +1,7 @@
 ---
 import type { EsportsMatch } from '../data/types';
 import { formatMatchTime } from '../lib/format';
+import { MATCH_STATUS_META } from '../lib/statusMeta';
 
 interface Props {
 	match: EsportsMatch;
@@ -11,13 +12,7 @@ interface Props {
 
 const { match, now, showEvent = false } = Astro.props;
 
-const STATUS: Record<EsportsMatch['status'], { label: string; cls: string; dot: boolean }> = {
-	live: { label: '进行中', cls: 'bg-[#22c55e]/15 text-[#4ade80]', dot: true },
-	upcoming: { label: '未开始', cls: 'bg-dota/15 text-dota-light', dot: false },
-	completed: { label: '已结束', cls: 'bg-zinc-600/15 text-zinc-400', dot: false },
-	postponed: { label: '延期', cls: 'bg-amber-500/15 text-amber-400', dot: false },
-};
-const st = STATUS[match.status];
+const st = MATCH_STATUS_META[match.status];
 
 const sides = [
 	{ team: match.home, side: 'home' as const },

@@ -1,6 +1,7 @@
 ---
 import type { EsportsEvent } from '../data/types';
 import { formatMatchTime, formatRange } from '../lib/format';
+import { EVENT_STATUS_META } from '../lib/statusMeta';
 
 interface Props {
 	event: EsportsEvent;
@@ -9,13 +10,7 @@ interface Props {
 
 const { event, now } = Astro.props;
 
-const STATUS: Record<EsportsEvent['status'], { label: string; cls: string }> = {
-	live: { label: '进行中', cls: 'bg-[#22c55e]/15 text-[#4ade80]' },
-	upcoming: { label: '即将开始', cls: 'bg-dota/15 text-dota-light' },
-	completed: { label: '已结束', cls: 'bg-zinc-600/15 text-zinc-400' },
-	postponed: { label: '延期', cls: 'bg-amber-500/15 text-amber-400' },
-};
-const st = STATUS[event.status];
+const st = EVENT_STATUS_META[event.status];
 
 /** 卡片上优先展示正在打的那场，其次下一场（含延期），最后才是最近一场赛果。 */
 const preview =
