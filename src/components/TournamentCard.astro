@@ -1,50 +1,74 @@
 ---
-import type { Tournament } from '../data/types';
+import type { EsportsEvent } from '../data/types';
+import { formatMatchTime, formatRange } from '../lib/format';
 
 interface Props {
-	event: Tournament;
+	event: EsportsEvent;
+	now: number;
 }
 
-const { event } = Astro.props;
+const { event, now } = Astro.props;
 
-const STATUS: Record<Tournament['status'], { label: string; cls: string }> = {
+const STATUS: Record<EsportsEvent['status'], { label: string; cls: string }> = {
 	live: { label: '进行中', cls: 'bg-[#22c55e]/15 text-[#4ade80]' },
 	upcoming: { label: '即将开始', cls: 'bg-dota/15 text-dota-light' },
 	completed: { label: '已结束', cls: 'bg-zinc-600/15 text-zinc-400' },
+	postponed: { label: '延期', cls: 'bg-amber-500/15 text-amber-400' },
 };
 const st = STATUS[event.status];
+
+/** 卡片上优先展示正在打的那场，其次下一场（含延期），最后才是最近一场赛果。 */
+const preview =
+	event.matches.find((m) => m.status === 'live') ??
+	event.matches.find((m) => m.status === 'upcoming') ??
+	event.matches.find((m) => m.status === 'postponed') ??
+	[...event.matches].reverse().find((m) => m.status === 'completed');
+
+const previewLabel =
+	preview?.status === 'completed'
+		? '最近赛果'
+		: preview?.status === 'live'
+			? '正在进行'
+			: preview?.status === 'postponed'
+				? '已延期'
+				: '下一场';
+
+const hasScore =
+	preview !== undefined &&
+	(preview.status === 'live' || preview.status === 'completed') &&
+	typeof preview.home.score === 'number' &&
+	typeof preview.away.score === 'number';
 ---
 
-<article class="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-surface p-6 transition hover:border-dota/50 hover:bg-surface-2">
+<a
+	href={`/tournaments/${event.id}`}
+	class="group relative flex h-full flex-col overflow-hidden rounded-2xl border border-line bg-surface p-6 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2"
+>
 	<span class:list={['absolute right-4 top-4 rounded-md px-2 py-1 text-xs font-semibold', st.cls]}>{st.label}</span>
-	{event.premium && <span class="absolute left-0 top-6 rounded-r-md bg-gold px-2 py-0.5 text-[10px] font-bold text-ink">PREMIUM</span>}
 
-	<div class="flex items-center gap-2 text-xs text-muted">
-		<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-			<path d="M12 21s-7-5.3-7-11a7 7 0 0 1 14 0c0 5.7-7 11-7 11z" stroke="currentColor" stroke-width="1.6" />
-			<circle cx="12" cy="10" r="2.5" stroke="currentColor" stroke-width="1.6" />
-		</svg>
-		<span>{event.region}</span>
+	<h3 class="pr-20 font-display text-xl leading-snug transition group-hover:text-dota-light">{event.name}</h3>
+
+	<div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+		<span class="text-cream">{formatRange(event.startTime, event.endTime)}</span>
+		<span class="text-faint">{event.matches.length} 场比赛</span>
+		{event.teams.length > 0 ? <span class="text-faint">{event.teams.length} 支队伍</span> : null}
 	</div>
 
-	<h3 class="mt-3 font-display text-xl leading-snug transition group-hover:text-dota-light">{event.name}</h3>
-
-	<div class="mt-5 space-y-2.5 text-sm">
-		<div class="flex items-center justify-between border-t border-line pt-3">
-			<span class="text-muted">时间</span>
-			<span class="text-cream">{event.start.replaceAll('-', '.')} — {event.end.replaceAll('-', '.')}</span>
-		</div>
-		<div class="flex items-center justify-between">
-			<span class="text-muted">奖金池</span>
-			<span class="font-semibold text-gold">{event.prize}</span>
-		</div>
-		<div class="flex items-center justify-between">
-			<span class="text-muted">参赛队伍</span>
-			<span>{event.teams} 支</span>
-		</div>
-		<div class="flex items-center justify-between">
-			<span class="text-muted">赛制</span>
-			<span>{event.format}</span>
-		</div>
+	<div class="mt-5 border-t border-line pt-4">
+		{preview ? (
+			<>
+				<p class="text-xs font-semibold uppercase tracking-wider text-faint">{previewLabel}</p>
+				<div class="mt-2 flex items-center justify-between gap-3 text-sm">
+					<span class="min-w-0 flex-1 truncate text-right text-cream">{preview.home.name}</span>
+					<span class="shrink-0 font-display tabular-nums text-muted">
+						{hasScore ? `${preview.home.score} : ${preview.away.score}` : 'VS'}
+					</span>
+					<span class="min-w-0 flex-1 truncate text-cream">{preview.away.name}</span>
+				</div>
+				<p class="mt-2 text-right text-xs text-faint">{formatMatchTime(preview.startTime, now)}</p>
+			</>
+		) : (
+			<p class="text-sm text-faint">对阵信息暂未发布</p>
+		)}
 	</div>
-</article>
+</a>

@@ -8,11 +8,16 @@ import TournamentCard from '../components/TournamentCard.astro';
 import { LIVE_NOW, STREAMERS } from '../data/site';
 import { NEWS } from '../data/news';
 import { PATCHES } from '../data/patches';
-import { TOURNAMENTS } from '../data/tournaments';
+import { getTournaments } from '../lib/tournamentsApi';
 
 const featuredNews = NEWS.filter((n) => n.featured).slice(0, 2);
-const upcoming = TOURNAMENTS.filter((t) => t.status !== 'completed').slice(0, 3);
 const latestPatch = PATCHES[0];
+
+const bundle = await getTournaments();
+// 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
+const now = Math.floor(Date.now() / 1000);
+const notFinished = bundle.events.filter((e) => e.status !== 'completed');
+const upcoming = (notFinished.length > 0 ? notFinished : bundle.events).slice(0, 3);
 
 const FEATURES = [
 	{ href: '/live', title: '分屏直播', desc: '在一个页面聚合观看多位 OB 主播，自由切换分屏布局。', icon: 'screen' },
@@ -109,9 +114,9 @@ const FEATURES = [
 	<!-- Upcoming tournaments -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
 		<SectionHeader eyebrow="赛事" title="近期官方赛事" href="/tournaments" linkText="全部赛事" />
-		<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
-			{upcoming.map((t) => <TournamentCard event={t} />)}
-		</div>
+			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+				{upcoming.map((t) => <TournamentCard event={t} now={now} />)}
+			</div>
 	</section>
 
 	<!-- Latest patch -->

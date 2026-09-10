@@ -1,0 +1,159 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import MatchRow from '../../components/MatchRow.astro';
+import type { DataSourceStatus, EsportsEvent, EsportsMatch } from '../../data/types';
+import { dayKey, formatDayWithWeekday, formatIso, formatRange } from '../../lib/format';
+import { getTournaments } from '../../lib/tournamentsApi';
+
+interface Props {
+	event: EsportsEvent;
+	updatedAt: string;
+	sources: DataSourceStatus[];
+	degraded: boolean;
+}
+
+export async function getStaticPaths() {
+	const bundle = await getTournaments();
+	return bundle.events.map((event) => ({
+		params: { id: event.id },
+		props: { event, updatedAt: bundle.updatedAt, sources: bundle.sources, degraded: bundle.degraded },
+	}));
+}
+
+const { event, updatedAt, sources, degraded } = Astro.props;
+// 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
+const now = Math.floor(Date.now() / 1000);
+
+const STATUS: Record<EsportsEvent['status'], { label: string; cls: string }> = {
+	live: { label: '进行中', cls: 'bg-[#22c55e]/15 text-[#4ade80]' },
+	upcoming: { label: '即将开始', cls: 'bg-dota/15 text-dota-light' },
+	completed: { label: '已结束', cls: 'bg-zinc-600/15 text-zinc-400' },
+	postponed: { label: '延期', cls: 'bg-amber-500/15 text-amber-400' },
+};
+const st = STATUS[event.status];
+
+/** 按天分组，比赛已按时间升序排列，所以直接顺序插入即可。 */
+const days = new Map<string, EsportsMatch[]>();
+for (const match of event.matches) {
+	const key = dayKey(match.startTime);
+	const bucket = days.get(key);
+	if (bucket) bucket.push(match);
+	else days.set(key, [match]);
+}
+
+const SCORE_STATUS =
+	event.status === 'live'
+		? '实时'
+		: event.status === 'upcoming'
+			? '即将开始'
+			: event.status === 'postponed'
+				? '已延期'
+				: '已结束';
+---
+
+<Layout
+	title={`${event.name} · 赛事 · DOTA2 驿站`}
+	description={`${event.name} 的完整赛程、对阵与参赛队伍，共 ${event.matches.length} 场比赛。`}
+>
+	<section class="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
+		<a href="/tournaments" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			返回赛事列表
+		</a>
+
+		<header class="mt-5 border-b border-line pb-6">
+			<div class="flex flex-wrap items-center gap-3">
+				<span class:list={['rounded-md px-2 py-1 text-xs font-semibold', st.cls]}>{st.label}</span>
+				<span class="text-xs text-faint">{SCORE_STATUS}</span>
+			</div>
+			<h1 class="mt-3 font-display text-3xl leading-tight sm:text-4xl">{event.name}</h1>
+			<div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-muted">
+				<span>{formatRange(event.startTime, event.endTime)}</span>
+				<span>{event.matches.length} 场比赛</span>
+				{event.teams.length > 0 ? <span>{event.teams.length} 支队伍</span> : null}
+			</div>
+		</header>
+
+		<div class="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">进行中</p>
+				<p class="mt-1 font-display text-2xl">{event.matches.filter((m) => m.status === 'live').length}</p>
+			</div>
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">未开赛</p>
+				<p class="mt-1 font-display text-2xl">{event.matches.filter((m) => m.status === 'upcoming').length}</p>
+			</div>
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">已完赛</p>
+				<p class="mt-1 font-display text-2xl">{event.matches.filter((m) => m.status === 'completed').length}</p>
+			</div>
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">延期</p>
+				<p class="mt-1 font-display text-2xl">{event.matches.filter((m) => m.status === 'postponed').length}</p>
+			</div>
+		</div>
+
+		<section class="mt-12">
+			<h2 class="font-display text-2xl">赛程与赛果</h2>
+			{
+				days.size > 0 ? (
+					<div class="mt-6 space-y-8">
+						{[...days.entries()].map(([key, matches]) => (
+							<div>
+								<h3 class="mb-3 flex items-center gap-3 text-sm font-semibold text-muted">
+									<span>{formatDayWithWeekday(matches[0].startTime)}</span>
+									<span class="h-px flex-1 bg-line" aria-hidden="true" />
+									<span class="text-xs font-normal text-faint">{matches.length} 场</span>
+								</h3>
+								<div class="space-y-3">
+									{matches.map((match) => (
+										<MatchRow match={match} now={now} />
+									))}
+								</div>
+							</div>
+						))}
+					</div>
+				) : (
+					<div class="mt-4 rounded-2xl border border-line bg-surface px-6 py-14 text-center">
+						<p class="text-muted">这个赛事的对阵信息暂未发布。</p>
+						<p class="mt-2 text-sm text-faint">赛程公布后会自动出现在这里。</p>
+					</div>
+				)
+			}
+		</section>
+
+		{
+			event.teams.length > 0 ? (
+				<section class="mt-12">
+					<h2 class="font-display text-2xl">参赛队伍</h2>
+					<div class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+						{event.teams.map((team) => (
+							<div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+								<span class="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+									{team.name.trim().slice(0, 2).toUpperCase()}
+									{team.logo ? (
+										<img
+											src={team.logo}
+											alt=""
+											loading="lazy"
+											referrerpolicy="no-referrer"
+											class="absolute inset-0 h-full w-full object-cover"
+										/>
+									) : null}
+								</span>
+								<span class="min-w-0 truncate text-sm text-cream">{team.name}</span>
+							</div>
+						))}
+					</div>
+				</section>
+			) : null
+		}
+
+		<p class="mt-12 border-t border-line pt-6 text-xs text-faint">
+			数据更新于 {formatIso(updatedAt)} · 来源：{sources.map((s) => s.label).join(' / ')}
+			{degraded ? ' （实时数据源暂不可用，展示的是降级结果）' : ''}
+		</p>
+	</section>
+</Layout>

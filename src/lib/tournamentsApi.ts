@@ -1,0 +1,421 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { seedEvents } from '../data/tournaments';
+import type {
+	DataSource,
+	DataSourceStatus,
+	EsportsEvent,
+	EsportsMatch,
+	MatchStatus,
+	TeamRef,
+	TournamentsBundle,
+} from '../data/types';
+
+/**
+ * 赛事数据层。
+ *
+ * 分层原则：
+ * 1. 超凡电竞（`api-pc.chaofan.com`）提供完整的赛事日历——未开赛、进行中、已完场
+ *    都有，还带 BO 赛制和队伍 Logo，所以它是赛事列表的主数据源。
+ * 2. OpenDota 提供实时进行中的职业对局与赛果，作为实时区块和降级兜底。
+ * 3. 两者都失败时读本地缓存，再失败才回退到 `data/tournaments.ts` 的种子数据。
+ *
+ * 这两个接口都没有 CORS 头（chaofan 还要求浏览器 UA），只能在构建期由 Node 抓取。
+ * 抓取结果会落到 `.cache/tournaments.json`，保证断网时仍能构建出完整页面。
+ */
+
+const CHAOFAN_URL = 'https://api-pc.chaofan.com/api/v1/match/list?game_id=3&match_time=0';
+const CHAOFAN_UA =
+	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const OPENDOTA_LIVE_URL = 'https://api.opendota.com/api/live';
+const OPENDOTA_PRO_URL = 'https://api.opendota.com/api/proMatches';
+
+const CACHE_FILE = path.join(process.cwd(), '.cache', 'tournaments.json');
+
+const SOURCE_LABEL: Record<DataSource, string> = {
+	chaofan: '超凡电竞',
+	opendota: 'OpenDota',
+	seed: '本地兜底',
+};
+
+// ---------------------------------------------------------------- 请求工具
+
+async function getJson<T>(url: string, init: RequestInit = {}, timeoutMs = 15_000): Promise<T> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		const res = await fetch(url, { ...init, signal: controller.signal });
+		if (!res.ok) throw new Error(`${url} 返回 HTTP ${res.status}`);
+		return (await res.json()) as T;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+// ---------------------------------------------------------------- 超凡电竞
+
+interface ChaofanTeam {
+	score?: number;
+	team_id?: number;
+	name?: string;
+	logo?: string;
+}
+
+interface ChaofanMatch {
+	home?: ChaofanTeam;
+	away?: ChaofanTeam;
+	title?: string;
+	tournament_id?: string;
+	box?: number;
+	status_id?: number;
+	start_time?: number;
+	id?: string;
+}
+
+interface ChaofanResponse {
+	code?: number;
+	data?: { list?: ChaofanMatch[] };
+}
+
+/** 超凡的 status_id：1 未开赛 / 2 进行中 / 3 完场 / 11 中断 / 13 延期。 */
+const CHAOFAN_STATUS: Record<number, MatchStatus> = {
+	1: 'upcoming',
+	2: 'live',
+	3: 'completed',
+	11: 'postponed',
+	13: 'postponed',
+};
+
+function chaofanTeam(team: ChaofanTeam | undefined): TeamRef | null {
+	if (!team?.name) return null;
+	return {
+		id: team.team_id ? `cf-team-${team.team_id}` : `cf-team-${team.name}`,
+		name: team.name,
+		logo: team.logo || undefined,
+		score: team.score,
+	};
+}
+
+async function fetchChaofan(): Promise<EsportsMatch[]> {
+	const json = await getJson<ChaofanResponse>(
+		CHAOFAN_URL,
+		{ headers: { 'User-Agent': CHAOFAN_UA, Accept: 'application/json' } },
+		25_000,
+	);
+	// 该接口错误时同样返回 HTTP 200，只靠 HTTP 状态码会把空响应当成"拿到了日历"。
+	if (typeof json.code === 'number' && json.code !== 0) {
+		throw new Error(`超凡电竞接口返回 code ${json.code}`);
+	}
+	const list = json.data?.list ?? [];
+	const out: EsportsMatch[] = [];
+	for (const item of list) {
+		const home = chaofanTeam(item.home);
+		const away = chaofanTeam(item.away);
+		if (!home || !away || !item.start_time) continue;
+		const status = CHAOFAN_STATUS[item.status_id ?? 1] ?? 'upcoming';
+		out.push({
+			id: item.id ? `cf-${item.id}` : `cf-${item.tournament_id}-${item.start_time}-${home.name}`,
+			eventId: `cf-${item.tournament_id ?? 'other'}`,
+			eventName: item.title || '未命名赛事',
+			startTime: item.start_time,
+			status,
+			bo: item.box || undefined,
+			home,
+			away,
+			winner:
+				status === 'completed' && typeof home.score === 'number' && typeof away.score === 'number'
+					? home.score === away.score
+						? undefined
+						: home.score > away.score
+							? 'home'
+							: 'away'
+					: undefined,
+			source: 'chaofan',
+		});
+	}
+	return out;
+}
+
+// ---------------------------------------------------------------- OpenDota
+
+interface OpenDotaLive {
+	match_id?: string | number;
+	league_id?: number;
+	activate_time?: number;
+	team_name_radiant?: string;
+	team_name_dire?: string;
+	radiant_score?: number;
+	dire_score?: number;
+}
+
+interface OpenDotaProMatch {
+	match_id?: number;
+	start_time?: number;
+	/** 0 表示对局尚未结束；缺省时按已结束处理（保持旧行为）。 */
+	duration?: number;
+	radiant_team_id?: number;
+	radiant_name?: string;
+	dire_team_id?: number;
+	dire_name?: string;
+	leagueid?: number;
+	league_name?: string;
+	radiant_score?: number;
+	dire_score?: number;
+	radiant_win?: boolean;
+}
+
+/** 只用带真实队名的对局——其余是路人局，对赛事页没有意义。 */
+async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
+	const list = await getJson<OpenDotaLive[]>(OPENDOTA_LIVE_URL);
+	const out: EsportsMatch[] = [];
+	for (const item of list) {
+		if (!item.team_name_radiant || !item.team_name_dire) continue;
+		out.push({
+			id: `od-live-${item.match_id}`,
+			eventId: `od-league-${item.league_id ?? 0}`,
+			eventName: item.league_id ? `职业联赛 #${item.league_id}` : '职业对局',
+			startTime: item.activate_time ?? Math.floor(Date.now() / 1000),
+			status: 'live',
+			home: { id: `od-team-${item.team_name_radiant}`, name: item.team_name_radiant, score: item.radiant_score },
+			away: { id: `od-team-${item.team_name_dire}`, name: item.team_name_dire, score: item.dire_score },
+			source: 'opendota',
+		});
+	}
+	return out;
+}
+
+async function fetchOpenDotaPro(): Promise<EsportsMatch[]> {
+	const list = await getJson<OpenDotaProMatch[]>(OPENDOTA_PRO_URL);
+	return list
+		.filter((item) => item.radiant_name && item.dire_name && item.start_time)
+		.map((item) => {
+			// duration > 0 才是真正打完的对局；缺省 duration 时按已结束处理，保持旧行为。
+			const finished = typeof item.duration !== 'number' || item.duration > 0;
+			const home: TeamRef = {
+				id: `od-team-${item.radiant_team_id ?? item.radiant_name}`,
+				name: item.radiant_name!,
+				score: item.radiant_score,
+			};
+			const away: TeamRef = {
+				id: `od-team-${item.dire_team_id ?? item.dire_name}`,
+				name: item.dire_name!,
+				score: item.dire_score,
+			};
+			// 只有打完的对局才判胜负；radiant_win 缺省时不要凭空造一个胜者。
+			let winner: EsportsMatch['winner'];
+			if (finished) {
+				if (item.radiant_win === true) winner = 'home';
+				else if (item.radiant_win === false) winner = 'away';
+			}
+			return {
+				id: `od-${item.match_id}`,
+				eventId: `od-league-${item.leagueid ?? 0}`,
+				eventName: item.league_name?.trim() || '职业比赛',
+				startTime: item.start_time!,
+				status: finished ? ('completed' as const) : ('live' as const),
+				home,
+				away,
+				winner,
+				source: 'opendota' as const,
+			};
+		});
+}
+
+// ---------------------------------------------------------------- 组装
+
+/** 归一化队名，用于跨数据源判重。 */
+function normTeam(name: string): string {
+	return name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
+}
+
+/**
+ * 判断两场比赛是否为"同一场"。
+ *
+ * 必须**两支队伍都重合**：只按一支队伍判重时，同一赛事里 A vs B、A vs C 这种
+ * 相隔几小时的小组赛会被误判成重复而被丢掉。
+ */
+function isSameMatch(a: EsportsMatch, b: EsportsMatch): boolean {
+	const aTeams = new Set([normTeam(a.home.name), normTeam(a.away.name)]);
+	const bTeams = [normTeam(b.home.name), normTeam(b.away.name)];
+	if (aTeams.size < 2) return false;
+	if (!bTeams.every((name) => name !== '' && aTeams.has(name))) return false;
+	// 两场比赛在同一时间窗口内且双方队伍都一致，视为同一场。
+	return Math.abs(a.startTime - b.startTime) < 6 * 3600;
+}
+
+function dedupeMatches(matches: EsportsMatch[]): EsportsMatch[] {
+	const out: EsportsMatch[] = [];
+	for (const match of matches) {
+		if (out.some((kept) => isSameMatch(kept, match))) continue;
+		out.push(match);
+	}
+	return out;
+}
+
+function eventStatus(matches: EsportsMatch[]): MatchStatus {
+	if (matches.some((m) => m.status === 'live')) return 'live';
+	if (matches.some((m) => m.status === 'upcoming')) return 'upcoming';
+	// 延期/中断的场次不应把已经打完的赛事永久钉在"即将开始"；
+	// 只有全部场次都延期时，才认为赛事还没开赛。
+	if (matches.length > 0 && matches.every((m) => m.status === 'postponed')) return 'upcoming';
+	return 'completed';
+}
+
+function buildEvents(matches: EsportsMatch[]): EsportsEvent[] {
+	const groups = new Map<string, EsportsMatch[]>();
+	for (const match of matches) {
+		const bucket = groups.get(match.eventId);
+		if (bucket) bucket.push(match);
+		else groups.set(match.eventId, [match]);
+	}
+
+	const events: EsportsEvent[] = [];
+	for (const [id, group] of groups) {
+		const sorted = [...group].sort((a, b) => a.startTime - b.startTime);
+		const teams = new Map<string, TeamRef>();
+		for (const match of sorted) {
+			for (const team of [match.home, match.away]) {
+				const key = normTeam(team.name);
+				const existing = teams.get(key);
+				if (existing) {
+					if (!existing.logo && team.logo) existing.logo = team.logo;
+				} else {
+					teams.set(key, { ...team, score: undefined });
+				}
+			}
+		}
+		events.push({
+			id,
+			name: sorted[0].eventName,
+			status: eventStatus(sorted),
+			startTime: sorted[0].startTime,
+			endTime: sorted[sorted.length - 1].startTime,
+			matches: sorted,
+			teams: [...teams.values()],
+			source: sorted[0].source,
+		});
+	}
+	return events;
+}
+
+const STATUS_ORDER: Record<MatchStatus, number> = { live: 0, upcoming: 1, postponed: 2, completed: 3 };
+
+function sortEvents(events: EsportsEvent[]): EsportsEvent[] {
+	return [...events].sort((a, b) => {
+		const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+		if (byStatus !== 0) return byStatus;
+		// 进行中/未开赛按最近的排前面，已结束按刚打完的排前面。
+		return a.status === 'completed' ? b.endTime - a.endTime : a.startTime - b.startTime;
+	});
+}
+
+// ---------------------------------------------------------------- 缓存
+
+async function readCache(): Promise<TournamentsBundle | null> {
+	try {
+		const raw = await fs.readFile(CACHE_FILE, 'utf8');
+		const parsed = JSON.parse(raw) as TournamentsBundle;
+		return Array.isArray(parsed.events) && parsed.events.length > 0 ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+async function writeCache(bundle: TournamentsBundle): Promise<void> {
+	try {
+		await fs.mkdir(path.dirname(CACHE_FILE), { recursive: true });
+		await fs.writeFile(CACHE_FILE, JSON.stringify(bundle), 'utf8');
+	} catch {
+		// 缓存写入失败不影响构建。
+	}
+}
+
+// ---------------------------------------------------------------- 对外入口
+
+function sourceStatus(id: DataSource, ok: boolean, label?: string): DataSourceStatus {
+	return { id, label: label ?? SOURCE_LABEL[id], ok };
+}
+
+async function assemble(): Promise<TournamentsBundle> {
+	const updatedAt = new Date().toISOString();
+
+	let opendotaOk = false;
+	/**
+	 * 日历是否**真的**来自超凡。
+	 * 不能只看 `allSettled` 是否 fulfilled：接口出错时同样返回 HTTP 200 + 空列表，
+	 * 那种情况下数据实际来自 OpenDota 兜底，既不该标成健康，也不该写进缓存。
+	 */
+	let calendarFromChaofan = false;
+	let calendarMatches: EsportsMatch[] = [];
+	let opendotaLive: EsportsMatch[] = [];
+
+	// `TOURNAMENTS_OFFLINE=1` 跳过所有网络请求，直接走缓存/兜底，
+	// 便于在无网络环境下构建，也用于验证降级链路。
+	if (process.env.TOURNAMENTS_OFFLINE !== '1') {
+		// 赛事日历与实时对局并行抓取，任意一个失败都不影响另一个。
+		const [calendarRes, liveRes] = await Promise.allSettled([fetchChaofan(), fetchOpenDotaLive()]);
+		opendotaOk = liveRes.status === 'fulfilled';
+		calendarMatches = calendarRes.status === 'fulfilled' ? calendarRes.value : [];
+		calendarFromChaofan = calendarMatches.length > 0;
+		opendotaLive = opendotaOk ? liveRes.value : [];
+
+		// 主数据源没拿到赛事，用 OpenDota 的赛果兜一层。
+		if (calendarMatches.length === 0) {
+			try {
+				calendarMatches = await fetchOpenDotaPro();
+				if (calendarMatches.length > 0) opendotaOk = true;
+			} catch {
+				calendarMatches = [];
+			}
+		}
+	}
+
+	// 两条链路都空，读上次成功构建的缓存。
+	if (calendarMatches.length === 0) {
+		const cached = await readCache();
+		if (cached) {
+			return {
+				events: cached.events,
+				live: dedupeMatches([...(cached.live ?? []), ...opendotaLive]),
+				updatedAt: cached.updatedAt,
+				degraded: true,
+				sources: [
+					sourceStatus('chaofan', false),
+					sourceStatus('opendota', opendotaOk),
+					sourceStatus('seed', true, '本地缓存'),
+				],
+			};
+		}
+
+		return {
+			events: sortEvents(seedEvents()),
+			live: dedupeMatches(opendotaLive),
+			updatedAt,
+			degraded: true,
+			sources: [sourceStatus('chaofan', false), sourceStatus('opendota', opendotaOk), sourceStatus('seed', true)],
+		};
+	}
+
+	const bundle: TournamentsBundle = {
+		events: sortEvents(buildEvents(calendarMatches)),
+		live: dedupeMatches([...calendarMatches.filter((m) => m.status === 'live'), ...opendotaLive]),
+		updatedAt,
+		degraded: !calendarFromChaofan,
+		sources: [sourceStatus('chaofan', calendarFromChaofan), sourceStatus('opendota', opendotaOk)],
+	};
+
+	// 只有拿到超凡的完整日历才写缓存；OpenDota 兜底的结果不值得留，否则会污染缓存。
+	if (calendarFromChaofan) await writeCache(bundle);
+	return bundle;
+}
+
+let bundlePromise: Promise<TournamentsBundle> | null = null;
+
+/**
+ * 取赛事数据。构建期多个页面（列表页、详情页的 getStaticPaths）会重复调用，
+ * 这里用模块级 Promise 做单飞，保证一次构建只抓一轮。
+ */
+export function getTournaments(): Promise<TournamentsBundle> {
+	bundlePromise ??= assemble();
+	return bundlePromise;
+}

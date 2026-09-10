@@ -1,41 +1,131 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import MatchRow from '../components/MatchRow.astro';
 import TournamentCard from '../components/TournamentCard.astro';
-import { TOURNAMENTS } from '../data/tournaments';
+import type { EsportsEvent } from '../data/types';
+import { formatIso } from '../lib/format';
+import { getTournaments } from '../lib/tournamentsApi';
+
+const bundle = await getTournaments();
+// 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
+const now = Math.floor(Date.now() / 1000);
+
+/** 已结束的赛事按时间倒序更容易看，所以这里整体按状态 + 时间排一遍。 */
+const STATUS_ORDER: Record<EsportsEvent['status'], number> = { live: 0, upcoming: 1, postponed: 2, completed: 3 };
+const events = [...bundle.events].sort((a, b) => {
+	const byStatus = STATUS_ORDER[a.status] - STATUS_ORDER[b.status];
+	if (byStatus !== 0) return byStatus;
+	return a.status === 'completed' ? b.endTime - a.endTime : a.startTime - b.startTime;
+});
+
+const countOf = (status: EsportsEvent['status']) => events.filter((e) => e.status === status).length;
+
+/** 最近打完的几场，让列表页不用点进详情也能看到赛果。 */
+const recentResults = events
+	.flatMap((event) => event.matches)
+	.filter((match) => match.status === 'completed')
+	.sort((a, b) => b.startTime - a.startTime)
+	.slice(0, 6);
 
 const FILTERS = [
-	{ id: 'all', label: '全部' },
-	{ id: 'live', label: '进行中' },
-	{ id: 'upcoming', label: '即将开始' },
-	{ id: 'completed', label: '已结束' },
+	{ id: 'all', label: '全部', count: events.length },
+	{ id: 'live', label: '进行中', count: countOf('live') },
+	{ id: 'upcoming', label: '即将开始', count: countOf('upcoming') },
+	{ id: 'completed', label: '已结束', count: countOf('completed') },
 ] as const;
-
-const labels = new Set(TOURNAMENTS.map((t) => t.status));
 ---
 
-<Layout title="赛事 · DOTA2 驿站" description="DOTA2 官方赛事信息：TI、Major、ESL 等赛程与奖金。">
+<Layout
+	title="赛事 · DOTA2 驿站"
+	description="DOTA2 职业赛事日历：实时对阵、近期赛程与赛果，数据来自超凡电竞与 OpenDota。"
+>
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-		<div class="mb-8">
+		<div class="mb-6">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">官方赛事</p>
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">职业赛场日历</h1>
-			<p class="mt-3 max-w-2xl text-muted">从 TI 到 ESL、Major，掌握全球各大赛事的赛程、奖金池与直播状态。</p>
+			<p class="mt-3 max-w-2xl text-muted">聚合正在进行的职业对局、近期赛程与赛果，点击赛事可查看完整对阵与参赛队伍。</p>
 		</div>
 
-		<div id="tourney-tabs" class="mb-8 flex flex-wrap gap-2" role="tablist" aria-label="赛事状态">
-			{FILTERS.map((f) => (
-				<button type="button" data-status={f.id} class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition" aria-pressed={f.id === 'all' ? 'true' : 'false'}>
-					{f.label}
-				</button>
-			))}
+		<div class="mb-10 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line bg-surface px-4 py-3 text-xs">
+			<span class="text-muted">数据更新于 {formatIso(bundle.updatedAt)}</span>
+			{
+				bundle.sources.map((source) => (
+					<span class="inline-flex items-center gap-1.5 text-muted">
+						<span class:list={['h-1.5 w-1.5 rounded-full', source.ok ? 'bg-[#4ade80]' : 'bg-faint']}></span>
+						{source.label}
+					</span>
+				))
+			}
+			{bundle.degraded ? <span class="text-gold">实时数据源暂不可用，以下为降级结果</span> : null}
 		</div>
 
-		<div id="tourney-list" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-			{TOURNAMENTS.map((t) => (
-				<div data-status={t.status} class:list={['tourney-card', t.premium ? 'md:col-span-2' : '']}>
-					<TournamentCard event={t} />
+		{
+			bundle.live.length > 0 ? (
+				<div class="mb-12">
+					<h2 class="mb-4 flex items-center gap-2 font-display text-xl">
+						<span class="h-2.5 w-2.5 animate-pulse rounded-full bg-[#22c55e]"></span>
+						正在直播
+						<span class="text-sm font-normal text-faint">{bundle.live.length} 场</span>
+					</h2>
+					<div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{bundle.live.map((match) => (
+							<MatchRow match={match} now={now} showEvent />
+						))}
+					</div>
 				</div>
-			))}
+			) : null
+		}
+
+		{
+			recentResults.length > 0 ? (
+				<div class="mb-12">
+					<h2 class="mb-4 font-display text-xl">近期赛果</h2>
+					<div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{recentResults.map((match) => (
+							<MatchRow match={match} now={now} showEvent />
+						))}
+					</div>
+				</div>
+			) : null
+		}
+
+		<div id="tourney-tabs" class="mb-8 flex flex-wrap gap-2" role="group" aria-label="赛事状态">
+			{
+				FILTERS.map((f) => (
+					<button
+						type="button"
+						data-status={f.id}
+						class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+						aria-pressed={f.id === 'all' ? 'true' : 'false'}
+					>
+						{f.label}
+						<span class="ml-1 text-xs text-faint">{f.count}</span>
+					</button>
+				))
+			}
 		</div>
+
+		{
+			events.length > 0 ? (
+				<>
+					<div id="tourney-list" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+						{events.map((event) => (
+							<div data-status={event.status} class="tourney-card">
+								<TournamentCard event={event} now={now} />
+							</div>
+						))}
+					</div>
+					<p id="tourney-empty" class="py-16 text-center text-sm text-faint" hidden>
+						该状态下暂时没有赛事。
+					</p>
+				</>
+			) : (
+				<div class="rounded-2xl border border-line bg-surface px-6 py-16 text-center">
+					<p class="text-muted">暂时拿不到赛事数据。</p>
+					<p class="mt-2 text-sm text-faint">数据源恢复后，这里会自动显示最新的赛程与赛果。</p>
+				</div>
+			)
+		}
 	</section>
 </Layout>
 
@@ -43,16 +133,24 @@ const labels = new Set(TOURNAMENTS.map((t) => t.status));
 	(() => {
 		const tabs = document.getElementById('tourney-tabs');
 		const list = document.getElementById('tourney-list');
+		const empty = document.getElementById('tourney-empty');
 		if (!tabs || !list) return;
+
 		const cards = Array.from(list.querySelectorAll<HTMLElement>('.tourney-card'));
 		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
 			btn.addEventListener('click', () => {
 				const status = btn.dataset.status!;
+				// 高亮样式由 aria-pressed: 变体驱动，脚本只维护语义状态。
 				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
 				btn.setAttribute('aria-pressed', 'true');
-				cards.forEach((c) => {
-					c.hidden = status !== 'all' && c.dataset.status !== status;
+
+				let visible = 0;
+				cards.forEach((card) => {
+					const show = status === 'all' || card.dataset.status === status;
+					card.hidden = !show;
+					if (show) visible++;
 				});
+				if (empty) empty.hidden = visible > 0;
 			});
 		});
 	})();

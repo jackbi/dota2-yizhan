@@ -1,0 +1,77 @@
+---
+import type { EsportsMatch } from '../data/types';
+import { formatMatchTime } from '../lib/format';
+
+interface Props {
+	match: EsportsMatch;
+	now: number;
+	/** 是否显示所属赛事名（详情页里不需要）。 */
+	showEvent?: boolean;
+}
+
+const { match, now, showEvent = false } = Astro.props;
+
+const STATUS: Record<EsportsMatch['status'], { label: string; cls: string; dot: boolean }> = {
+	live: { label: '进行中', cls: 'bg-[#22c55e]/15 text-[#4ade80]', dot: true },
+	upcoming: { label: '未开始', cls: 'bg-dota/15 text-dota-light', dot: false },
+	completed: { label: '已结束', cls: 'bg-zinc-600/15 text-zinc-400', dot: false },
+	postponed: { label: '延期', cls: 'bg-amber-500/15 text-amber-400', dot: false },
+};
+const st = STATUS[match.status];
+
+const sides = [
+	{ team: match.home, side: 'home' as const },
+	{ team: match.away, side: 'away' as const },
+];
+
+const hasScore =
+	(match.status === 'live' || match.status === 'completed') &&
+	typeof match.home.score === 'number' &&
+	typeof match.away.score === 'number';
+
+function initial(name: string): string {
+	return name.trim().slice(0, 2).toUpperCase();
+}
+---
+
+<article class="rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/40 hover:bg-surface-2">
+	<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+		<span class:list={['inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 font-semibold', st.cls]}>
+			{st.dot && <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>}
+			{st.label}
+		</span>
+		<time datetime={new Date(match.startTime * 1000).toISOString()} class="text-muted">{formatMatchTime(match.startTime, now)}</time>
+		{match.bo ? <span class="rounded border border-line px-1.5 py-0.5 text-faint">BO{match.bo}</span> : null}
+		{showEvent ? <span class="truncate text-faint">{match.eventName}</span> : null}
+	</div>
+
+	<div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+		<div class="flex items-center justify-end gap-2 overflow-hidden text-right">
+			<span class:list={['truncate text-sm', match.winner === 'home' ? 'font-semibold text-cream' : 'text-muted']}>
+				{match.home.name}
+			</span>
+			<span class="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+				{initial(match.home.name)}
+				{match.home.logo ? (
+					<img src={match.home.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" />
+				) : null}
+			</span>
+		</div>
+
+		<div class:list={['min-w-[4.5rem] text-center font-display text-lg tabular-nums', match.status === 'live' ? 'text-[#4ade80]' : 'text-cream']}>
+			{hasScore ? `${match.home.score} : ${match.away.score}` : 'VS'}
+		</div>
+
+		<div class="flex items-center gap-2 overflow-hidden">
+			<span class="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+				{initial(match.away.name)}
+				{match.away.logo ? (
+					<img src={match.away.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" />
+				) : null}
+			</span>
+			<span class:list={['truncate text-sm', match.winner === 'away' ? 'font-semibold text-cream' : 'text-muted']}>
+				{match.away.name}
+			</span>
+		</div>
+	</div>
+</article>

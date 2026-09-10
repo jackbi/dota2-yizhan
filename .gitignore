@@ -1,6 +1,9 @@
 # build output
 dist/
 
+# build-time fetch cache
+.cache/
+
 # generated types
 .astro/
 
