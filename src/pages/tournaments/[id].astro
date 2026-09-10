@@ -125,7 +125,10 @@ const SCORE_STATUS =
 					<h2 class="font-display text-2xl">参赛队伍</h2>
 					<div class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
 						{event.teams.map((team) => (
-							<div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+							<a
+								href={`/teams/${team.id}`}
+								class="group flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/40 hover:bg-surface-2"
+							>
 								<span class="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
 									{team.name.trim().slice(0, 2).toUpperCase()}
 									{team.logo ? (
@@ -138,8 +141,8 @@ const SCORE_STATUS =
 										/>
 									) : null}
 								</span>
-								<span class="min-w-0 truncate text-sm text-cream">{team.name}</span>
-							</div>
+								<span class="min-w-0 truncate text-sm text-cream transition group-hover:text-dota-light">{team.name}</span>
+							</a>
 						))}
 					</div>
 				</section>

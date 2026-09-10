@@ -1,0 +1,141 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import MatchRow from '../../components/MatchRow.astro';
+import { formatRange } from '../../lib/format';
+import { EVENT_STATUS_META } from '../../lib/statusMeta';
+import type { TeamDetail } from '../../lib/tournamentIndex';
+import { getTournamentIndex } from '../../lib/tournamentIndex';
+
+interface Props {
+	team: TeamDetail;
+}
+
+export async function getStaticPaths() {
+	const index = await getTournamentIndex();
+	return [...index.teams.values()].map((team) => ({
+		params: { id: team.id },
+		props: { team },
+	}));
+}
+
+const { team } = Astro.props;
+const now = Math.floor(Date.now() / 1000);
+
+/** 未打完的对阵（进行中/未开赛/延期）按开赛时间升序，先看最近的。 */
+const scheduled = team.matches.filter((m) => m.status !== 'completed').sort((a, b) => a.startTime - b.startTime);
+const finished = team.matches.filter((m) => m.status === 'completed');
+
+const played = team.wins + team.losses;
+const winRate = played > 0 ? Math.round((team.wins / played) * 100) : null;
+
+function initial(name: string): string {
+	return name.trim().slice(0, 2).toUpperCase();
+}
+---
+
+<Layout
+	title={`${team.name} · 赛事 · DOTA2 驿站`}
+	description={`${team.name} 的赛程与赛果：当前数据窗口内 ${team.matches.length} 场对阵，${team.wins} 胜 ${team.losses} 负。`}
+>
+	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+		<a href="/tournaments" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			返回赛事列表
+		</a>
+
+		<header class="mt-5 flex items-center gap-4 border-b border-line pb-6">
+			<span class="relative flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
+				{initial(team.name)}
+				{
+					team.logo ? (
+						<img
+							src={team.logo}
+							alt=""
+							loading="lazy"
+							referrerpolicy="no-referrer"
+							class="absolute inset-0 h-full w-full object-cover"
+						/>
+					) : null
+				}
+			</span>
+			<div class="min-w-0">
+				<h1 class="truncate font-display text-3xl leading-tight sm:text-4xl">{team.name}</h1>
+				<p class="mt-2 text-sm text-muted">
+					{played > 0 ? `${team.wins} 胜 ${team.losses} 负` : '暂无已完赛记录'}
+					<span class="text-faint"> · 当前数据窗口内 {team.matches.length} 场对阵</span>
+				</p>
+			</div>
+		</header>
+
+		<div class="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">已完赛</p>
+				<p class="mt-1 font-display text-2xl">{played}</p>
+			</div>
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">胜</p>
+				<p class="mt-1 font-display text-2xl text-[#4ade80]">{team.wins}</p>
+			</div>
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">负</p>
+				<p class="mt-1 font-display text-2xl text-muted">{team.losses}</p>
+			</div>
+			<div class="rounded-xl border border-line bg-surface px-4 py-3">
+				<p class="text-xs text-faint">胜率</p>
+				<p class="mt-1 font-display text-2xl">{winRate === null ? '—' : `${winRate}%`}</p>
+			</div>
+		</div>
+
+		{
+			scheduled.length > 0 ? (
+				<section class="mt-10">
+					<h2 class="font-display text-xl">即将进行</h2>
+					<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{scheduled.map((match) => (
+							<MatchRow match={match} now={now} showEvent />
+						))}
+					</div>
+				</section>
+			) : null
+		}
+
+		{
+			finished.length > 0 ? (
+				<section class="mt-10">
+					<h2 class="font-display text-xl">历史赛果</h2>
+					<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+						{finished.map((match) => (
+							<MatchRow match={match} now={now} showEvent />
+						))}
+					</div>
+				</section>
+			) : null
+		}
+
+		{
+			team.events.length > 0 ? (
+				<section class="mt-10">
+					<h2 class="font-display text-xl">参赛赛事</h2>
+					<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+						{team.events.map((event) => (
+							<a
+								href={`/tournaments/${event.id}`}
+								class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/40 hover:bg-surface-2"
+							>
+								<span class="min-w-0">
+									<span class="block truncate text-sm text-cream">{event.name}</span>
+									<span class="mt-1 block text-xs text-faint">{formatRange(event.startTime, event.endTime)}</span>
+								</span>
+								<span class:list={['shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold', EVENT_STATUS_META[event.status].cls]}>
+									{EVENT_STATUS_META[event.status].label}
+								</span>
+							</a>
+						))}
+					</div>
+				</section>
+			) : null
+		}
+	</section>
+</Layout>

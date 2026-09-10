@@ -85,7 +85,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 		</header>
 
 		<div class="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-2xl border border-line bg-surface px-5 py-8">
-			<div class="flex flex-col items-center gap-3 text-center">
+			<a href={`/teams/${match.home.id}`} class="group flex flex-col items-center gap-3 text-center">
 				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
 					{initial(match.home.name)}
 					{
@@ -100,10 +100,15 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 						) : null
 					}
 				</span>
-				<span class:list={['text-base', match.winner === 'home' ? 'font-semibold text-cream' : 'text-muted']}>
+				<span
+					class:list={[
+						'text-base transition group-hover:text-dota-light',
+						match.winner === 'home' ? 'font-semibold text-cream' : 'text-muted',
+					]}
+				>
 					{match.home.name}
 				</span>
-			</div>
+			</a>
 
 			<div
 				class:list={[
@@ -114,7 +119,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 				{hasScore ? `${match.home.score} : ${match.away.score}` : 'VS'}
 			</div>
 
-			<div class="flex flex-col items-center gap-3 text-center">
+			<a href={`/teams/${match.away.id}`} class="group flex flex-col items-center gap-3 text-center">
 				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
 					{initial(match.away.name)}
 					{
@@ -129,10 +134,15 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 						) : null
 					}
 				</span>
-				<span class:list={['text-base', match.winner === 'away' ? 'font-semibold text-cream' : 'text-muted']}>
+				<span
+					class:list={[
+						'text-base transition group-hover:text-dota-light',
+						match.winner === 'away' ? 'font-semibold text-cream' : 'text-muted',
+					]}
+				>
 					{match.away.name}
 				</span>
-			</div>
+			</a>
 		</div>
 
 		<section class="mt-8">
