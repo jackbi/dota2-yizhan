@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, sanitizeArticleHtml } from './articleHtml';
+import { translateToChinese } from './translate';
 
 /**
  * Reddit 内容层：构建期抓取 r/DotA2 的热帖。
@@ -15,6 +16,9 @@ import { decodeEntities, sanitizeArticleHtml } from './articleHtml';
  * - 429 / 403 / 断网时退回过期缓存，缓存也没有就整块不展示；
  * - 配了 REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET 时改走官方 OAuth 接口，
  *   能拿到赞数与评论数，也不再受匿名限流影响。
+ *
+ * 标题、摘要与正文会翻成中文（见 translate.ts），译文按原文哈希永久缓存，
+ * 翻译失败就退回英文，不影响构建。
  */
 
 const SUBREDDIT = 'DotA2';
@@ -26,6 +30,10 @@ const USER_AGENT =
 /** 缓存一小时：Reddit 匿名端点限流很紧，没必要每次构建都去要。 */
 const LIST_TTL_SECONDS = 60 * 60;
 const MAX_POSTS = 25;
+/** 正文翻译只取前这么多字，超长帖翻一半也够读。 */
+const MAX_TRANSLATE_CHARS = 3000;
+/** 图片直链可以直接内嵌，其余的只能给外链。 */
+const IMAGE_URL_RE = /^https?:\/\/(?:i|preview)\.redd\.it\/|^https?:\/\/i\.imgur\.com\/|\.(?:png|jpe?g|gif|webp|mp4)(?:\?|$)/i;
 
 export interface RedditPost {
 	id: string;
@@ -38,11 +46,19 @@ export interface RedditPost {
 	createdAt: number;
 	/** 正文 HTML（已经是 Reddit 渲染好的），没有正文则为空 */
 	body: string;
+	/** 链接帖的目标地址（图片 / 视频 / 外链），自帖为空 */
+	externalUrl: string;
+	/** 目标是图片时可以直接内嵌 */
+	image: string;
 	summary: string;
 	/** 赞数，仅官方接口能拿到 */
 	score: number | null;
 	/** 评论数，仅官方接口能拿到 */
 	comments: number | null;
+	/** 中文译文；取不到就留空，由页面回退英文 */
+	titleZh?: string;
+	summaryZh?: string;
+	bodyZh?: string;
 }
 
 // ---------------------------------------------------------------- 缓存
@@ -132,15 +148,22 @@ function parseRss(xml: string): RedditPost[] {
 		const id = atomText(entry, 'id').trim().replace(/^t3_/, '');
 		const title = decodeEntities(atomText(entry, 'title')).trim();
 		if (!id || !title) continue;
-		const raw = stripRssFooter(decodeEntities(atomText(entry, 'content'))).trim();
+		const permalink = atomHref(entry, 'link').trim() || `https://www.reddit.com/r/${SUBREDDIT}/comments/${id}/`;
+		const content = decodeEntities(atomText(entry, 'content'));
+		// RSS 会用 [link] 标出链接帖的目标地址，就在被我们截掉的页脚里，先捞出来。
+		const target = (content.match(/<a\s+href="([^"]+)"[^>]*>\s*\[link\]\s*<\/a>/i)?.[1] ?? '').trim();
+		const externalUrl = target && !target.includes(`/comments/${id}`) ? target : '';
+		const raw = stripRssFooter(content).trim();
 		const body = hasReadableBody(raw) ? raw : '';
 		posts.push({
 			id,
 			title,
 			author: atomText(entry, 'name').replace(/^\/u\//, '').trim(),
-			permalink: atomHref(entry, 'link').trim() || `https://www.reddit.com/r/${SUBREDDIT}/comments/${id}/`,
+			permalink,
 			createdAt: Math.floor(Date.parse(atomText(entry, 'published')) / 1000) || 0,
 			body,
+			externalUrl,
+			image: IMAGE_URL_RE.test(externalUrl) ? externalUrl : '',
 			summary: summarizeReddit(body),
 			score: null,
 			comments: null,
@@ -162,6 +185,7 @@ function parseListing(raw: unknown): RedditPost[] {
 		if (!id || !title) continue;
 		const raw = stripRssFooter(decodeEntities(String(data.selftext_html ?? ''))).trim();
 		const body = hasReadableBody(raw) ? raw : '';
+		const externalUrl = data.is_self ? '' : String(data.url ?? '');
 		posts.push({
 			id,
 			title,
@@ -169,6 +193,8 @@ function parseListing(raw: unknown): RedditPost[] {
 			permalink: `https://www.reddit.com${String(data.permalink ?? `/r/${SUBREDDIT}/comments/${id}/`)}`,
 			createdAt: Number(data.created_utc) || 0,
 			body,
+			externalUrl,
+			image: IMAGE_URL_RE.test(externalUrl) ? externalUrl : '',
 			summary: summarizeReddit(body),
 			score: Number(data.score) || 0,
 			comments: Number(data.num_comments) || 0,
@@ -224,6 +250,46 @@ export function fetchRedditPosts(): Promise<RedditPost[]> {
 	return postsPromise;
 }
 
+/** 正文 HTML → 用于翻译的纯文字段落。 */
+function bodyToText(html: string, limit: number): string {
+	return decodeEntities(
+		html
+			.replace(/<\/(?:p|div|blockquote|li|h[1-6])>/gi, '\n')
+			.replace(/<br\s*\/?>/gi, '\n')
+			.replace(/<[^>]+>/g, ''),
+	)
+		.split('\n')
+		.map((line) => line.replace(/[ \t]+/g, ' ').trim())
+		.filter(Boolean)
+		.join('\n')
+		.slice(0, limit);
+}
+
+async function mapLimit<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
+	let cursor = 0;
+	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+		while (cursor < items.length) await run(items[cursor++]);
+	});
+	await Promise.all(workers);
+}
+
+/** 标题、摘要、正文各翻一遍；失败就用英文，绝不因为翻译挂掉构建。 */
+async function withTranslations(posts: RedditPost[]): Promise<RedditPost[]> {
+	const texts = new Map<string, string | null>();
+	const translate = async (text: string) => {
+		if (!text) return null;
+		if (!texts.has(text)) texts.set(text, await translateToChinese(text));
+		return texts.get(text) ?? null;
+	};
+	await mapLimit(posts, 3, async (post) => {
+		post.titleZh = (await translate(post.title)) ?? undefined;
+		post.summaryZh = (await translate(post.summary)) ?? undefined;
+		const text = bodyToText(post.body, MAX_TRANSLATE_CHARS);
+		if (text) post.bodyZh = (await translate(text)) ?? undefined;
+	});
+	return posts;
+}
+
 async function loadPosts(): Promise<RedditPost[]> {
 	const cached = await readCache();
 	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return cached.posts;
@@ -233,7 +299,7 @@ async function loadPosts(): Promise<RedditPost[]> {
 	const posts = (await fetchViaOAuth()) ?? (await fetchViaRss());
 	if (!posts) return cached?.posts ?? [];
 
-	await writeCache(posts);
+	await writeCache(await withTranslations(posts));
 	return posts;
 }
 
@@ -251,17 +317,18 @@ export function renderRedditBody(body: string): string {
 	});
 }
 
-/** Reddit 帖子 → 资讯中心卡片。有正文的进站内详情页，纯链接帖直接跳原帖。 */
+/** Reddit 帖子 → 资讯中心卡片。全部走站内详情页，不再往外跳。 */
 export function toRedditCard(post: RedditPost): NewsCardItem {
-	const hasBody = post.body.length > 0;
 	return {
 		id: `reddit-${post.id}`,
-		title: post.title,
-		summary: post.summary || '该帖没有正文，点击前往 Reddit 查看原文与讨论。',
+		title: post.titleZh ?? post.title,
+		originalTitle: post.titleZh ? post.title : undefined,
+		summary: post.summaryZh ?? post.summary ?? '该帖只有标题，正文在 Reddit 上。',
 		date: new Date(post.createdAt * 1000).toISOString().slice(0, 10),
+		img: post.image || undefined,
 		tags: ['Reddit'],
 		badge: 'Reddit 社区',
 		meta: post.score != null ? `r/${SUBREDDIT} · ${post.score} 赞 · ${post.comments} 评论` : `r/${SUBREDDIT} · 热度排序`,
-		href: hasBody ? `/news/reddit/${post.id}` : post.permalink,
+		href: `/news/reddit/${post.id}`,
 	};
 }

@@ -9,16 +9,18 @@ interface Props {
 }
 
 export async function getStaticPaths() {
+	// 所有帖子都生成站内页：只有标题的帖子也能在这里看到信息与原帖入口。
 	const posts = await fetchRedditPosts();
-	// 只有带正文的帖子才值得生成站内页，纯链接帖在列表页就直接跳原帖。
-	return posts.filter((post) => post.body).map((post) => ({ params: { id: post.id }, props: { post } }));
+	return posts.map((post) => ({ params: { id: post.id }, props: { post } }));
 }
 
 const { post } = Astro.props;
 const publishedAt = new Date(post.createdAt * 1000).toISOString();
+// 译文按段落换行，渲染成 <p>；翻不出来就退回英文正文。
+const paragraphs = (post.bodyZh ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
 ---
 
-<Layout title={`${post.title} · Reddit · DOTA2 驿站`} description={post.summary || post.title}>
+<Layout title={`${post.titleZh ?? post.title} · Reddit · DOTA2 驿站`} description={post.summaryZh ?? post.summary ?? post.title}>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>
@@ -30,10 +32,11 @@ const publishedAt = new Date(post.createdAt * 1000).toISOString();
 
 		<header class="mt-5 border-b border-line pb-6">
 			<div class="flex flex-wrap items-center gap-2 text-xs">
-				<span class="rounded-md bg-dota/15 px-2 py-1 font-semibold text-dota-light">Reddit · r/DotA2</span>
+				<span class="rounded-md bg-gold/15 px-2 py-1 font-semibold text-gold">Reddit · r/DotA2</span>
 				<span class="text-faint">{formatIso(publishedAt)}</span>
 			</div>
-			<h1 class="mt-3 font-display text-2xl leading-tight text-cream sm:text-3xl">{post.title}</h1>
+			<h1 class="mt-3 font-display text-2xl leading-tight text-cream sm:text-3xl">{post.titleZh ?? post.title}</h1>
+			{post.titleZh ? <p class="mt-2 text-sm text-faint">{post.title}</p> : null}
 			<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
 				<span>u/{post.author}</span>
 				{post.score != null ? <><span aria-hidden="true">·</span><span>{post.score} 赞</span></> : null}
@@ -45,10 +48,73 @@ const publishedAt = new Date(post.createdAt * 1000).toISOString();
 			</div>
 		</header>
 
-		<div class="article-content mt-6 rounded-2xl border border-line bg-surface p-5 sm:p-8" set:html={renderRedditBody(post.body)} />
+		{
+			post.image ? (
+				<img
+					src={post.image}
+					alt={post.title}
+					referrerpolicy="no-referrer"
+					class="mt-6 w-full rounded-2xl border border-line object-contain"
+				/>
+			) : null
+		}
+
+		{
+			!post.image && post.externalUrl ? (
+				<a
+					href={post.externalUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="mt-6 flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:border-dota/50 hover:bg-surface-2"
+				>
+					<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-dota/15 text-dota-light">
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+						</svg>
+					</span>
+					<span class="min-w-0 flex-1">
+						<span class="block text-sm text-cream">该帖指向站外内容</span>
+						<span class="mt-0.5 block truncate text-xs text-faint">{post.externalUrl}</span>
+					</span>
+					<span class="shrink-0 text-xs text-dota-light">打开 ↗</span>
+				</a>
+			) : null
+		}
+
+		{
+			paragraphs.length > 0 ? (
+				<div class="mt-6 rounded-2xl border border-line bg-surface p-5 sm:p-8">
+					<h2 class="font-display text-sm text-faint">中文翻译</h2>
+					<div class="mt-3 space-y-3 text-cream leading-relaxed">
+						{paragraphs.map((line) => (
+							<p>{line}</p>
+						))}
+					</div>
+				</div>
+			) : post.body ? (
+				<div class="article-content mt-6 rounded-2xl border border-line bg-surface p-5 sm:p-8" set:html={renderRedditBody(post.body)} />
+			) : (
+				<p class="mt-6 rounded-2xl border border-line bg-surface p-5 text-sm text-muted">
+					{post.image
+						? '该帖是图片帖，内容就是上面这张图。'
+						: post.externalUrl
+							? '该帖指向站外的视频或链接，点上面的卡片查看目标内容。'
+							: '该帖没有正文，内容都在 Reddit 的讨论页里。'}
+				</p>
+			)
+		}
+
+		{
+			paragraphs.length > 0 && post.body ? (
+				<details class="mt-4 rounded-2xl border border-line bg-surface p-5">
+					<summary class="cursor-pointer text-sm text-muted transition hover:text-cream">查看英文原文</summary>
+					<div class="article-content mt-4" set:html={renderRedditBody(post.body)} />
+				</details>
+			) : null
+		}
 
 		<p class="mt-10 text-center text-xs text-faint">
-			Reddit 内容保留英文原文，版权归原作者所有；评论与后续讨论请前往原帖。
+			Reddit 内容版权归原作者所有，中文为机器翻译仅供参考；评论与后续讨论请前往原帖。
 		</p>
 	</section>
 </Layout>

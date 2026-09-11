@@ -28,6 +28,8 @@ export interface NewsCardItem {
 	meta: string;
 	/** 左上角徽章，缺省为「官方信息」；社区来源可覆盖 */
 	badge?: string;
+	/** 译文之外的原文标题，展示在标题下方 */
+	originalTitle?: string;
 	/** 站内详情页地址 */
 	href?: string;
 	featured?: boolean;
