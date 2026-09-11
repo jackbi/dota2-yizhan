@@ -1,17 +1,18 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { EsportsMatch, TeamRef } from '../data/types';
+import type { TeamRef } from '../data/types';
 import { fetchHeroList } from './heroApi';
 
 /**
- * OpenDota 富化层：补齐超凡接口没有的选手名单与英雄数据。
+ * OpenDota 数据层：队伍解析、阵容名单，以及比赛候选与明细。
  *
  * 为什么是"尽力而为"：
- * - 超凡的公开接口只有赛事日历，没有阵容/英雄，这部分只能来自 OpenDota；
- * - OpenDota 只收录它认识的队伍与比赛，映射只能靠"队名/队标 + 开赛时间"推断，
- *   所以命中率有限，命中不了就如实不展示，绝不猜测；
+ * - 超凡的公开接口只有赛事日历，没有阵容/英雄，队伍与比赛只能按"队名/队标 + 开赛时间"推断；
+ * - 队名索引来自 `/api/teams` 与 `proMatches`，三线队伍常常不在其中，命中不了就如实不展示；
  * - 所有请求都落盘缓存，冷启动需要一两分钟，之后构建只拉增量；
  * - 任何一步失败都只意味着"这队/这场没有数据"，不会影响构建。
+ *
+ * 阵容与 BP 的编排在 `matchDraft.ts`：那里优先用 STRATZ 取明细，取不到才回到这里。
  */
 
 const API = 'https://api.opendota.com/api';
@@ -20,8 +21,8 @@ const CACHE_DIR = path.join(process.cwd(), '.cache', 'opendota');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
 const DAY_SECONDS = 24 * 3600;
-/** 超凡与 OpenDota 的开赛时间允许的偏差。 */
-const MATCH_WINDOW_SECONDS = 12 * 3600;
+/** 超凡与 OpenDota 的开赛时间允许的偏差，也是比赛配对时的校验窗口。 */
+export const MATCH_WINDOW_SECONDS = 12 * 3600;
 
 // ---------------------------------------------------------------- 请求与缓存
 
@@ -118,34 +119,6 @@ const norm = (value: string): string => value.toLowerCase().replace(/[^a-z0-9\u4
 
 // ---------------------------------------------------------------- 对外类型
 
-export interface MatchDraftHero {
-	heroId: number;
-	name: string;
-	img: string;
-	/** 0 = 超凡主队，1 = 客队；已按队名对齐，不依赖天辉/夜魇。 */
-	team: number;
-}
-
-export interface MatchDraftPlayer {
-	heroId: number;
-	heroName: string;
-	heroImg: string;
-	name: string;
-	/** 是否属于超凡主队。 */
-	home: boolean;
-	kills: number;
-	deaths: number;
-	assists: number;
-}
-
-export interface MatchDraft {
-	/** 对应的 OpenDota 比赛 id，用于外链。 */
-	matchId: number;
-	picks: MatchDraftHero[];
-	bans: MatchDraftHero[];
-	players: MatchDraftPlayer[];
-}
-
 export interface TeamMember {
 	accountId: number;
 	name: string;
@@ -162,7 +135,7 @@ export interface TeamRoster {
 
 // ---------------------------------------------------------------- 英雄
 
-interface HeroInfo {
+export interface HeroInfo {
 	name: string;
 	img: string;
 }
@@ -173,7 +146,7 @@ let heroMapPromise: Promise<Map<number, HeroInfo>> | null = null;
  * 英雄 id 与站内英雄页完全一致，所以优先取中文名与国语站点图；
  * 国语接口不可用时退回 OpenDota 的英文名与 Valve CDN 图。
  */
-async function getHeroMap(): Promise<Map<number, HeroInfo>> {
+export async function getHeroMap(): Promise<Map<number, HeroInfo>> {
 	heroMapPromise ??= (async () => {
 		const map = new Map<number, HeroInfo>();
 		try {
@@ -199,7 +172,7 @@ async function getHeroMap(): Promise<Map<number, HeroInfo>> {
 
 // ---------------------------------------------------------------- 队伍映射
 
-interface OdTeam {
+export interface OdTeam {
 	team_id: number;
 	name: string | null;
 	tag: string | null;
@@ -242,7 +215,7 @@ async function getTeamIndex(): Promise<Map<string, OdTeam>> {
  * 把超凡队伍解析成 OpenDota 队伍。
  * 队名一致可以直接采信；只对得上队标时必须回查一次，短队标撞名的情况很多。
  */
-async function resolveTeam(team: TeamRef): Promise<OdTeam | null> {
+export async function resolveTeam(team: TeamRef): Promise<OdTeam | null> {
 	const key = norm(team.name);
 	if (!key) return null;
 	const index = await getTeamIndex();
@@ -307,7 +280,7 @@ interface OdLeagueMatch {
 	dire_team_id: number | null;
 }
 
-interface OdScheduleEntry {
+export interface OdScheduleEntry {
 	matchId: number;
 	startTime: number;
 }
@@ -350,6 +323,12 @@ async function loadSchedule(): Promise<Map<string, OdScheduleEntry[]>> {
 	return schedulePromise;
 }
 
+/** 取这对队伍在 OpenDota 索引里的候选比赛，交给 matchDraft 与 STRATZ 的结果合并。 */
+export async function findPairMatches(homeTeamId: number, awayTeamId: number): Promise<OdScheduleEntry[]> {
+	const schedule = await loadSchedule();
+	return schedule.get(pairKey(homeTeamId, awayTeamId)) ?? [];
+}
+
 interface OdMatchRaw {
 	match_id: number;
 	start_time: number;
@@ -362,7 +341,8 @@ interface OdMatchRaw {
 	players?: { hero_id: number; name?: string | null; isRadiant: boolean; kills: number; deaths: number; assists: number }[] | null;
 }
 
-interface OdMatchReduced {
+/** 裁剪后的比赛明细：原始响应有几百 KB，只留阵容需要的字段。 */
+export interface OdMatchDetail {
 	matchId: number;
 	startTime: number;
 	radiantTeamId: number | null;
@@ -371,99 +351,25 @@ interface OdMatchReduced {
 	players: { heroId: number; name: string; isRadiant: boolean; kills: number; deaths: number; assists: number }[];
 }
 
-function toDraft(detail: OdMatchReduced, homeIsRadiant: boolean, heroes: Map<number, HeroInfo>): MatchDraft | null {
-	const sideOf = (isRadiant: boolean) => (isRadiant === homeIsRadiant ? 0 : 1);
-	const heroOf = (heroId: number): HeroInfo => heroes.get(heroId) ?? { name: `英雄 #${heroId}`, img: '' };
-
-	const picks: MatchDraftHero[] = [];
-	const bans: MatchDraftHero[] = [];
-	for (const entry of [...detail.picksBans].sort((a, b) => a.order - b.order)) {
-		const hero = heroOf(entry.heroId);
-		// OpenDota 里 team 0 是天辉、1 是夜魇，先转成"是否天辉"再对齐主客队。
-		const item = { heroId: entry.heroId, name: hero.name, img: hero.img, team: sideOf(entry.team === 0) };
-		if (entry.isPick) picks.push(item);
-		else bans.push(item);
-	}
-
-	const players = detail.players
-		.filter((player) => player.heroId)
-		.map((player) => {
-			const hero = heroOf(player.heroId);
-			return {
-				heroId: player.heroId,
-				heroName: hero.name,
-				heroImg: hero.img,
-				name: player.name || '匿名选手',
-				home: sideOf(player.isRadiant) === 0,
-				kills: player.kills,
-				deaths: player.deaths,
-				assists: player.assists,
-			};
-		})
-		.sort((a, b) => Number(b.home) - Number(a.home) || b.kills - a.kills);
-
-	return picks.length > 0 || players.length > 0 ? { matchId: detail.matchId, picks, bans, players } : null;
-}
-
-/**
- * 找出超凡这场比赛对应的 OpenDota 比赛：两边队伍都出现在自己的比赛列表里、
- * 开赛时间接近，再用比赛详情里的队名二次确认，避免把两场不同的比赛对错。
- */
-async function resolveMatch(match: EsportsMatch, heroes: Map<number, HeroInfo>): Promise<MatchDraft | null> {
-	const [home, away] = await Promise.all([resolveTeam(match.home), resolveTeam(match.away)]);
-	if (!home || !away) return null;
-
-	const schedule = await loadSchedule();
-	const candidates = (schedule.get(pairKey(home.team_id, away.team_id)) ?? [])
-		.map((entry) => ({ id: entry.matchId, delta: Math.abs(entry.startTime - match.startTime) }))
-		.filter((entry) => entry.delta <= MATCH_WINDOW_SECONDS)
-		.sort((a, b) => a.delta - b.delta);
-	if (candidates.length === 0) return null;
-
-	for (const candidate of candidates.slice(0, 3)) {
-		const detail = await cachedDerived<OdMatchRaw, OdMatchReduced>(
-			`match-${candidate.id}`,
-			`${API}/matches/${candidate.id}`,
-			Number.MAX_SAFE_INTEGER,
-			(raw) => ({
-				matchId: raw.match_id,
-				startTime: raw.start_time,
-				radiantTeamId: raw.radiant_team_id ?? null,
-				direTeamId: raw.dire_team_id ?? null,
-				picksBans: (raw.picks_bans ?? []).map((p) => ({ heroId: p.hero_id, isPick: p.is_pick, team: p.team, order: p.order })),
-				players: (raw.players ?? []).map((p) => ({
-					heroId: p.hero_id,
-					name: p.name ?? '',
-					isRadiant: Boolean(p.isRadiant),
-					kills: p.kills ?? 0,
-					deaths: p.deaths ?? 0,
-					assists: p.assists ?? 0,
-				})),
-			}),
-		);
-		if (!detail) continue;
-		if (Math.abs(detail.startTime - match.startTime) > MATCH_WINDOW_SECONDS) continue;
-		// 用队伍 id 校验：两个源的队名写法可能不同（NaVi / Natus Vincere），按名字比会误判。
-		const ids = new Set([detail.radiantTeamId, detail.direTeamId]);
-		if (!ids.has(home.team_id) || !ids.has(away.team_id)) continue;
-		// 超凡的主队不一定是天辉，按队伍 id 对齐，避免两边阵容颠倒。
-		return toDraft(detail, detail.radiantTeamId === home.team_id, heroes);
-	}
-	return null;
-}
-
-/**
- * 为一批比赛补齐英雄数据。只处理已开赛/已结束的比赛（未开赛没有 BP），
- * 返回的 Map 以超凡的比赛 id 为键，取不到的比赛直接没有条目。
- */
-export async function loadMatchDrafts(matches: EsportsMatch[]): Promise<Map<string, MatchDraft>> {
-	const out = new Map<string, MatchDraft>();
-	if (OFFLINE) return out;
-	const heroes = await getHeroMap();
-	for (const match of matches) {
-		if (match.status === 'upcoming') continue;
-		const draft = await resolveMatch(match, heroes);
-		if (draft) out.set(match.id, draft);
-	}
-	return out;
+export function fetchMatchDetail(matchId: number): Promise<OdMatchDetail | null> {
+	return cachedDerived<OdMatchRaw, OdMatchDetail>(
+		`match-${matchId}`,
+		`${API}/matches/${matchId}`,
+		Number.MAX_SAFE_INTEGER,
+		(raw) => ({
+			matchId: raw.match_id,
+			startTime: raw.start_time,
+			radiantTeamId: raw.radiant_team_id ?? null,
+			direTeamId: raw.dire_team_id ?? null,
+			picksBans: (raw.picks_bans ?? []).map((p) => ({ heroId: p.hero_id, isPick: p.is_pick, team: p.team, order: p.order })),
+			players: (raw.players ?? []).map((p) => ({
+				heroId: p.hero_id,
+				name: p.name ?? '',
+				isRadiant: Boolean(p.isRadiant),
+				kills: p.kills ?? 0,
+				deaths: p.deaths ?? 0,
+				assists: p.assists ?? 0,
+			})),
+		}),
+	);
 }

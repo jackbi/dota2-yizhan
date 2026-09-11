@@ -3,8 +3,8 @@ import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
 import type { EsportsMatch } from '../../data/types';
 import { formatClock, formatDayWithWeekday, formatMatchTime } from '../../lib/format';
-import type { MatchDraft } from '../../lib/opendota';
-import { loadMatchDrafts } from '../../lib/opendota';
+import type { MatchDraft } from '../../lib/matchDraft';
+import { loadMatchDrafts } from '../../lib/matchDraft';
 import { MATCH_STATUS_META } from '../../lib/statusMeta';
 import { getTournamentIndex, headToHead, relatedMatches } from '../../lib/tournamentIndex';
 import { dataSourceLabel } from '../../lib/tournamentsApi';
@@ -17,7 +17,7 @@ interface Props {
 	related: EsportsMatch[];
 	/** 两队在当前数据窗口内的交手记录。 */
 	h2h: EsportsMatch[];
-	/** OpenDota 的 BP 与选手数据；该场未被收录时为 null。 */
+	/** 该场的 BP 与选手数据；对不上 Valve 比赛时为 null。 */
 	draft: MatchDraft | null;
 }
 
@@ -185,12 +185,12 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 					<div class="flex flex-wrap items-baseline justify-between gap-2">
 						<h2 class="font-display text-xl">英雄阵容</h2>
 						<a
-							href={`https://www.opendota.com/matches/${draft.matchId}`}
+							href={draft.source === 'stratz' ? `https://stratz.com/matches/${draft.matchId}` : `https://www.opendota.com/matches/${draft.matchId}`}
 							target="_blank"
 							rel="noopener noreferrer"
 							class="text-xs text-faint transition hover:text-gold"
 						>
-							数据来自 OpenDota ↗
+							数据来自 {draft.source === 'stratz' ? 'STRATZ' : 'OpenDota'} ↗
 						</a>
 					</div>
 
@@ -268,7 +268,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 				</section>
 			) : match.status === 'upcoming' ? null : (
 				<p class="mt-10 border-t border-line pt-6 text-xs text-faint">
-					该场暂无英雄数据：只有被 OpenDota 收录的职业比赛才能提供 BP 与选手英雄，未收录的比赛无法补全。
+					该场暂无英雄数据：只有被 OpenDota 或 STRATZ 收录的职业比赛才能提供 BP 与选手英雄，未收录的比赛无法补全。
 				</p>
 			)
 		}
