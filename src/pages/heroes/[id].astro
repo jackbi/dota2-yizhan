@@ -2,7 +2,7 @@
 import Layout from '../../layouts/Layout.astro';
 import { formatIso } from '../../lib/format';
 import { fetchHeroList } from '../../lib/heroApi';
-import { fetchHeroMeta } from '../../lib/stratzApi';
+import { fetchHeroMeta, stratzConfigured } from '../../lib/stratzApi';
 
 export async function getStaticPaths() {
 	const list = await fetchHeroList();
@@ -39,6 +39,8 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 /** 近一周数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
 const meta = await fetchHeroMeta();
 const stat = meta?.heroes.get(id) ?? null;
+/** 配了 token 却拿不到数据 = 抓取故障，明确说出来而不是静默留白。 */
+const metaUnavailable = meta === null && stratzConfigured();
 const winRate = stat && stat.matches > 0 ? (stat.wins / stat.matches) * 100 : 0;
 const POSITION_LABEL = ['一号位', '二号位', '三号位', '四号位', '五号位'];
 const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路', 3: '劣势路', 4: '游走辅助', 5: '保护辅助' };
@@ -56,6 +58,14 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 			</svg>
 			<span class="text-cream">{name}</span>
 		</nav>
+
+		{
+			metaUnavailable ? (
+				<p class="mb-6 rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">
+					本次构建没有取到近一周数据，下方为官方接口的英雄数值。
+				</p>
+			) : null
+		}
 
 		{
 			meta && stat ? (
