@@ -9,7 +9,7 @@ import { LIVE_NOW, STREAMERS } from '../data/site';
 import { PATCHES } from '../data/patches';
 import { getTournaments } from '../lib/tournamentsApi';
 import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
-import { fetchCommunityThreads, ngaThreadUrl } from '../lib/ngaApi';
+import { fetchCommunityThreads } from '../lib/ngaApi';
 
 /** 首页只放两条官方新闻；取不到（离线且无缓存）时整块不展示。 */
 let featuredNews: import('../data/types').NewsCardItem[] = [];
@@ -143,12 +143,7 @@ const FEATURES = [
 				<ol class="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
 					{hotThreads.map((thread, index) => (
 						<li>
-							<a
-								href={ngaThreadUrl(thread.tid)}
-								target="_blank"
-								rel="noopener noreferrer"
-								class="group flex items-center gap-4 px-4 py-3 transition hover:bg-surface-2"
-							>
+							<a href={`/community/nga/${thread.tid}`} class="group flex items-center gap-4 px-4 py-3 transition hover:bg-surface-2">
 								<span class="w-5 shrink-0 text-center font-display text-sm text-faint">{index + 1}</span>
 								<span class="min-w-0 flex-1 truncate text-sm text-cream transition group-hover:text-dota-light">{thread.title}</span>
 								<span class="hidden shrink-0 text-xs text-faint sm:inline">{thread.author}</span>
