@@ -39,8 +39,12 @@ const THREADS_PER_WINDOW = 15;
 /** 少于这个回复数的不算热帖。 */
 const MIN_REPLIES = 5;
 const LIST_TTL_SECONDS = 30 * 60;
-/** 主楼基本不改，但热评会变，按周刷新一次。 */
-const THREAD_TTL_SECONDS = 7 * 24 * 3600;
+/**
+ * 帖子详情（主楼 + 楼层 + 热评）。
+ * 主楼基本不改，但热评和列表摘要都取自这里，按周刷新意味着热帖榜 30 分钟一刷、
+ * 点进去却是上周的讨论。按小时级刷新，代价是每 2 小时重抓一遍榜上的几十个帖子。
+ */
+const THREAD_TTL_SECONDS = 2 * 3600;
 const FETCH_CONCURRENCY = 4;
 /** NGA 未见限流，但没必要打太急。 */
 const MIN_INTERVAL_MS = 200;
