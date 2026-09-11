@@ -101,11 +101,16 @@ function chaofanTeam(team: ChaofanTeam | undefined): TeamRef | null {
 	};
 }
 
-async function fetchChaofan(): Promise<EsportsMatch[]> {
+/**
+ * 抓取超凡的赛事日历。
+ * `timeoutMs` 由调用方决定：已经有缓存兜底时不必等满默认的 25 秒——
+ * 接口不可用时，每次冷启动（dev 启动、首次构建）都会被这段超时卡住。
+ */
+async function fetchChaofan(timeoutMs = 25_000): Promise<EsportsMatch[]> {
 	const json = await getJson<ChaofanResponse>(
 		CHAOFAN_URL,
 		{ headers: { 'User-Agent': CHAOFAN_UA, Accept: 'application/json' } },
-		25_000,
+		timeoutMs,
 	);
 	// 该接口错误时同样返回 HTTP 200，只靠 HTTP 状态码会把空响应当成"拿到了日历"。
 	if (typeof json.code === 'number' && json.code !== 0) {
@@ -401,8 +406,14 @@ async function assemble(): Promise<TournamentsBundle> {
 	// `TOURNAMENTS_OFFLINE=1` 跳过所有网络请求，直接走缓存/兜底，
 	// 便于在无网络环境下构建，也用于验证降级链路。
 	if (process.env.TOURNAMENTS_OFFLINE !== '1') {
+		// 已经有缓存能兜底时，不必等满 25 秒的超时：超凡挂掉时这段时间会白白拖住
+		// 每次冷启动（dev 启动、首次构建）的首屏。
+		const hasFallback = (await readCache()) !== null;
 		// 赛事日历与实时对局并行抓取，任意一个失败都不影响另一个。
-		const [calendarRes, liveRes] = await Promise.allSettled([fetchChaofan(), fetchOpenDotaLive()]);
+		const [calendarRes, liveRes] = await Promise.allSettled([
+			fetchChaofan(hasFallback ? 8_000 : undefined),
+			fetchOpenDotaLive(),
+		]);
 		opendotaOk = liveRes.status === 'fulfilled';
 		calendarMatches = calendarRes.status === 'fulfilled' ? calendarRes.value : [];
 		calendarFromChaofan = calendarMatches.length > 0;
