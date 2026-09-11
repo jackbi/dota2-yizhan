@@ -26,6 +26,8 @@ export interface NewsCardItem {
 	tags: string[];
 	/** 右下角的来源说明 */
 	meta: string;
+	/** 左上角徽章，缺省为「官方信息」；社区来源可覆盖 */
+	badge?: string;
 	/** 站内详情页地址 */
 	href?: string;
 	featured?: boolean;

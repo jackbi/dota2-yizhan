@@ -3,12 +3,21 @@ import Layout from '../layouts/Layout.astro';
 import NewsCard from '../components/NewsCard.astro';
 import type { NewsCardItem } from '../data/types';
 import { NEWS_FILTERS, fetchOfficialNews, toNewsCard, type OfficialNews } from '../lib/newsApi';
+import { fetchRedditPosts, toRedditCard } from '../lib/redditApi';
 
 let articles: OfficialNews[] = [];
 try {
 	articles = await fetchOfficialNews();
 } catch {
 	articles = [];
+}
+
+/** Reddit 是英文社区内容，单独一个栏目，不混进综合新闻。 */
+let redditPosts: import('../lib/redditApi').RedditPost[] = [];
+try {
+	redditPosts = await fetchRedditPosts();
+} catch {
+	redditPosts = [];
 }
 
 /** 列表卡片额外带上所属栏目，用于前端筛选。 */
@@ -18,19 +27,26 @@ const officialCards: Card[] = articles.map((item, index) => ({
 	...toNewsCard(item, index === 0),
 	cats: ['all', ...item.feeds],
 }));
-const cards = officialCards;
+const redditCards: Card[] = redditPosts.map((post) => ({ ...toRedditCard(post), cats: ['reddit'] }));
+const cards = [...officialCards, ...redditCards];
 
 // 综合新闻汇总官网全部栏目，其余按官网栏目筛选。
-const TABS = [{ id: 'all', label: '综合新闻' }, ...NEWS_FILTERS.filter((feed) => feed.id !== 'general')];
+const TABS = [
+	{ id: 'all', label: '综合新闻' },
+	...NEWS_FILTERS.filter((feed) => feed.id !== 'general'),
+	{ id: 'reddit', label: 'Reddit 热帖' },
+];
 const countOf = (id: string) => cards.filter((card) => card.cats.includes(id)).length;
 ---
 
-<Layout title="新闻 · DOTA2 驿站" description="DOTA2 官方新闻与赛事动态，正文在站内直接阅读。">
+<Layout title="新闻 · DOTA2 驿站" description="DOTA2 官方新闻、赛事动态与 Reddit 社区热帖。">
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 		<div class="mb-8">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">资讯中心</p>
-			<h1 class="mt-2 font-display text-3xl sm:text-4xl">官方新闻</h1>
-			<p class="mt-3 max-w-2xl text-muted">新闻取自 DOTA2 官网，正文在站内直接阅读，不用再跳转到别处。</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">新闻 & 社区</h1>
+			<p class="mt-3 max-w-2xl text-muted">
+				官方新闻取自 DOTA2 官网，正文在站内直接阅读；Reddit 热帖来自 r/DotA2，保留英文原文。
+			</p>
 		</div>
 
 		<div id="news-tabs" class="mb-8 flex flex-wrap gap-2" role="group" aria-label="新闻分类">
@@ -53,6 +69,14 @@ const countOf = (id: string) => cards.filter((card) => card.cats.includes(id)).l
 			articles.length === 0 ? (
 				<p class="mb-6 rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
 					官方新闻暂不可用：构建期没有取到 dota2.com.cn 的列表，也没有可用的本地缓存。
+				</p>
+			) : null
+		}
+
+		{
+			redditPosts.length === 0 && articles.length > 0 ? (
+				<p class="mb-6 rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
+					Reddit 热帖暂不可用：Reddit 对匿名请求限流很紧，这次没取到也没有可用的本地缓存。
 				</p>
 			) : null
 		}

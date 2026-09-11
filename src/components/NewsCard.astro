@@ -6,12 +6,16 @@ interface Props {
 }
 
 const { item } = Astro.props;
-// 有站内详情页的整卡可点，否则渲染成不可点的卡片。
+// 站内详情页在本窗口打开，指向站外的整卡在新窗口打开。
+const isExternal = item.href?.startsWith('http') ?? false;
+// 有链接的整卡可点，没有的渲染成不可点的卡片。
 const Tag = item.href ? 'a' : 'article';
 ---
 
 <Tag
 	href={item.href}
+	target={isExternal ? '_blank' : undefined}
+	rel={isExternal ? 'noopener noreferrer' : undefined}
 	class:list={[
 		'group flex gap-4 rounded-2xl border p-4 transition',
 		item.featured
@@ -37,7 +41,9 @@ const Tag = item.href ? 'a' : 'article';
 
 	<div class="flex min-w-0 flex-1 flex-col">
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-			<span class="rounded bg-dota/15 px-2 py-0.5 font-semibold text-dota-light">官方信息</span>
+			<span class:list={['rounded px-2 py-0.5 font-semibold', item.badge ? 'bg-gold/15 text-gold' : 'bg-dota/15 text-dota-light']}>
+				{item.badge ?? '官方信息'}
+			</span>
 			{item.tags.map((tag) => <span class="text-faint">{tag}</span>)}
 			<span class="ml-auto shrink-0 text-faint">{item.date}</span>
 		</div>
