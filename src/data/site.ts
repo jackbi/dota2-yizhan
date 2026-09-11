@@ -5,6 +5,7 @@ export const NAV = [
 	{ href: '/live', label: '分屏直播' },
 	{ href: '/ob', label: 'OB 大家庭' },
 	{ href: '/news', label: '新闻' },
+	{ href: '/community', label: '社区' },
 	{ href: '/tournaments', label: '赛事' },
 	{ href: '/patches', label: '版本' },
 	{ href: '/heroes', label: '英雄' },

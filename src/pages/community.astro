@@ -1,0 +1,99 @@
+---
+import Layout from '../layouts/Layout.astro';
+import ThreadCard from '../components/ThreadCard.astro';
+import type { CommunityThread } from '../lib/ngaApi';
+import { HOT_WINDOWS, fetchCommunityThreads } from '../lib/ngaApi';
+
+let threads: CommunityThread[] = [];
+try {
+	threads = await fetchCommunityThreads();
+} catch {
+	threads = [];
+}
+
+// 时间格式化统一用 Unix 秒。
+const now = Math.floor(Date.now() / 1000);
+const DEFAULT_WINDOW = HOT_WINDOWS[0].days;
+const countOf = (days: number) => threads.filter((thread) => thread.windows.includes(days)).length;
+---
+
+<Layout title="社区热帖 · DOTA2 驿站" description="NGA DOTA2 版块的社区热帖榜，按回复数追踪当前最热的讨论。">
+	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+		<div class="mb-8">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">社区</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">社区热帖</h1>
+			<p class="mt-3 max-w-2xl text-muted">
+				取自 NGA 刀塔版块的热帖榜，按窗口内的回复数排序，跟着社区一起追当前最热的话题。
+			</p>
+		</div>
+
+		<div id="thread-tabs" class="mb-8 flex flex-wrap gap-2" role="group" aria-label="热帖时间范围">
+			{
+				HOT_WINDOWS.map((window) => (
+					<button
+						type="button"
+						data-window={window.days}
+						class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+						aria-pressed={window.days === DEFAULT_WINDOW ? 'true' : 'false'}
+					>
+						{window.label}
+						<span class="ml-1 text-xs text-faint">{countOf(window.days)}</span>
+					</button>
+				))
+			}
+		</div>
+
+		{
+			threads.length === 0 ? (
+				<p class="rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
+					社区热帖暂不可用：构建期没有取到 NGA 的榜单，也没有可用的本地缓存。
+				</p>
+			) : (
+				<div id="thread-list" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+					{threads.map((thread) => (
+						<div data-windows={thread.windows.join(',')}>
+							<ThreadCard thread={thread} nowSec={now} />
+						</div>
+					))}
+				</div>
+			)
+		}
+
+		<p id="thread-empty" class="py-16 text-center text-sm text-faint" hidden>
+			该时间范围内暂时没有帖子。
+		</p>
+
+		<p class="mt-10 text-center text-xs text-faint">
+			热帖来自 NGA 刀塔版块，版权归 NGA 与原作者所有；点击标题前往原帖阅读完整讨论。
+		</p>
+	</section>
+</Layout>
+
+<script>
+	(() => {
+		const tabs = document.getElementById('thread-tabs');
+		const list = document.getElementById('thread-list');
+		const empty = document.getElementById('thread-empty');
+		if (!tabs || !list) return;
+		const cards = Array.from(list.querySelectorAll<HTMLElement>('[data-windows]'));
+		const apply = (days: string) => {
+			let shown = 0;
+			for (const card of cards) {
+				const matched = (card.dataset.windows ?? '').split(',').includes(days);
+				card.hidden = !matched;
+				if (matched) shown++;
+			}
+			if (empty) empty.hidden = shown > 0;
+		};
+		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				apply(btn.dataset.window ?? '1');
+			});
+		});
+		// 无脚本时保留全部卡片，有脚本时先按默认时间范围收敛一次。
+		const active = tabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
+		apply(active?.dataset.window ?? '1');
+	})();
+</script>

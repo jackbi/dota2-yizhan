@@ -9,6 +9,7 @@ import { LIVE_NOW, STREAMERS } from '../data/site';
 import { PATCHES } from '../data/patches';
 import { getTournaments } from '../lib/tournamentsApi';
 import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
+import { fetchCommunityThreads, ngaThreadUrl } from '../lib/ngaApi';
 
 /** 首页只放两条官方新闻；取不到（离线且无缓存）时整块不展示。 */
 let featuredNews: import('../data/types').NewsCardItem[] = [];
@@ -17,6 +18,14 @@ try {
 	featuredNews = official.slice(0, 2).map((item) => toNewsCard(item, true));
 } catch {
 	featuredNews = [];
+}
+
+/** 社区热议取 24 小时榜的前几条，同样取不到就不展示。 */
+let hotThreads: import('../lib/ngaApi').CommunityThread[] = [];
+try {
+	hotThreads = (await fetchCommunityThreads()).filter((thread) => thread.windows.includes(1)).slice(0, 5);
+} catch {
+	hotThreads = [];
 }
 const latestPatch = PATCHES[0];
 
@@ -29,7 +38,8 @@ const upcoming = (notFinished.length > 0 ? notFinished : bundle.events).slice(0,
 const FEATURES = [
 	{ href: '/live', title: '分屏直播', desc: '在一个页面聚合观看多位 OB 主播，自由切换分屏布局。', icon: 'screen' },
 	{ href: '/ob', title: 'OB 大家庭', desc: '认识 DOTA2 社区最受欢迎的老将们，实时关注开播状态。', icon: 'users' },
-	{ href: '/news', title: '新闻 & 小道消息', desc: '官方资讯、赛事动态与社区热梗，一站掌握圈内动向。', icon: 'news' },
+	{ href: '/news', title: '官方新闻', desc: 'DOTA2 官网资讯与赛事动态，正文在站内直接阅读。', icon: 'news' },
+	{ href: '/community', title: '社区热帖', desc: '汇总 NGA 刀塔版块的热帖榜，跟着社区追当前最热的讨论。', icon: 'chat' },
 	{ href: '/tournaments', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
 	{ href: '/patches', title: '版本信息', desc: '跟踪最新版本号、平衡性改动与后续更新前瞻。', icon: 'patch' },
 	{ href: '/heroes', title: '英雄与装备', desc: '查阅英雄属性、定位与主流出装思路。', icon: 'sword' },
@@ -89,7 +99,7 @@ const FEATURES = [
 
 	<!-- Features -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-		<SectionHeader eyebrow="站点板块" title="你想看的，都在这里" subtitle="六大核心板块随心探索，覆盖直播、资讯、赛事与资料。" />
+		<SectionHeader eyebrow="站点板块" title="你想看的，都在这里" subtitle="七大板块随心探索，覆盖直播、资讯、社区、赛事与资料。" />
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 			{FEATURES.map((f) => (
 				<a href={f.href} class="group flex flex-col rounded-2xl border border-line bg-surface p-6 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2">
@@ -100,6 +110,7 @@ const FEATURES = [
 							{f.icon === 'news' && <path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 							{f.icon === 'trophy' && <path d="M8 4h8v4a4 4 0 0 1-8 0zM8 5H4v2a3 3 0 0 0 3 3M16 5h4v2a3 3 0 0 1-3 3M12 12v4M8 20h8M9 20v-2h6v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 							{f.icon === 'patch' && <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+							{f.icon === 'chat' && <path d="M4 5h16v11H9l-5 4zM8 9h8M8 12h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 							{f.icon === 'sword' && <path d="M14 4l6 6-9 9-5 1 1-5zM4 20l3-3M12 6l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 						</svg>
 					</span>
@@ -120,6 +131,34 @@ const FEATURES = [
 						<NewsCard item={n} />
 					))}
 				</div>
+			</section>
+		) : null
+	}
+
+	<!-- Community hot threads -->
+	{
+		hotThreads.length > 0 ? (
+			<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+				<SectionHeader eyebrow="社区" title="社区热议" href="/community" linkText="全部热帖" />
+				<ol class="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+					{hotThreads.map((thread, index) => (
+						<li>
+							<a
+								href={ngaThreadUrl(thread.tid)}
+								target="_blank"
+								rel="noopener noreferrer"
+								class="group flex items-center gap-4 px-4 py-3 transition hover:bg-surface-2"
+							>
+								<span class="w-5 shrink-0 text-center font-display text-sm text-faint">{index + 1}</span>
+								<span class="min-w-0 flex-1 truncate text-sm text-cream transition group-hover:text-dota-light">{thread.title}</span>
+								<span class="hidden shrink-0 text-xs text-faint sm:inline">{thread.author}</span>
+								<span class="shrink-0 rounded bg-gold/15 px-2 py-0.5 text-xs font-semibold text-gold" title="回复数">
+									{thread.replies}
+								</span>
+							</a>
+						</li>
+					))}
+				</ol>
 			</section>
 		) : null
 	}
