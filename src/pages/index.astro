@@ -3,13 +3,12 @@ import Layout from '../layouts/Layout.astro';
 import SectionHeader from '../components/SectionHeader.astro';
 import LiveCard from '../components/LiveCard.astro';
 import NewsCard from '../components/NewsCard.astro';
-import PatchCard from '../components/PatchCard.astro';
 import TournamentCard from '../components/TournamentCard.astro';
 import { LIVE_NOW, STREAMERS } from '../data/site';
-import { PATCHES } from '../data/patches';
 import { getTournaments } from '../lib/tournamentsApi';
 import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
 import { fetchCommunityThreads } from '../lib/ngaApi';
+import { fetchPatchUpdates } from '../lib/patchesApi';
 
 /** 首页只放两条官方新闻；取不到（离线且无缓存）时整块不展示。 */
 let featuredNews: import('../data/types').NewsCardItem[] = [];
@@ -27,7 +26,13 @@ try {
 } catch {
 	hotThreads = [];
 }
-const latestPatch = PATCHES[0];
+/** 最新版本取官方「更新日志」列表的第一条（列表按时间倒序）；取不到就不展示。 */
+let latestPatch: import('../lib/patchesApi').PatchUpdate | null = null;
+try {
+	latestPatch = (await fetchPatchUpdates(1))[0] ?? null;
+} catch {
+	latestPatch = null;
+}
 
 const bundle = await getTournaments();
 // 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
@@ -169,8 +174,49 @@ const FEATURES = [
 	<!-- Latest patch -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
 		<SectionHeader eyebrow="版本" title="最新版本动态" href="/patches" linkText="全部版本" />
-		<div class="grid grid-cols-1 lg:grid-cols-2">
-			<PatchCard patch={latestPatch} />
-		</div>
+		{
+			latestPatch ? (
+				<a
+					href={`/patches/${latestPatch.id}`}
+					class="group flex items-center gap-5 overflow-hidden rounded-2xl border border-line bg-surface p-6 transition hover:border-dota/50 hover:bg-surface-2"
+				>
+					{latestPatch.img ? (
+						<img
+							src={latestPatch.img}
+							alt=""
+							loading="lazy"
+							referrerpolicy="no-referrer"
+							class="h-24 w-24 shrink-0 rounded-xl border border-line object-cover"
+						/>
+					) : (
+						<span class="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-surface-2 font-display text-lg text-gold">
+							{latestPatch.version}
+						</span>
+					)}
+					<span class="min-w-0 flex-1">
+						<span class="flex flex-wrap items-center gap-2">
+							<span class="font-display text-3xl text-gold">{latestPatch.version || '版本更新'}</span>
+							<span class="rounded-md bg-dota/15 px-2 py-0.5 text-xs font-semibold text-dota-light">最新更新日志</span>
+						</span>
+						<span class="mt-1.5 block truncate text-sm text-cream">{latestPatch.title}</span>
+						<span class="mt-0.5 block text-xs text-muted">{latestPatch.date} · 来源：DOTA2 官网</span>
+					</span>
+					<svg
+						class="h-5 w-5 shrink-0 text-faint transition group-hover:translate-x-0.5 group-hover:text-gold"
+						width="22"
+						height="22"
+						viewBox="0 0 24 24"
+						fill="none"
+						aria-hidden="true"
+					>
+						<path d="M9 18l6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+					</svg>
+				</a>
+			) : (
+				<p class="rounded-2xl border border-line bg-surface px-6 py-10 text-center text-sm text-muted">
+					暂时取不到官方更新日志，稍后会重试。
+				</p>
+			)
+		}
 	</section>
 </Layout>

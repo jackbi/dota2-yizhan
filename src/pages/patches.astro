@@ -1,7 +1,5 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import PatchCard from '../components/PatchCard.astro';
-import { PATCHES } from '../data/patches';
 import { fetchPatchUpdates } from '../lib/patchesApi';
 
 let updates: import('../lib/patchesApi').PatchUpdate[] = [];
@@ -70,25 +68,15 @@ try {
 					})}
 				</ol>
 			) : (
-				<div class="relative space-y-6">
-					<div class="absolute left-6 top-0 h-full w-px bg-line sm:left-7" aria-hidden="true"></div>
-					{PATCHES.map((patch, i) => (
-						<div class="relative pl-14 sm:pl-16">
-							<span
-								class:list={[
-									'absolute left-0 top-5 flex h-12 w-12 items-center justify-center rounded-full border border-line bg-surface font-display text-xs sm:h-14 sm:w-14',
-									i === 0 ? 'border-dota text-dota-light' : 'text-muted',
-								]}
-							>
-								{patch.version}
-							</span>
-							<PatchCard patch={patch} />
-						</div>
-					))}
+				<div class="rounded-2xl border border-line bg-surface px-6 py-16 text-center">
+					<p class="text-muted">暂时取不到官方更新日志。</p>
+					<p class="mt-2 text-xs text-faint">官网列表页不可用且本地没有缓存，下次构建会自动重试。</p>
 				</div>
 			)
 		}
 
-		{fetchFailed ? <p class="mt-10 text-center text-sm text-faint">官方更新日志暂不可用，以上为本地缓存数据。</p> : null}
+		{fetchFailed && updates.length > 0 ? (
+			<p class="mt-10 text-center text-sm text-faint">本次未能刷新官网列表，以上为缓存内容。</p>
+		) : null}
 	</section>
 </Layout>

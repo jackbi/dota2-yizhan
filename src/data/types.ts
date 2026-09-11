@@ -100,16 +100,6 @@ export interface TournamentsBundle {
 	sources: DataSourceStatus[];
 }
 
-export interface Patch {
-	id: string;
-	version: string;
-	title: string;
-	date: string;
-	kind: 'major' | 'balance' | 'minor';
-	summary: string;
-	highlights: string[];
-}
-
 export type ItemType =
 	| 'carry'
 	| 'support'
