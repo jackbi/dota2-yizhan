@@ -243,6 +243,9 @@ function firstFloorList(data: unknown): Record<string, unknown>[] | null {
  * 注意别剥掉 [quote]：主楼常是"引用公告"的形态（如更新说明），整段剥掉就什么都不剩，
  * 所以引用只去标签、保留正文。附件在正文里以 `mon_202609/10/xxx.jpg` 这样的裸路径出现，
  * 外链则是 `[标题] https://...` 的形式，两者都会让摘要变成无意义字符，先去掉。
+ *
+ * 12 字的门槛用来跳过噪声行，但整帖都短于 12 字时不能直接返回空——
+ * 实测有主楼就是"终于开了"的直播帖，那句话本身就是摘要。
  */
 function summarizePost(content: string): string {
 	const text = decodeEntities(
@@ -256,16 +259,20 @@ function summarizePost(content: string): string {
 			.replace(/<br\s*\/?>/gi, '\n')
 			.replace(/<[^>]+>/g, ' '),
 	);
+	/** 够长的那一行最像摘要；整帖都很短时的候选，见循环后面的说明。 */
+	let fallbackLine = '';
 	for (const line of text.split('\n')) {
 		const clean = line
 			.replace(/https?:\/\/\S+/gi, ' ')
 			.replace(/[[\]]/g, ' ')
 			.replace(/\s+/g, ' ')
 			.trim();
-		if (clean.length < 12) continue;
-		return clean.length > 96 ? `${clean.slice(0, 96)}…` : clean;
+		if (clean.length >= 12) return clean.length > 96 ? `${clean.slice(0, 96)}…` : clean;
+		if (clean.length > fallbackLine.length) fallbackLine = clean;
 	}
-	return '';
+	// 没有一句够 12 字时退回最长的那行。主楼本来就只有"终于开了"这种短句时，
+	// 它已经是全部内容，丢掉不如留着；纯图片帖抽不出任何文字，仍然是空。
+	return fallbackLine.length >= 4 ? fallbackLine : '';
 }
 
 /** 一层楼 → 站内展示结构；没有正文的楼层（纯图片被吞掉的情况）直接丢弃。 */
@@ -359,7 +366,8 @@ export function fetchThreadDetail(tid: string): Promise<ThreadDetail | null> {
 }
 
 async function loadThread(tid: string): Promise<ThreadDetail | null> {
-	const key = `thread-v2-${tid}`;
+	// 键里的版本号跟解析格式绑定：摘要规则一变就得换，否则旧结果会一直吃到过期。
+	const key = `thread-v3-${tid}`;
 	const cached = await readCache<ThreadDetail>(key);
 	if (cached && cached.ageMs < THREAD_TTL_SECONDS * 1000) return cached.value;
 	if (OFFLINE) return cached?.value ?? null;
@@ -405,8 +413,12 @@ async function loadBoard(): Promise<CommunityThread[]> {
 	const threads = [...byId.values()].sort(
 		(a, b) => b.replies - a.replies || b.lastReplyAt - a.lastReplyAt || b.tid.localeCompare(a.tid),
 	);
+	/** 楼层抓取失败与"主楼没有文字"是两回事，汇总里分开报。 */
+	let failed = 0;
 	await mapLimit(threads, FETCH_CONCURRENCY, async (thread) => {
-		thread.summary = (await fetchThreadDetail(thread.tid))?.summary ?? '';
+		const detail = await fetchThreadDetail(thread.tid);
+		if (!detail) failed += 1;
+		thread.summary = detail?.summary ?? '';
 	});
 
 	const withSummary = threads.filter((thread) => thread.summary).length;
@@ -415,7 +427,7 @@ async function loadBoard(): Promise<CommunityThread[]> {
 		'nga',
 		'NGA 刀塔版块',
 		state,
-		`${threads.length} 个热帖（${withSummary} 个有摘要），联网抓取 ${networkFetches} 次`,
+		`${threads.length} 个热帖，楼层抓取失败 ${failed} 个，${withSummary} 个有文字摘要，联网抓取 ${networkFetches} 次`,
 	);
 	return threads;
 }
