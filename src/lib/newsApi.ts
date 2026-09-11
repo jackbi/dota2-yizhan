@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, summarizeArticle, toArticleContent } from './articleHtml';
+import { mapLimit } from './concurrency';
 
 /**
  * 官方新闻层：构建期抓取 dota2.com.cn 的新闻列表与正文。
@@ -108,14 +109,6 @@ async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null
 	return fresh;
 }
 
-/** 限制并发，避免一次性把官网打满。 */
-async function mapLimit<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
-	let cursor = 0;
-	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-		while (cursor < items.length) await run(items[cursor++]);
-	});
-	await Promise.all(workers);
-}
 
 // ---------------------------------------------------------------- 列表解析
 

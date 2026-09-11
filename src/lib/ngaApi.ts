@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { decodeEntities } from './articleHtml';
+import { mapLimit } from './concurrency';
 import { collectNicknames } from './ngaBbcode';
 
 /**
@@ -152,13 +153,7 @@ async function writeCache(key: string, value: unknown): Promise<void> {
 	await fs.writeFile(cacheFile(key), JSON.stringify(value), 'utf8');
 }
 
-async function mapLimit<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
-	let cursor = 0;
-	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-		while (cursor < items.length) await run(items[cursor++]);
-	});
-	await Promise.all(workers);
-}
+
 
 // ---------------------------------------------------------------- 地址
 

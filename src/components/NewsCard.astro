@@ -49,7 +49,7 @@ const Tag = item.href ? 'a' : 'article';
 		</div>
 		<h3 class="mt-2 line-clamp-2 font-display leading-snug transition group-hover:text-dota-light">{item.title}</h3>
 		{item.originalTitle ? <p class="mt-1 line-clamp-1 text-xs text-faint">{item.originalTitle}</p> : null}
-		<p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted">{item.summary}</p>
+		{item.summary ? <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted">{item.summary}</p> : null}
 		<div class="mt-auto flex items-center gap-2 pt-3 text-xs text-faint">
 			<span class="truncate">{item.meta}</span>
 			{

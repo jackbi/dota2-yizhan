@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, sanitizeArticleHtml } from './articleHtml';
+import { mapLimit } from './concurrency';
 import { translateToChinese } from './translate';
 
 /**
@@ -30,10 +31,13 @@ const USER_AGENT =
 /** 缓存一小时：Reddit 匿名端点限流很紧，没必要每次构建都去要。 */
 const LIST_TTL_SECONDS = 60 * 60;
 const MAX_POSTS = 25;
-/** 正文翻译只取前这么多字，超长帖翻一半也够读。 */
-const MAX_TRANSLATE_CHARS = 3000;
-/** 图片直链可以直接内嵌，其余的只能给外链。 */
-const IMAGE_URL_RE = /^https?:\/\/(?:i|preview)\.redd\.it\/|^https?:\/\/i\.imgur\.com\/|\.(?:png|jpe?g|gif|webp|mp4)(?:\?|$)/i;
+/** 正文翻译只取前这么多字，超长帖翻一半也够读；页面用它提示截断。 */
+export const MAX_TRANSLATE_CHARS = 3000;
+/**
+ * 图片直链可以直接内嵌，其余的（含 v.redd.it 与 .mp4）只能给跳转卡片。
+ * 注意别把视频格式算进来：<img src="x.mp4"> 只会渲染成破图。
+ */
+const IMAGE_URL_RE = /^https?:\/\/(?:i|preview)\.redd\.it\/|^https?:\/\/i\.imgur\.com\/|\.(?:png|jpe?g|gif|webp)(?:\?|$)/i;
 
 export interface RedditPost {
 	id: string;
@@ -55,10 +59,49 @@ export interface RedditPost {
 	score: number | null;
 	/** 评论数，仅官方接口能拿到 */
 	comments: number | null;
-	/** 中文译文；取不到就留空，由页面回退英文 */
-	titleZh?: string;
-	summaryZh?: string;
-	bodyZh?: string;
+	/** 中文译文；整块缺省表示没翻出来，由下面的取值函数回退英文 */
+	zh?: PostTranslation;
+}
+
+/** 译文。字段各自可缺省：图片帖只有标题，长帖的正文可能只翻了前半段。 */
+export interface PostTranslation {
+	title?: string;
+	summary?: string;
+	body?: string;
+}
+
+/** 标题：优先译文。 */
+export function postTitle(post: RedditPost): string {
+	return post.zh?.title ?? post.title;
+}
+
+/**
+ * 卡片与 description 用的摘要。
+ * 这里必须用 ||：没有正文时 summarizeReddit 返回空串而不是 undefined，
+ * 用 ?? 会漏到空摘要上。
+ */
+export function postSummary(post: RedditPost): string {
+	const summary = post.zh?.summary || post.summary;
+	if (summary) return summary;
+	if (post.image) return '图片帖，点开看图。';
+	if (post.externalUrl) return '视频或外链帖，点开查看目标内容。';
+	return '该帖只有标题，内容在 Reddit 的讨论页里。';
+}
+
+/**
+ * 译文是否只覆盖了正文的一部分。
+ * 按需从英文正文算，不落进缓存——否则换了缓存格式就再也提示不出来了。
+ */
+export function isPostBodyTruncated(post: RedditPost): boolean {
+	return bodyToText(post.body, MAX_TRANSLATE_CHARS).truncated;
+}
+
+/** 译文正文按段落拆开；没翻译时返回空数组，页面回退英文原文。 */
+export function postBodyParagraphs(post: RedditPost): string[] {
+	return (post.zh?.body ?? '')
+		.split('\n')
+		.map((line) => line.trim())
+		.filter(Boolean);
 }
 
 // ---------------------------------------------------------------- 缓存
@@ -67,11 +110,22 @@ function cacheFile(): string {
 	return path.join(CACHE_DIR, 'hot.json');
 }
 
+/**
+ * 早期版本把译文平铺在 titleZh / summaryZh / bodyZh 上，读缓存时顺手迁移到 zh，
+ * 否则改完字段名之后旧缓存里的译文会静默失效（而 Reddit 限流又不一定抓得回来）。
+ */
+function normalizePost(raw: RedditPost & { titleZh?: string; summaryZh?: string; bodyZh?: string }): RedditPost {
+	const { titleZh, summaryZh, bodyZh, ...rest } = raw;
+	if (rest.zh || !(titleZh || summaryZh || bodyZh)) return rest;
+	return { ...rest, zh: { title: titleZh, summary: summaryZh, body: bodyZh } };
+}
+
 async function readCache(): Promise<{ posts: RedditPost[]; ageMs: number } | null> {
 	try {
 		const file = cacheFile();
 		const stat = await fs.stat(file);
-		return { posts: JSON.parse(await fs.readFile(file, 'utf8')) as RedditPost[], ageMs: Date.now() - stat.mtimeMs };
+		const posts = JSON.parse(await fs.readFile(file, 'utf8')) as (RedditPost & { titleZh?: string })[];
+		return { posts: posts.map(normalizePost), ageMs: Date.now() - stat.mtimeMs };
 	} catch {
 		return null;
 	}
@@ -140,6 +194,34 @@ export function summarizeReddit(bodyHtml: string, maxLength = 120): string {
 	return first.length > maxLength ? `${first.slice(0, maxLength)}…` : first;
 }
 
+/** 两条取数路径解析出来的字段是一致的，统一在这里拼成帖子对象。 */
+function toPost(fields: {
+	id: string;
+	title: string;
+	author: string;
+	permalink: string;
+	createdAt: number;
+	bodyHtml: string;
+	externalUrl: string;
+	score: number | null;
+	comments: number | null;
+}): RedditPost {
+	const body = fields.bodyHtml.trim();
+	return {
+		id: fields.id,
+		title: fields.title,
+		author: fields.author,
+		permalink: fields.permalink,
+		createdAt: fields.createdAt,
+		body,
+		externalUrl: fields.externalUrl,
+		image: IMAGE_URL_RE.test(fields.externalUrl) ? fields.externalUrl : '',
+		summary: summarizeReddit(body),
+		score: fields.score,
+		comments: fields.comments,
+	};
+}
+
 /** RSS（Atom）→ 帖子列表。 */
 function parseRss(xml: string): RedditPost[] {
 	const posts: RedditPost[] = [];
@@ -154,20 +236,19 @@ function parseRss(xml: string): RedditPost[] {
 		const target = (content.match(/<a\s+href="([^"]+)"[^>]*>\s*\[link\]\s*<\/a>/i)?.[1] ?? '').trim();
 		const externalUrl = target && !target.includes(`/comments/${id}`) ? target : '';
 		const raw = stripRssFooter(content).trim();
-		const body = hasReadableBody(raw) ? raw : '';
-		posts.push({
-			id,
-			title,
-			author: atomText(entry, 'name').replace(/^\/u\//, '').trim(),
-			permalink,
-			createdAt: Math.floor(Date.parse(atomText(entry, 'published')) / 1000) || 0,
-			body,
-			externalUrl,
-			image: IMAGE_URL_RE.test(externalUrl) ? externalUrl : '',
-			summary: summarizeReddit(body),
-			score: null,
-			comments: null,
-		});
+		posts.push(
+			toPost({
+				id,
+				title,
+				author: atomText(entry, 'name').replace(/^\/u\//, '').trim(),
+				permalink,
+				createdAt: Math.floor(Date.parse(atomText(entry, 'published')) / 1000) || 0,
+				bodyHtml: hasReadableBody(raw) ? raw : '',
+				externalUrl,
+				score: null,
+				comments: null,
+			}),
+		);
 	}
 	return posts;
 }
@@ -184,21 +265,19 @@ function parseListing(raw: unknown): RedditPost[] {
 		const title = String(data.title ?? '').trim();
 		if (!id || !title) continue;
 		const raw = stripRssFooter(decodeEntities(String(data.selftext_html ?? ''))).trim();
-		const body = hasReadableBody(raw) ? raw : '';
-		const externalUrl = data.is_self ? '' : String(data.url ?? '');
-		posts.push({
-			id,
-			title,
-			author: String(data.author ?? ''),
-			permalink: `https://www.reddit.com${String(data.permalink ?? `/r/${SUBREDDIT}/comments/${id}/`)}`,
-			createdAt: Number(data.created_utc) || 0,
-			body,
-			externalUrl,
-			image: IMAGE_URL_RE.test(externalUrl) ? externalUrl : '',
-			summary: summarizeReddit(body),
-			score: Number(data.score) || 0,
-			comments: Number(data.num_comments) || 0,
-		});
+		posts.push(
+			toPost({
+				id,
+				title,
+				author: String(data.author ?? ''),
+				permalink: `https://www.reddit.com${String(data.permalink ?? `/r/${SUBREDDIT}/comments/${id}/`)}`,
+				createdAt: Number(data.created_utc) || 0,
+				bodyHtml: hasReadableBody(raw) ? raw : '',
+				externalUrl: data.is_self ? '' : String(data.url ?? ''),
+				score: Number(data.score) || 0,
+				comments: Number(data.num_comments) || 0,
+			}),
+		);
 	}
 	return posts;
 }
@@ -250,9 +329,9 @@ export function fetchRedditPosts(): Promise<RedditPost[]> {
 	return postsPromise;
 }
 
-/** 正文 HTML → 用于翻译的纯文字段落。 */
-function bodyToText(html: string, limit: number): string {
-	return decodeEntities(
+/** 正文 HTML → 用于翻译的纯文字段落，同时告诉调用方有没有被截断。 */
+function bodyToText(html: string, limit: number): { text: string; truncated: boolean } {
+	const text = decodeEntities(
 		html
 			.replace(/<\/(?:p|div|blockquote|li|h[1-6])>/gi, '\n')
 			.replace(/<br\s*\/?>/gi, '\n')
@@ -261,33 +340,34 @@ function bodyToText(html: string, limit: number): string {
 		.split('\n')
 		.map((line) => line.replace(/[ \t]+/g, ' ').trim())
 		.filter(Boolean)
-		.join('\n')
-		.slice(0, limit);
+		.join('\n');
+	return { text: text.slice(0, limit), truncated: text.length > limit };
 }
 
-async function mapLimit<T>(items: T[], limit: number, run: (item: T) => Promise<void>): Promise<void> {
-	let cursor = 0;
-	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-		while (cursor < items.length) await run(items[cursor++]);
-	});
-	await Promise.all(workers);
-}
-
-/** 标题、摘要、正文各翻一遍；失败就用英文，绝不因为翻译挂掉构建。 */
+/**
+ * 标题、摘要、正文各翻一遍，返回带译文的副本。
+ * 失败就用英文，绝不因为翻译挂掉构建。
+ */
 async function withTranslations(posts: RedditPost[]): Promise<RedditPost[]> {
-	const texts = new Map<string, string | null>();
+	const done = new Map<string, string | null>();
 	const translate = async (text: string) => {
 		if (!text) return null;
-		if (!texts.has(text)) texts.set(text, await translateToChinese(text));
-		return texts.get(text) ?? null;
+		if (!done.has(text)) done.set(text, await translateToChinese(text));
+		return done.get(text) ?? null;
 	};
+	const translated: RedditPost[] = [...posts];
 	await mapLimit(posts, 3, async (post) => {
-		post.titleZh = (await translate(post.title)) ?? undefined;
-		post.summaryZh = (await translate(post.summary)) ?? undefined;
-		const text = bodyToText(post.body, MAX_TRANSLATE_CHARS);
-		if (text) post.bodyZh = (await translate(text)) ?? undefined;
+		const body = bodyToText(post.body, MAX_TRANSLATE_CHARS);
+		translated[posts.indexOf(post)] = {
+			...post,
+			zh: {
+				title: (await translate(post.title)) ?? undefined,
+				summary: (await translate(post.summary)) ?? undefined,
+				body: body.text ? ((await translate(body.text)) ?? undefined) : undefined,
+			},
+		};
 	});
-	return posts;
+	return translated;
 }
 
 async function loadPosts(): Promise<RedditPost[]> {
@@ -296,10 +376,11 @@ async function loadPosts(): Promise<RedditPost[]> {
 	if (OFFLINE) return cached?.posts ?? [];
 
 	// 先试官方接口，再退到匿名 RSS；两条都不通就用过期缓存。
-	const posts = (await fetchViaOAuth()) ?? (await fetchViaRss());
-	if (!posts) return cached?.posts ?? [];
+	const fetched = (await fetchViaOAuth()) ?? (await fetchViaRss());
+	if (!fetched) return cached?.posts ?? [];
 
-	await writeCache(await withTranslations(posts));
+	const posts = await withTranslations(fetched);
+	await writeCache(posts);
 	return posts;
 }
 
@@ -321,9 +402,9 @@ export function renderRedditBody(body: string): string {
 export function toRedditCard(post: RedditPost): NewsCardItem {
 	return {
 		id: `reddit-${post.id}`,
-		title: post.titleZh ?? post.title,
-		originalTitle: post.titleZh ? post.title : undefined,
-		summary: post.summaryZh ?? post.summary ?? '该帖只有标题，正文在 Reddit 上。',
+		title: postTitle(post),
+		originalTitle: post.zh?.title ? post.title : undefined,
+		summary: postSummary(post),
 		date: new Date(post.createdAt * 1000).toISOString().slice(0, 10),
 		img: post.image || undefined,
 		tags: ['Reddit'],

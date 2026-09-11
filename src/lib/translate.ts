@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto';
-import { createDecipheriv } from 'node:crypto';
+import { createDecipheriv, createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -19,12 +18,17 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 const REQUEST_INTERVAL_MS = 250;
 /** 单次请求的字符上限，超长正文会按句子切开分多次翻。 */
 const CHUNK_LIMIT = 1000;
-/** 有道网页版接口要带上浏览器 UA、referer 与这两个 cookie，缺一个就返回 code 50。 */
+/**
+ * 有道网页版接口要带上浏览器 UA、referer 与访客 cookie。
+ * cookie 取的是无意义的占位值，实测随便填都能用；真被校验了可以用 YOUDAO_COOKIE 覆盖。
+ */
+const VISITOR_COOKIE =
+	process.env.YOUDAO_COOKIE ?? 'OUTFOX_SEARCH_USER_ID_NCOO=1000000000.0000001; OUTFOX_SEARCH_USER_ID=1@127.0.0.1';
 const BROWSER_HEADERS = {
 	'User-Agent':
 		'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36',
 	referer: 'https://fanyi.youdao.com/',
-	cookie: 'OUTFOX_SEARCH_USER_ID_NCOO=2100336809.6038957; OUTFOX_SEARCH_USER_ID=711138426@112.20.94.181',
+	cookie: VISITOR_COOKIE,
 };
 /** 网页端固定的两把密钥，用来解密响应，不是账号凭证。 */
 const YOUDAO_AES_KEY = 'ydsecret://query/key/B*RGygVywfNBwpmBaZg*WT7SIOUP2T0C9WHMZN39j^DAdaZhAnxvGcCY6VYFwnHl';
@@ -56,16 +60,22 @@ async function readCached(text: string): Promise<string | null | undefined> {
 	}
 }
 
+/** 落盘失败只影响下次复用，不该把构建带崩。 */
 async function writeCached(text: string, value: string): Promise<void> {
 	memory.set(text, value);
-	await fs.mkdir(CACHE_DIR, { recursive: true });
-	await fs.writeFile(cacheFile(text), value, 'utf8');
+	try {
+		await fs.mkdir(CACHE_DIR, { recursive: true });
+		await fs.writeFile(cacheFile(text), value, 'utf8');
+	} catch {
+		// 缓存写不进去就算了，译文照样返回。
+	}
 }
 
 // ---------------------------------------------------------------- 分段与限速
 
 /** 按行聚合到接近上限，单行过长时再按句号/空格切开。 */
-function chunkText(text: string, limit = CHUNK_LIMIT): string[] {
+function chunkText(text: string): string[] {
+	const limit = CHUNK_LIMIT;
 	const chunks: string[] = [];
 	let current = '';
 	const flush = () => {
