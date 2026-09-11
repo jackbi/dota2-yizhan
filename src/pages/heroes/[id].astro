@@ -1,6 +1,8 @@
 ---
 import Layout from '../../layouts/Layout.astro';
+import { formatIso } from '../../lib/format';
 import { fetchHeroList } from '../../lib/heroApi';
+import { fetchHeroMeta } from '../../lib/stratzApi';
 
 export async function getStaticPaths() {
 	const list = await fetchHeroList();
@@ -33,6 +35,13 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 	nextId: number;
 	nextName: string;
 };
+
+/** 近一周数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
+const meta = await fetchHeroMeta();
+const stat = meta?.heroes.get(id) ?? null;
+const winRate = stat && stat.matches > 0 ? (stat.wins / stat.matches) * 100 : 0;
+const POSITION_LABEL = ['一号位', '二号位', '三号位', '四号位', '五号位'];
+const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路', 3: '劣势路', 4: '游走辅助', 5: '保护辅助' };
 ---
 
 <Layout title={`${name} · 英雄资料 · DOTA2 驿站`} description={`${name}（${nameEn}）英雄详细数据、技能动画与天赋树，实时来自官方接口。`}>
@@ -47,6 +56,51 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 			</svg>
 			<span class="text-cream">{name}</span>
 		</nav>
+
+		{
+			meta && stat ? (
+				<section class="mb-6 rounded-2xl border border-line bg-surface p-5" aria-label="近一周数据">
+					<div class="flex flex-wrap items-baseline justify-between gap-2">
+						<h2 class="font-display text-lg">近 {meta.windowDays} 天数据</h2>
+						<p class="text-xs text-faint">{meta.bracketLabel} · 更新于 {formatIso(meta.updatedAt)} · 数据来自 STRATZ</p>
+					</div>
+					<dl class="mt-4 grid grid-cols-3 gap-3">
+						<div class="rounded-xl border border-line bg-surface-2 px-4 py-3">
+							<dt class="text-xs text-faint">出场</dt>
+							<dd class="mt-1 font-display text-xl tabular-nums">{stat.matches.toLocaleString('zh-CN')}</dd>
+						</div>
+						<div class="rounded-xl border border-line bg-surface-2 px-4 py-3">
+							<dt class="text-xs text-faint">胜率</dt>
+							<dd class={`mt-1 font-display text-xl tabular-nums ${winRate >= 50 ? 'text-gold' : 'text-cream'}`}>{winRate.toFixed(1)}%</dd>
+						</div>
+						<div class="rounded-xl border border-line bg-surface-2 px-4 py-3">
+							<dt class="text-xs text-faint">被禁用</dt>
+							<dd class="mt-1 font-display text-xl tabular-nums">{stat.bans.toLocaleString('zh-CN')}</dd>
+						</div>
+					</dl>
+					{
+						stat.positions.length > 0 ? (
+							<div class="mt-4">
+								<p class="text-xs text-faint">按位置的出场与胜率</p>
+								<ul class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-5">
+									{stat.positions
+										.filter((position) => position.matches > 0)
+										.map((position) => (
+											<li class="rounded-xl border border-line bg-surface-2 px-3 py-2" title={POSITION_HINT[position.position]}>
+												<p class="text-xs text-muted">{POSITION_LABEL[position.position - 1]}</p>
+												<p class="mt-0.5 text-sm tabular-nums text-cream">
+													{position.matches.toLocaleString('zh-CN')} 场
+													<span class="ml-1 text-xs text-faint">{(position.wins / position.matches * 100).toFixed(1)}%</span>
+												</p>
+											</li>
+										))}
+								</ul>
+							</div>
+						) : null
+					}
+				</section>
+			) : null
+		}
 
 		<div id="hero-view" data-hero-id={id}>
 			<!-- 骨架屏（加载完成后由脚本替换） -->
