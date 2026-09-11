@@ -15,13 +15,17 @@ import path from 'node:path';
  * 限速：响应头给出 8/秒、150/分、1500/时、15000/天。这里串行到约 6/秒，
  * 并把重试余量留给网络抖动（实测偶发 TLS ECONNRESET）。
  *
- * 必须带 `User-Agent`：不带时 Cloudflare 会直接返回 "Just a moment..." 的挑战页
- * （HTTP 403），Node 默认没有 UA，所以这里必须显式设置。
+ * 请求头：接口前面挂着 Cloudflare，只对 `User-Agent: STRATZ_API`（官方文档指定的值）
+ * 放行。实测浏览器 UA 与不带 UA 一律返回 "Just a moment..." 挑战页（HTTP 403），
+ * 自造的应用名时好时坏——所以这里的 UA 不能改。
  */
 
 const API = 'https://api.stratz.com/graphql';
-/** 接口要求标识调用方，同时也是绕过 Cloudflare 挑战页的必要条件。 */
-const USER_AGENT = 'dota2-news-portal/1.0';
+/**
+ * 必须原样使用官方指定的 `STRATZ_API`：换成应用名或浏览器 UA 会被 Cloudflare 拦，
+ * 而且失败是随机的，症状表现为"英雄数据偶尔整块消失"。
+ */
+const USER_AGENT = 'STRATZ_API';
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'stratz');
 /** 离线构建只读缓存，不联网。 */
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
@@ -81,8 +85,10 @@ async function query<T>(document: string, variables: Record<string, unknown>): P
 				},
 				body: JSON.stringify({ query: document, variables }),
 			});
-			// 429 与 5xx 值得重试，其余错误（含鉴权失败）直接放弃。
+			// 429、5xx，以及 Cloudflare 的挑战页都值得重试；挑战页是随机的，
+			// 而同为 403 的鉴权失败是 JSON，重试没有意义，直接放弃。
 			if (res.status === 429 || res.status >= 500) continue;
+			if (res.status === 403 && (res.headers.get('content-type') ?? '').includes('text/html')) continue;
 			if (!res.ok) return null;
 			const body = (await res.json()) as GraphQLBody<T>;
 			if (!body.data || body.errors?.length) return null;
