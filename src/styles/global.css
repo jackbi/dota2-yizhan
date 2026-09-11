@@ -58,6 +58,89 @@ body {
 	font-family: var(--font-display);
 }
 
+/*
+ * 官方文章正文（更新日志、新闻详情）的排版。
+ * 正文由 set:html 注入，元素上不会带 Astro 的样式作用域属性，
+ * 因此这套规则必须放在全局样式里，写在组件 <style> 中不会生效。
+ */
+.article-content {
+	overflow-wrap: break-word;
+}
+.article-content > :first-child {
+	margin-top: 0;
+}
+.article-content h2 {
+	font-family: var(--font-display);
+	color: var(--color-gold);
+	font-size: 1.35rem;
+	line-height: 1.4;
+	margin: 1.75rem 0 0.75rem;
+}
+.article-content h3 {
+	color: var(--color-cream);
+	font-size: 1.1rem;
+	font-weight: 600;
+	margin: 1.25rem 0 0.5rem;
+}
+.article-content p {
+	color: var(--color-cream);
+	line-height: 1.9;
+	margin: 0.75rem 0;
+}
+.article-content ul,
+.article-content ol {
+	color: var(--color-cream);
+	margin: 0.75rem 0;
+	padding-left: 1.4rem;
+}
+.article-content ul {
+	list-style: disc;
+}
+.article-content ol {
+	list-style: decimal;
+}
+.article-content li {
+	line-height: 1.8;
+	margin: 0.35rem 0;
+}
+.article-content strong {
+	color: var(--color-cream);
+	font-weight: 600;
+}
+.article-content a {
+	color: var(--color-dota-light);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.article-content img {
+	max-width: 100%;
+	height: auto;
+	border-radius: 0.75rem;
+	border: 1px solid var(--color-line);
+	margin: 0.75rem 0;
+}
+.article-content table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 1rem 0;
+	font-size: 0.9rem;
+}
+.article-content th,
+.article-content td {
+	border: 1px solid var(--color-line);
+	padding: 0.5rem 0.75rem;
+	color: var(--color-cream);
+	text-align: left;
+}
+.article-content th {
+	background: var(--color-surface-2);
+	font-weight: 600;
+}
+.article-content iframe,
+.article-content video {
+	max-width: 100%;
+}
+
 /* Custom scrollbar to match the theme */
 ::-webkit-scrollbar {
 	width: 10px;

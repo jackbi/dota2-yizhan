@@ -41,7 +41,7 @@ try {
 		<div class="mt-6 rounded-2xl border border-line bg-surface p-6 sm:p-8">
 			{
 				content ? (
-					<div class="patch-content" set:html={content} />
+					<div class="article-content" set:html={content} />
 				) : (
 					<p class="text-muted">
 						正文加载失败，
@@ -55,73 +55,3 @@ try {
 		</div>
 	</section>
 </Layout>
-
-<style>
-	.patch-content {
-		--content-max: 72ch;
-	}
-	.patch-content h2 {
-		font-family: var(--font-display);
-		color: var(--color-gold);
-		font-size: 1.35rem;
-		margin: 1.75rem 0 0.75rem;
-		line-height: 1.4;
-	}
-	.patch-content h2:first-child {
-		margin-top: 0;
-	}
-	.patch-content h3 {
-		color: var(--color-cream);
-		font-size: 1.1rem;
-		font-weight: 600;
-		margin: 1.25rem 0 0.5rem;
-	}
-	.patch-content p {
-		color: var(--color-cream);
-		line-height: 1.9;
-		margin: 0.75rem 0;
-	}
-	.patch-content ul,
-	.patch-content ol {
-		padding-left: 1.4rem;
-		margin: 0.75rem 0;
-		color: var(--color-cream);
-	}
-	.patch-content li {
-		line-height: 1.8;
-		margin: 0.35rem 0;
-	}
-	.patch-content strong {
-		color: var(--color-cream);
-		font-weight: 600;
-	}
-	.patch-content a {
-		color: var(--color-dota-light);
-		text-decoration: underline;
-		text-underline-offset: 2px;
-	}
-	.patch-content img {
-		max-width: 100%;
-		height: auto;
-		border-radius: 0.75rem;
-		border: 1px solid var(--color-line);
-		margin: 0.75rem 0;
-	}
-	.patch-content table {
-		width: 100%;
-		border-collapse: collapse;
-		margin: 1rem 0;
-		font-size: 0.9rem;
-	}
-	.patch-content th,
-	.patch-content td {
-		border: 1px solid var(--color-line);
-		padding: 0.5rem 0.75rem;
-		color: var(--color-cream);
-		text-align: left;
-	}
-	.patch-content th {
-		background: var(--color-surface-2);
-		font-weight: 600;
-	}
-</style>
