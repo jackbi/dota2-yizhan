@@ -1,5 +1,5 @@
 // @ts-check
-import { existsSync } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -18,9 +18,57 @@ if (existsSync(ENV_FILE)) {
 	}
 }
 
+/**
+ * 构建结束打印各数据源本轮的实际情况。
+ *
+ * 抓取失败是静默降级（拿不到就不展示），页面上看不出"源挂了"和"本来就没有"，
+ * 而 lib 里的 console 输出 Astro 不会转发。所以各源把结果写成
+ * `.cache/health/<id>.json`，这里在渲染全部结束后读出来汇总——文件交接，
+ * 不依赖渲染跑在主进程还是工作线程里。
+ */
+const HEALTH_DIR = new URL('.cache/health/', import.meta.url);
+const STATE_LABEL = { fresh: '联网抓取', cache: '使用缓存', empty: '没有数据' };
+
+const dataSourceReport = {
+	name: 'data-source-report',
+	hooks: {
+		'astro:build:start': async () => {
+			// 上一轮的结果不能混进本轮汇总。
+			await fs.rm(HEALTH_DIR, { recursive: true, force: true });
+		},
+		'astro:build:done': async ({ logger }) => {
+			let names = [];
+			try {
+				names = await fs.readdir(HEALTH_DIR);
+			} catch {
+				return;
+			}
+			const records = [];
+			for (const name of names) {
+				try {
+					records.push(JSON.parse(await fs.readFile(new URL(name, HEALTH_DIR), 'utf8')));
+				} catch {
+					// 单条记录坏掉不影响其它源。
+				}
+			}
+			if (records.length === 0) return;
+
+			// 需要关注的排在前面。
+			const order = { empty: 0, cache: 1, fresh: 2 };
+			records.sort((a, b) => (order[a.state] ?? 9) - (order[b.state] ?? 9) || a.label.localeCompare(b.label, 'zh'));
+
+			logger.info(`数据源（${records.length}）：`);
+			for (const record of records) {
+				logger.info(`  ${record.label} — ${STATE_LABEL[record.state] ?? record.state}：${record.detail}`);
+			}
+		},
+	},
+};
+
 // https://astro.build/config
 export default defineConfig({
 	vite: {
 		plugins: [tailwindcss()],
 	},
+	integrations: [dataSourceReport],
 });

@@ -1,5 +1,6 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { reportSource } from './dataHealth';
 
 /**
  * STRATZ 数据层（api.stratz.com/graphql）。
@@ -30,6 +31,11 @@ const CACHE_DIR = path.join(process.cwd(), '.cache', 'stratz');
 /** 离线构建只读缓存，不联网。 */
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 const TOKEN = (process.env.STRATZ_TOKEN ?? '').trim();
+
+/** 配了 token 才算"该有数据"：没有 token 时英雄区块是有意不展示，不是故障。 */
+export function stratzConfigured(): boolean {
+	return TOKEN.length > 0;
+}
 
 /** 已结束的比赛与历史统计不会变，只有英雄数据需要定期刷新。 */
 const HERO_META_TTL_SECONDS = 6 * 3600;
@@ -65,6 +71,13 @@ interface GraphQLBody<T> {
 	errors?: unknown[];
 }
 
+/** 本轮成功联网查询的次数，用来区分"新抓的"和"吃缓存的"。 */
+let networkFetches = 0;
+
+export function stratzFetchCount(): number {
+	return networkFetches;
+}
+
 /** 查询失败返回 null：对构建来说"这个区块没有数据"永远是可接受的降级。 */
 async function query<T>(document: string, variables: Record<string, unknown>): Promise<T | null> {
 	if (OFFLINE || !TOKEN) return null;
@@ -92,6 +105,7 @@ async function query<T>(document: string, variables: Record<string, unknown>): P
 			if (!res.ok) return null;
 			const body = (await res.json()) as GraphQLBody<T>;
 			if (!body.data || body.errors?.length) return null;
+			networkFetches += 1;
 			return body.data;
 		} catch {
 			// 网络抖动，交给下一轮重试。
@@ -444,6 +458,7 @@ let heroMetaPromise: Promise<HeroMeta | null> | null = null;
  */
 export function fetchHeroMeta(): Promise<HeroMeta | null> {
 	heroMetaPromise ??= (async () => {
+		const before = networkFetches;
 		const statRows = await cached<RawPositionStat[]>('hero-stats', HERO_META_TTL_SECONDS, async () => {
 			const data = await query<{ heroStats: { stats: RawPositionStat[] | null } }>(HERO_STATS_DOCUMENT, {
 				bracket: [HERO_META_BRACKET],
@@ -451,7 +466,15 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 			const rows = data?.heroStats?.stats;
 			return rows && rows.length > 0 ? rows : null;
 		});
-		if (!statRows || statRows.length === 0) return null;
+		if (!statRows || statRows.length === 0) {
+			await reportSource(
+				'stratz-hero',
+				'STRATZ 英雄数据',
+				'empty',
+				TOKEN ? '请求未拿到数据（限流、挑战页或接口异常）' : '未配置 STRATZ_TOKEN',
+			);
+			return null;
+		}
 
 		const banRows =
 			(await cached<RawBanStat[]>('hero-bans', HERO_META_TTL_SECONDS, async () => {
@@ -463,7 +486,16 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 				return rows && rows.length > 0 ? rows : null;
 			})) ?? [];
 
-		return buildHeroMeta(statRows, banRows);
+		const meta = buildHeroMeta(statRows, banRows);
+		if (meta) {
+			await reportSource(
+				'stratz-hero',
+				'STRATZ 英雄数据',
+				networkFetches > before ? 'fresh' : 'cache',
+				`${meta.heroes.size} 个英雄，联网抓取 ${networkFetches - before} 次`,
+			);
+		}
+		return meta;
 	})();
 	return heroMetaPromise;
 }

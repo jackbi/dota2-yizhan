@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, summarizeArticle, toArticleContent } from './articleHtml';
 import { mapLimit } from './concurrency';
+import { reportSource } from './dataHealth';
 
 /**
  * 官方新闻层：构建期抓取 dota2.com.cn 的新闻列表与正文。
@@ -83,6 +84,9 @@ async function readCache(file: string): Promise<{ text: string; ageMs: number } 
 	}
 }
 
+/** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
+let networkFetches = 0;
+
 /** 抓取官方页面并落盘；命中新鲜缓存就直接返回，失败时退回过期缓存。 */
 async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null> {
 	const file = cacheFile(url);
@@ -95,7 +99,10 @@ async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null
 		const timer = setTimeout(() => controller.abort(), 20_000);
 		try {
 			const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT } });
-			if (res.ok) fresh = await res.text();
+			if (res.ok) {
+				fresh = await res.text();
+				networkFetches += 1;
+			}
 		} catch {
 			fresh = null;
 		} finally {
@@ -220,5 +227,8 @@ async function loadNews(): Promise<OfficialNews[]> {
 	await mapLimit(list, FETCH_CONCURRENCY, async (item) => {
 		item.summary = summarizeArticle(await fetchNewsArticle(item.url));
 	});
+
+	const state = networkFetches > 0 ? 'fresh' : list.length > 0 ? 'cache' : 'empty';
+	await reportSource('news', 'DOTA2 官网新闻', state, `${list.length} 篇文章，联网抓取 ${networkFetches} 次`);
 	return list;
 }

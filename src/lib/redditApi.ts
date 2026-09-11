@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, sanitizeArticleHtml } from './articleHtml';
 import { mapLimit } from './concurrency';
+import { reportSource } from './dataHealth';
 import { translateToChinese } from './translate';
 
 /**
@@ -372,15 +373,34 @@ async function withTranslations(posts: RedditPost[]): Promise<RedditPost[]> {
 
 async function loadPosts(): Promise<RedditPost[]> {
 	const cached = await readCache();
-	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return cached.posts;
-	if (OFFLINE) return cached?.posts ?? [];
+	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) {
+		await reportSource('reddit', 'Reddit r/DotA2', 'cache', `${cached.posts.length} 条，命中 1 小时缓存`);
+		return cached.posts;
+	}
+	if (OFFLINE) {
+		const posts = cached?.posts ?? [];
+		await reportSource('reddit', 'Reddit r/DotA2', posts.length > 0 ? 'cache' : 'empty', `${posts.length} 条，离线构建`);
+		return posts;
+	}
 
 	// 先试官方接口，再退到匿名 RSS；两条都不通就用过期缓存。
-	const fetched = (await fetchViaOAuth()) ?? (await fetchViaRss());
-	if (!fetched) return cached?.posts ?? [];
+	const viaOAuth = await fetchViaOAuth();
+	const fetched = viaOAuth ?? (await fetchViaRss());
+	if (!fetched) {
+		const posts = cached?.posts ?? [];
+		await reportSource(
+			'reddit',
+			'Reddit r/DotA2',
+			posts.length > 0 ? 'cache' : 'empty',
+			posts.length > 0 ? `${posts.length} 条，匿名接口被限流，退回过期缓存` : '请求失败且无缓存',
+		);
+		return posts;
+	}
 
 	const posts = await withTranslations(fetched);
 	await writeCache(posts);
+	const channel = viaOAuth ? 'OAuth 接口' : '匿名 RSS';
+	await reportSource('reddit', 'Reddit r/DotA2', 'fresh', `${posts.length} 条，来自${channel}`);
 	return posts;
 }
 

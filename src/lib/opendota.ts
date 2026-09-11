@@ -43,6 +43,13 @@ async function pace(): Promise<void> {
 	return paceQueue;
 }
 
+/** 本轮成功联网请求的次数，供上层判断数据是新抓的还是吃缓存的。 */
+let networkFetches = 0;
+
+export function openDotaFetchCount(): number {
+	return networkFetches;
+}
+
 async function fetchJson<T>(url: string, timeoutMs = 25_000): Promise<T | null> {
 	if (OFFLINE || rateLimited) return null;
 	await pace();
@@ -55,6 +62,7 @@ async function fetchJson<T>(url: string, timeoutMs = 25_000): Promise<T | null> 
 			return null;
 		}
 		if (!res.ok) return null;
+		networkFetches += 1;
 		return (await res.json()) as T;
 	} catch {
 		return null;

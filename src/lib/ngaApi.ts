@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { decodeEntities } from './articleHtml';
 import { mapLimit } from './concurrency';
+import { reportSource } from './dataHealth';
 import { collectNicknames } from './ngaBbcode';
 
 /**
@@ -123,6 +124,9 @@ function pace(): Promise<void> {
 	return paceQueue;
 }
 
+/** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
+let networkFetches = 0;
+
 async function fetchText(url: string, encoding = 'utf-8'): Promise<string | null> {
 	await pace();
 	const controller = new AbortController();
@@ -130,6 +134,7 @@ async function fetchText(url: string, encoding = 'utf-8'): Promise<string | null
 	try {
 		const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT } });
 		if (!res.ok) return null;
+		networkFetches += 1;
 		return new TextDecoder(encoding).decode(await res.arrayBuffer());
 	} catch {
 		return null;
@@ -403,5 +408,14 @@ async function loadBoard(): Promise<CommunityThread[]> {
 	await mapLimit(threads, FETCH_CONCURRENCY, async (thread) => {
 		thread.summary = (await fetchThreadDetail(thread.tid))?.summary ?? '';
 	});
+
+	const withSummary = threads.filter((thread) => thread.summary).length;
+	const state = networkFetches > 0 ? 'fresh' : threads.length > 0 ? 'cache' : 'empty';
+	await reportSource(
+		'nga',
+		'NGA 刀塔版块',
+		state,
+		`${threads.length} 个热帖（${withSummary} 个有摘要），联网抓取 ${networkFetches} 次`,
+	);
 	return threads;
 }

@@ -1,7 +1,15 @@
 import type { EsportsMatch } from '../data/types';
-import { MATCH_WINDOW_SECONDS, fetchMatchDetail as fetchOpenDotaMatch, findPairMatches, getHeroMap, resolveTeam } from './opendota';
+import { reportSource } from './dataHealth';
+import {
+	MATCH_WINDOW_SECONDS,
+	fetchMatchDetail as fetchOpenDotaMatch,
+	findPairMatches,
+	getHeroMap,
+	openDotaFetchCount,
+	resolveTeam,
+} from './opendota';
 import type { HeroInfo, OdMatchDetail, OdTeam } from './opendota';
-import { fetchMatchDetail as fetchStratzMatch, fetchTeamMatches } from './stratzApi';
+import { fetchMatchDetail as fetchStratzMatch, fetchTeamMatches, stratzFetchCount } from './stratzApi';
 import type { StratzMatch } from './stratzApi';
 
 /**
@@ -171,16 +179,42 @@ async function resolveMatch(match: EsportsMatch, heroes: Map<number, HeroInfo>):
 }
 
 /**
+ * 本轮构建的匹配情况累计。
+ * 详情页逐页调用（每次只传一场比赛），单次结果说明不了整体，
+ * 所以累计到模块级再上报——最后写入的那份就是本轮的总数。
+ */
+let totalPlayed = 0;
+let totalMatched = 0;
+let totalFromStratz = 0;
+/** 第一次调用时的网络计数，用来判断本轮到底有没有真的联网抓过。 */
+let fetchBaseline: number | null = null;
+
+/**
  * 为一批比赛补齐 BP 与选手英雄。只处理已开赛/已结束的比赛（未开赛没有 BP），
  * 返回的 Map 以超凡的比赛 id 为键，取不到的比赛直接没有条目。
  */
 export async function loadMatchDrafts(matches: EsportsMatch[]): Promise<Map<string, MatchDraft>> {
 	const out = new Map<string, MatchDraft>();
+	fetchBaseline ??= stratzFetchCount() + openDotaFetchCount();
 	const heroes = await getHeroMap();
 	for (const match of matches) {
 		if (match.status === 'upcoming') continue;
+		totalPlayed += 1;
 		const draft = await resolveMatch(match, heroes);
-		if (draft) out.set(match.id, draft);
+		if (draft) {
+			out.set(match.id, draft);
+			totalMatched += 1;
+			if (draft.source === 'stratz') totalFromStratz += 1;
+		}
+	}
+	if (matches.some((match) => match.status !== 'upcoming')) {
+		const fetched = stratzFetchCount() + openDotaFetchCount() > fetchBaseline;
+		await reportSource(
+			'drafts',
+			'比赛阵容与 BP',
+			totalMatched === 0 ? 'empty' : fetched ? 'fresh' : 'cache',
+			`${totalPlayed} 场已开赛比赛匹配到 ${totalMatched} 场 Valve 比赛（STRATZ ${totalFromStratz} 场）`,
+		);
 	}
 	return out;
 }

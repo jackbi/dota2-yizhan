@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { seedEvents } from '../data/tournaments';
+import { reportSource } from './dataHealth';
 import type {
 	DataSource,
 	DataSourceStatus,
@@ -388,7 +389,20 @@ function sourceStatus(id: DataSource, ok: boolean, label?: string): DataSourceSt
 	return { id, label: label ?? SOURCE_LABEL[id], ok };
 }
 
+/**
+ * 记录本轮结果并原样返回。
+ * 日历有四个返回点（正常、缓存刷新、种子兜底），集中在这一层上报，避免漏报。
+ */
 async function assemble(): Promise<TournamentsBundle> {
+	const bundle = await assembleBundle();
+	const events = bundle.events.length;
+	const state = bundle.degraded ? (events > 0 ? 'cache' : 'empty') : 'fresh';
+	const sources = bundle.sources.map((source) => `${source.label}${source.ok ? '' : '（不可用）'}`).join(' / ');
+	await reportSource('tournaments', '赛事日历', state, `${events} 个赛事，${bundle.live.length} 场进行中；来源：${sources}`);
+	return bundle;
+}
+
+async function assembleBundle(): Promise<TournamentsBundle> {
 	const updatedAt = new Date().toISOString();
 	const nowSec = Math.floor(Date.now() / 1000);
 
