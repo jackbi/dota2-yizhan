@@ -1,3 +1,5 @@
+import { toArticleContent } from './articleHtml';
+
 const LIST_BASE = 'https://www.dota2.com.cn/news/gamepost';
 
 export interface PatchUpdate {
@@ -59,31 +61,6 @@ function articleIdFromHref(href: string): string {
 	return href.match(/\/(\d+)\.html$/)?.[1] ?? href;
 }
 
-/** 抽取官方详情页 <div class="content"> 的正文 HTML，去掉内联样式。 */
-function extractContent(html: string): string {
-	const openTag = '<div class="content">';
-	const start = html.indexOf(openTag);
-	if (start < 0) return '';
-	const contentStart = start + openTag.length;
-	let depth = 1;
-	const re = /<\/?div\b[^>]*>/gi;
-	re.lastIndex = contentStart;
-	let end = html.length;
-	let m: RegExpExecArray | null;
-	while ((m = re.exec(html))) {
-		if (m[0][1] === '/') {
-			depth--;
-			if (depth === 0) {
-				end = m.index;
-				break;
-			}
-		} else if (/<div[ >]/i.test(m[0])) {
-			depth++;
-		}
-	}
-	return html.slice(contentStart, end);
-}
-
 /**
  * 构建期抓取官方文章，返回清洗后的正文 HTML（去脚本/样式/内联样式）。
  * 官方文章无 CORS 头，仅能在 Node 构建期请求。
@@ -91,13 +68,5 @@ function extractContent(html: string): string {
 export async function fetchArticle(url: string): Promise<string> {
 	const res = await fetch(url);
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
-	const html = (await res.text())
-		.replace(/<script[\s\S]*?<\/script>/gi, '')
-		.replace(/<style[\s\S]*?<\/style>/gi, '')
-		.replace(/<!--[\s\S]*?-->/g, '')
-		.replace(/\sstyle="[^"]*"/g, '')
-		.replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
-		.replace(/\s(?:contenteditable|tabindex|draggable)\s*=\s*"[^"]*"/gi, '')
-		.replace(/http:\/\/(www\.|cdn\.|img\.)?dota2\.com\.cn/gi, (m) => 'https://' + m.replace(/^http:\/\//, ''));
-	return extractContent(html);
+	return toArticleContent(await res.text());
 }
