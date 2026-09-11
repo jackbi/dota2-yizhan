@@ -29,6 +29,7 @@ if (existsSync(ENV_FILE)) {
 const HEALTH_DIR = new URL('.cache/health/', import.meta.url);
 const STATE_LABEL = { fresh: '联网抓取', cache: '使用缓存', empty: '没有数据' };
 
+/** @type {import('astro').AstroIntegration} */
 const dataSourceReport = {
 	name: 'data-source-report',
 	hooks: {
@@ -43,6 +44,7 @@ const dataSourceReport = {
 			} catch {
 				return;
 			}
+			/** @type {{ label: string; state: 'fresh' | 'cache' | 'empty'; detail: string }[]} */
 			const records = [];
 			for (const name of names) {
 				try {

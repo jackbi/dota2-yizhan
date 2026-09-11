@@ -35,7 +35,10 @@ const YOUDAO_AES_KEY = 'ydsecret://query/key/B*RGygVywfNBwpmBaZg*WT7SIOUP2T0C9WH
 const YOUDAO_AES_IV = 'ydsecret://query/iv/C@lZe2YzHtZ2CYgaXKSVfsb7Y4QWHjITPPZ0nQp87fBeJ!Iv6v^6fvi2WN@bYpJ4';
 
 function md5(value: string, encoding: 'hex' | 'buffer' = 'hex'): string | Buffer {
-	return createHash('md5').update(value).digest(encoding);
+	const hash = createHash('md5').update(value);
+	// 取原始字节要用无参的 digest()：'buffer' 不是合法编码，
+	// Node 目前恰好按无参处理，但不该依赖这个未定义行为。
+	return encoding === 'buffer' ? hash.digest() : hash.digest('hex');
 }
 
 function providerName(): 'azure' | 'youdao' {

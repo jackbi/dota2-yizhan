@@ -428,10 +428,13 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 			fetchChaofan(hasFallback ? 8_000 : undefined),
 			fetchOpenDotaLive(),
 		]);
-		opendotaOk = liveRes.status === 'fulfilled';
-		calendarMatches = calendarRes.status === 'fulfilled' ? calendarRes.value : [];
+		// 先落到局部常量再取 value：把结果存进布尔变量后 TypeScript 就无法收窄联合类型了。
+		const calendarOk = calendarRes.status === 'fulfilled';
+		const liveOk = liveRes.status === 'fulfilled';
+		opendotaOk = liveOk;
+		calendarMatches = calendarOk ? calendarRes.value : [];
 		calendarFromChaofan = calendarMatches.length > 0;
-		opendotaLive = opendotaOk ? liveRes.value : [];
+		opendotaLive = liveOk ? liveRes.value : [];
 
 		if (calendarMatches.length === 0) {
 			// 主源不可用：赛果先留着，既能刷新缓存日历，也是没有缓存时的兜底日历。

@@ -276,7 +276,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			sightDay: h.sight_range_day,
 			sightNight: h.sight_range_night,
 		},
-		abilities: (h.abilities ?? []).map((a) => ({
+		abilities: (h.abilities ?? []).map((a: any) => ({
 			name: a.name,
 			nameLoc: a.name_loc,
 			desc: resolveTemplate(stripHtml(a.desc_loc), specialMap),
@@ -294,7 +294,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			shardWebm: normalizeCdn(a.video_shard_webm, h.name),
 			shardPoster: normalizeCdn(a.video_shard_jpg || a.img, h.name),
 		})),
-		talents: (h.talents ?? []).map((t) => ({
+		talents: (h.talents ?? []).map((t: any) => ({
 			id: t.id,
 			key: t.name,
 			name: t.name_loc,
