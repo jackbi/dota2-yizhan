@@ -26,6 +26,7 @@ pnpm preview    # 预览 dist/
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
 | `.cache/translate/` | 机器翻译结果 | 永久 |
 | `.cache/tournaments.json` | 超凡电竞赛事日历 | 每次拿到完整日历就覆盖 |
+| `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
 ### `.cache/` 不进仓库
 
@@ -38,6 +39,20 @@ pnpm preview    # 预览 dist/
 下打开页面就是秒开。
 
 部署同理：在 CI 上按 `.cache` 做构建缓存（或加一个预热步骤），不要把缓存提交进仓库。
+
+### 构建结束的数据源汇总
+
+抓取是"拿不到就不展示"的静默降级，所以每次 `pnpm build` 结束时会打印一份汇总，
+说明每个源这一轮是新抓的、吃缓存的，还是根本没拿到：
+
+```
+[data-source-report] 数据源（6）：
+[data-source-report]   STRATZ 英雄数据 — 没有数据：请求未拿到数据（限流、挑战页或接口异常）
+[data-source-report]   赛事日历 — 使用缓存：5 个赛事，1 场进行中；来源：超凡电竞（不可用） / OpenDota（本地缓存）
+[data-source-report]   比赛阵容与 BP — 联网抓取：64 场已开赛比赛匹配到 8 场 Valve 比赛（STRATZ 8 场）
+```
+
+没有数据的源排在最前面。原始记录在 `.cache/health/`，dev 下不会自动汇总，可以直接翻。
 
 ## 环境变量
 
