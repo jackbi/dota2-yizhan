@@ -151,6 +151,14 @@ const SCORE_STATUS =
 
 		<p class="mt-12 border-t border-line pt-6 text-xs text-faint">
 			数据更新于 {formatIso(updatedAt)} · 来源：{sources.map((s) => s.label).join(' / ')}
+			{event.sourceUrl ? (
+				<>
+					{' · '}
+					<a href={event.sourceUrl} target="_blank" rel="noopener noreferrer" class="underline-offset-2 hover:text-gold hover:underline">
+						在 Liquipedia 查看本站赛事 ↗
+					</a>
+				</>
+			) : null}
 			{degraded ? ' （实时数据源暂不可用，展示的是降级结果）' : ''}
 		</p>
 	</section>

@@ -50,7 +50,7 @@ function initial(name: string): string {
 	return name.trim().slice(0, 2).toUpperCase();
 }
 
-/** 按超凡的主客队把选手拆到两侧，0 = 主队，1 = 客队。 */
+/** 按日历的主客队把选手拆到两侧，0 = 主队，1 = 客队。 */
 const draftSides = draft
 	? [0, 1].map((side) => ({
 			side,
@@ -175,7 +175,15 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 				</div>
 				<div class="rounded-xl border border-line bg-surface px-4 py-3">
 					<dt class="text-xs text-faint">数据来源</dt>
-					<dd class="mt-1 text-sm text-cream">{dataSourceLabel(match.source)}</dd>
+					<dd class="mt-1 text-sm text-cream">
+						{match.sourceUrl ? (
+							<a href={match.sourceUrl} target="_blank" rel="noopener noreferrer" class="underline-offset-2 hover:text-gold hover:underline">
+								{dataSourceLabel(match.source)} ↗
+							</a>
+						) : (
+							dataSourceLabel(match.source)
+						)}
+					</dd>
 				</div>
 			</dl>
 		</section>

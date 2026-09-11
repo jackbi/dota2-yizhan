@@ -36,7 +36,7 @@ export interface NewsCardItem {
 }
 
 /** 赛事数据的来源，用于在页面上标注出处。 */
-export type DataSource = 'chaofan' | 'opendota' | 'seed';
+export type DataSource = 'liquipedia' | 'opendota' | 'seed';
 
 /** postponed 表示延期/中断的对局；赛事层面的 completed 判定会忽略它。 */
 export type MatchStatus = 'live' | 'upcoming' | 'completed' | 'postponed';
@@ -62,6 +62,8 @@ export interface EsportsMatch {
 	away: TeamRef;
 	winner?: 'home' | 'away';
 	source: DataSource;
+	/** 数据源里对应的页面地址，用于署名回链。 */
+	sourceUrl?: string;
 }
 
 /** 一个赛事/联赛，聚合了它的全部对阵与参赛队伍。 */
@@ -76,6 +78,8 @@ export interface EsportsEvent {
 	matches: EsportsMatch[];
 	teams: TeamRef[];
 	source: DataSource;
+	/** 数据源里对应的页面地址，用于署名回链。 */
+	sourceUrl?: string;
 }
 
 export interface DataSourceStatus {

@@ -13,7 +13,7 @@ import { fetchMatchDetail as fetchStratzMatch, fetchTeamMatches, stratzFetchCoun
 import type { StratzMatch } from './stratzApi';
 
 /**
- * 比赛阵容层：把超凡的比赛对到 Valve 的比赛上，取回 BP 与选手英雄。
+ * 比赛阵容层：把日历里的比赛对到 Valve 的比赛上，取回 BP 与选手英雄。
  *
  * 两个数据源的分工：
  * - 队伍解析只走 OpenDota（`/api/teams` + `proMatches` 的队名索引命中率更高，
@@ -29,7 +29,7 @@ export interface MatchDraftHero {
 	heroId: number;
 	name: string;
 	img: string;
-	/** 0 = 超凡主队，1 = 客队；已按队名对齐，不依赖天辉/夜魇。 */
+	/** 0 = 主队，1 = 客队；已按队名对齐，不依赖天辉/夜魇。 */
 	team: number;
 }
 
@@ -156,7 +156,7 @@ async function findCandidates(home: OdTeam, away: OdTeam, startTime: number): Pr
 }
 
 /**
- * 找出超凡这场比赛对应的 Valve 比赛：双方队伍 id 都要出现在明细里，
+ * 找出日历里这场比赛对应的 Valve 比赛：双方队伍 id 都要出现在明细里，
  * 开赛时间也要落在窗口内，避免把同一对队伍的不同场次对错。
  */
 async function resolveMatch(match: EsportsMatch, heroes: Map<number, HeroInfo>): Promise<MatchDraft | null> {
@@ -172,7 +172,7 @@ async function resolveMatch(match: EsportsMatch, heroes: Map<number, HeroInfo>):
 		// 用队伍 id 校验：两个源的队名写法可能不同（NaVi / Natus Vincere），按名字比会误判。
 		const ids = new Set([detail.radiantTeamId, detail.direTeamId]);
 		if (!ids.has(home.team_id) || !ids.has(away.team_id)) continue;
-		// 超凡的主队不一定是天辉，按队伍 id 对齐，避免两边阵容颠倒。
+		// 主队不一定是天辉，按队伍 id 对齐，避免两边阵容颠倒。
 		return toDraft(detail, detail.radiantTeamId === home.team_id, heroes);
 	}
 	return null;
@@ -191,7 +191,7 @@ let fetchBaseline: number | null = null;
 
 /**
  * 为一批比赛补齐 BP 与选手英雄。只处理已开赛/已结束的比赛（未开赛没有 BP），
- * 返回的 Map 以超凡的比赛 id 为键，取不到的比赛直接没有条目。
+ * 返回的 Map 以日历的比赛 id 为键，取不到的比赛直接没有条目。
  */
 export async function loadMatchDrafts(matches: EsportsMatch[]): Promise<Map<string, MatchDraft>> {
 	const out = new Map<string, MatchDraft>();

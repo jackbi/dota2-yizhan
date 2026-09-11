@@ -7,7 +7,7 @@ import { fetchHeroList } from './heroApi';
  * OpenDota 数据层：队伍解析、阵容名单，以及比赛候选与明细。
  *
  * 为什么是"尽力而为"：
- * - 超凡的公开接口只有赛事日历，没有阵容/英雄，队伍与比赛只能按"队名/队标 + 开赛时间"推断；
+ * - 赛事日历来自 Liquipedia，只有赛程没有阵容/英雄，队伍与比赛只能按"队名/队标 + 开赛时间"推断；
  * - 队名索引来自 `/api/teams` 与 `proMatches`，三线队伍常常不在其中，命中不了就如实不展示；
  * - 所有请求都落盘缓存，冷启动需要一两分钟，之后构建只拉增量；
  * - 任何一步失败都只意味着"这队/这场没有数据"，不会影响构建。
@@ -21,7 +21,7 @@ const CACHE_DIR = path.join(process.cwd(), '.cache', 'opendota');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
 const DAY_SECONDS = 24 * 3600;
-/** 超凡与 OpenDota 的开赛时间允许的偏差，也是比赛配对时的校验窗口。 */
+/** 日历与 OpenDota 的开赛时间允许的偏差，也是比赛配对时的校验窗口。 */
 export const MATCH_WINDOW_SECONDS = 12 * 3600;
 
 // ---------------------------------------------------------------- 请求与缓存
@@ -220,7 +220,7 @@ async function getTeamIndex(): Promise<Map<string, OdTeam>> {
 }
 
 /**
- * 把超凡队伍解析成 OpenDota 队伍。
+ * 把日历里的队伍解析成 OpenDota 队伍。
  * 队名一致可以直接采信；只对得上队标时必须回查一次，短队标撞名的情况很多。
  */
 export async function resolveTeam(team: TeamRef): Promise<OdTeam | null> {

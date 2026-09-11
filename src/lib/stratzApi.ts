@@ -5,7 +5,7 @@ import { reportSource } from './dataHealth';
 /**
  * STRATZ 数据层（api.stratz.com/graphql）。
  *
- * 分工：OpenDota 负责把超凡的队名解析成 Valve 队伍 id（它的队名索引命中率更高），
+ * 分工：OpenDota 负责把日历里的队名解析成 Valve 队伍 id（它的队名索引命中率更高），
  * STRATZ 负责取 BP、选手明细与英雄数据——两者共用 Valve 的比赛 id 空间，
  * 所以同一场比赛可以无缝换源，而 STRATZ 的限速宽得多。
  *
