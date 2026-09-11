@@ -14,15 +14,22 @@ export interface Streamer {
 	description: string;
 }
 
-export interface NewsItem {
+/** 新闻列表卡片的展示数据，官方新闻与站内小道消息共用一套结构。 */
+export interface NewsCardItem {
 	id: string;
 	title: string;
 	summary: string;
-	source: string;
-	category: 'news' | 'rumor';
+	/** YYYY-MM-DD */
 	date: string;
-	tag: string;
-	readTime: string;
+	img?: string;
+	/** 栏目标签，展示用 */
+	tags: string[];
+	/** 右下角的来源说明 */
+	meta: string;
+	/** 站内详情页地址；小道消息暂无详情页，留空即不可点击 */
+	href?: string;
+	/** 是否为未经证实的社区消息 */
+	rumor?: boolean;
 	featured?: boolean;
 }
 

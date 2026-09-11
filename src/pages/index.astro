@@ -6,11 +6,20 @@ import NewsCard from '../components/NewsCard.astro';
 import PatchCard from '../components/PatchCard.astro';
 import TournamentCard from '../components/TournamentCard.astro';
 import { LIVE_NOW, STREAMERS } from '../data/site';
-import { NEWS } from '../data/news';
+import { RUMOR_NEWS } from '../data/news';
 import { PATCHES } from '../data/patches';
 import { getTournaments } from '../lib/tournamentsApi';
+import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
 
-const featuredNews = NEWS.filter((n) => n.featured).slice(0, 2);
+/** 首页只放两条：优先官方新闻，取不到（离线且无缓存）时退回落地的社区消息。 */
+let latestNews: import('../data/types').NewsCardItem[] = [];
+try {
+	const official = await fetchOfficialNews();
+	latestNews = official.slice(0, 2).map((item) => toNewsCard(item, true));
+} catch {
+	latestNews = [];
+}
+const featuredNews = latestNews.length > 0 ? latestNews : RUMOR_NEWS.slice(0, 2);
 const latestPatch = PATCHES[0];
 
 const bundle = await getTournaments();
@@ -105,9 +114,9 @@ const FEATURES = [
 
 	<!-- News preview -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-		<SectionHeader eyebrow="资讯" title="最新新闻 & 小道消息" href="/news" linkText="全部资讯" />
+		<SectionHeader eyebrow="资讯" title="最新资讯" href="/news" linkText="全部资讯" />
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-			{featuredNews.map((n) => <NewsCard item={n} featured />)}
+			{featuredNews.map((n) => <NewsCard item={n} />)}
 		</div>
 	</section>
 

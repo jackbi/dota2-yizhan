@@ -1,37 +1,59 @@
 ---
-import type { NewsItem } from '../data/types';
+import type { NewsCardItem } from '../data/types';
 
 interface Props {
-	item: NewsItem;
-	featured?: boolean;
+	item: NewsCardItem;
 }
 
-const { item, featured = false } = Astro.props;
-const isRumor = item.category === 'rumor';
+const { item } = Astro.props;
+// 官方新闻有站内详情页，整卡可点；小道消息暂无详情，渲染成不可点的卡片。
+const Tag = item.href ? 'a' : 'article';
 ---
 
-<article
+<Tag
+	href={item.href}
 	class:list={[
-		'group flex flex-col rounded-2xl border p-5 transition',
-		featured
+		'group flex gap-4 rounded-2xl border p-4 transition',
+		item.featured
 			? 'border-dota/40 bg-gradient-to-br from-dota/10 to-surface hover:border-dota'
 			: 'border-line bg-surface hover:border-dota/40 hover:bg-surface-2',
 	]}
 >
-	<div class="flex items-center gap-2 text-xs">
-		<span class:list={['rounded px-2 py-0.5 font-semibold', isRumor ? 'bg-gold/15 text-gold' : 'bg-dota/15 text-dota-light']}>
-			{isRumor ? '小道消息' : '官方信息'}
-		</span>
-		<span class="text-faint">{item.tag}</span>
-		<span class="ml-auto text-faint">{item.date}</span>
+	{
+		item.img ? (
+			<img
+				src={item.img}
+				alt=""
+				loading="lazy"
+				referrerpolicy="no-referrer"
+				class="h-24 w-32 shrink-0 rounded-xl border border-line object-cover transition group-hover:border-dota/40 sm:h-28 sm:w-40"
+			/>
+		) : (
+			<span class="flex h-24 w-32 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 font-display text-lg text-faint sm:h-28 sm:w-40">
+				{item.rumor ? '小道' : '资讯'}
+			</span>
+		)
+	}
+
+	<div class="flex min-w-0 flex-1 flex-col">
+		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+			<span class:list={['rounded px-2 py-0.5 font-semibold', item.rumor ? 'bg-gold/15 text-gold' : 'bg-dota/15 text-dota-light']}>
+				{item.rumor ? '小道消息' : '官方信息'}
+			</span>
+			{item.tags.map((tag) => <span class="text-faint">{tag}</span>)}
+			<span class="ml-auto shrink-0 text-faint">{item.date}</span>
+		</div>
+		<h3 class="mt-2 line-clamp-2 font-display leading-snug transition group-hover:text-dota-light">{item.title}</h3>
+		<p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted">{item.summary}</p>
+		<div class="mt-auto flex items-center gap-2 pt-3 text-xs text-faint">
+			<span class="truncate">{item.meta}</span>
+			{
+				item.href ? (
+					<svg class="ml-auto h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-gold" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+						<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+					</svg>
+				) : null
+			}
+		</div>
 	</div>
-	<h3 class:list={['mt-3 font-display leading-snug', featured ? 'text-lg' : 'text-base', 'transition group-hover:text-dota-light']}>
-		{item.title}
-	</h3>
-	<p class="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{item.summary}</p>
-	<div class="mt-4 flex items-center gap-2 border-t border-line pt-3 text-xs text-faint">
-		<span>{item.source}</span>
-		<span aria-hidden="true">·</span>
-		<span>{item.readTime}</span>
-	</div>
-</article>
+</Tag>
