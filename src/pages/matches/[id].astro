@@ -3,7 +3,6 @@ import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
 import type { EsportsMatch } from '../../data/types';
 import { formatClock, formatDayWithWeekday, formatMatchTime } from '../../lib/format';
-import type { MatchDraft } from '../../lib/matchDraft';
 import { loadMatchDrafts } from '../../lib/matchDraft';
 import { MATCH_STATUS_META } from '../../lib/statusMeta';
 import { getTournamentIndex, headToHead, relatedMatches } from '../../lib/tournamentIndex';
@@ -17,13 +16,10 @@ interface Props {
 	related: EsportsMatch[];
 	/** 两队在当前数据窗口内的交手记录。 */
 	h2h: EsportsMatch[];
-	/** 该场的 BP 与选手数据；对不上 Valve 比赛时为 null。 */
-	draft: MatchDraft | null;
 }
 
 export async function getStaticPaths() {
 	const index = await getTournamentIndex();
-	const drafts = await loadMatchDrafts(index.matchList);
 	return index.matchList.map((match) => ({
 		params: { id: match.id },
 		props: {
@@ -31,12 +27,17 @@ export async function getStaticPaths() {
 			eventExists: index.eventIds.has(match.eventId),
 			related: relatedMatches(match, index.matchList),
 			h2h: headToHead(match, index.matchList),
-			draft: drafts.get(match.id) ?? null,
 		},
 	}));
 }
 
-const { match, eventExists, related, h2h, draft } = Astro.props;
+const { match, eventExists, related, h2h } = Astro.props;
+/**
+ * 阵容只取本场。放在页面里而不是 `getStaticPaths`：dev 下动态路由只渲染被访问的
+ * 那一页，写进 props 就等于每打开一场比赛都先把全部比赛的阵容拉一遍。
+ * 构建时逐页执行，网络开销与之前一致。
+ */
+const draft = (await loadMatchDrafts([match])).get(match.id) ?? null;
 const now = Math.floor(Date.now() / 1000);
 const st = MATCH_STATUS_META[match.status];
 
