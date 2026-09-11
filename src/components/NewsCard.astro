@@ -6,7 +6,7 @@ interface Props {
 }
 
 const { item } = Astro.props;
-// 官方新闻有站内详情页，整卡可点；小道消息暂无详情，渲染成不可点的卡片。
+// 有站内详情页的整卡可点，否则渲染成不可点的卡片。
 const Tag = item.href ? 'a' : 'article';
 ---
 
@@ -30,16 +30,14 @@ const Tag = item.href ? 'a' : 'article';
 			/>
 		) : (
 			<span class="flex h-24 w-32 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 font-display text-lg text-faint sm:h-28 sm:w-40">
-				{item.rumor ? '小道' : '资讯'}
+				资讯
 			</span>
 		)
 	}
 
 	<div class="flex min-w-0 flex-1 flex-col">
 		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-			<span class:list={['rounded px-2 py-0.5 font-semibold', item.rumor ? 'bg-gold/15 text-gold' : 'bg-dota/15 text-dota-light']}>
-				{item.rumor ? '小道消息' : '官方信息'}
-			</span>
+			<span class="rounded bg-dota/15 px-2 py-0.5 font-semibold text-dota-light">官方信息</span>
 			{item.tags.map((tag) => <span class="text-faint">{tag}</span>)}
 			<span class="ml-auto shrink-0 text-faint">{item.date}</span>
 		</div>

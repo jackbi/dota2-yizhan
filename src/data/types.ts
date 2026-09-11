@@ -14,7 +14,7 @@ export interface Streamer {
 	description: string;
 }
 
-/** 新闻列表卡片的展示数据，官方新闻与站内小道消息共用一套结构。 */
+/** 新闻列表卡片的展示数据。 */
 export interface NewsCardItem {
 	id: string;
 	title: string;
@@ -26,10 +26,8 @@ export interface NewsCardItem {
 	tags: string[];
 	/** 右下角的来源说明 */
 	meta: string;
-	/** 站内详情页地址；小道消息暂无详情页，留空即不可点击 */
+	/** 站内详情页地址 */
 	href?: string;
-	/** 是否为未经证实的社区消息 */
-	rumor?: boolean;
 	featured?: boolean;
 }
 
