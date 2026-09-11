@@ -25,7 +25,8 @@ pnpm preview    # 预览 dist/
 | `.cache/opendota/` | 队伍索引、职业比赛、阵容名单 | 6 小时 – 7 天 |
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
 | `.cache/translate/` | 机器翻译结果 | 永久 |
-| `.cache/tournaments.json` | 超凡电竞赛事日历 | 每次拿到完整日历就覆盖 |
+| `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
+| `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
 ### `.cache/` 不进仓库
@@ -64,7 +65,16 @@ pnpm preview    # 预览 dist/
 | `YOUDAO_COOKIE` | 否 | 覆盖有道翻译的默认访客 cookie |
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
+| `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
+
+## 赛事数据来自 Liquipedia
+
+赛程与赛果取自 Liquipedia 的 [`Liquipedia:Matches`](https://liquipedia.net/dota2/Liquipedia:Matches)
+（原来的超凡电竞接口已不再响应）。使用它需要遵守
+[Liquipedia API 条款](https://liquipedia.net/api-terms-of-use)：带能识别调用方的 User-Agent、
+控制请求频率、署名并回链。代码里只在一页上取一次数据（30 分钟缓存），
+页面上也保留了到 Liquipedia 的链接——改动这块时请一并保留。
 
 ## 提交规范
 
