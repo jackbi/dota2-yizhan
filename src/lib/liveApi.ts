@@ -27,8 +27,11 @@ import type { LiveSnapshot, LiveState, LiveStatus, Platform } from '../data/type
  * `r.jina.ai` 读取代理（`LIVE_PROXY` 控制：auto / jina / off）。两条路都会偶发失败，
  * 所以各重试若干次。
  *
- * 主接口失败时，退一步去读房间页标题，只用来判断"这个房间还是不是本人"：
- * 标题对上就老实说状态未知，标题对不上才说房间已由他人接手。**任何情况下都不编状态**。
+ * 主接口失败时，退一步只读房间页标题，用来说明"这个房间号现在显示的是谁"，状态仍标未知。
+ *
+ * **不下"房间换人"的结论。** 昵称对不上可能只是改了账号名——狗哥的 312407 现在叫「叁肆叁肆」，
+ * 之前据昵称断言"房间已由他人使用"是错的。所以昵称只原样展示，判断交给读者。
+ * 同理，曾经据 `open.douyucdn.cn` 的房主字段断言"房间已注销"，也是错的。**任何情况下都不编状态。**
  */
 
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'live');
@@ -210,15 +213,15 @@ async function writeCache(file: string, status: LiveStatus): Promise<void> {
 
 // ---------------------------------------------------------------- 单个房间
 
-/** 平台没给昵称时不判定为易主——不能凭缺失的信息下结论。 */
-function ownerMatches(ownerName: string | undefined, keys: string[]): boolean {
-	if (!ownerName) return true;
+/** 平台没给昵称时不标记为"对不上"——不能凭缺失的信息下结论。 */
+function ownerUnrecognized(ownerName: string | undefined, keys: string[]): boolean {
+	if (!ownerName) return false;
 	const lower = ownerName.toLowerCase();
-	return keys.some((key) => lower.includes(key.toLowerCase()));
+	return !keys.some((key) => lower.includes(key.toLowerCase()));
 }
 
 function unknownStatus(note: string): LiveStatus {
-	return { state: 'unknown', roomRetaken: false, note, fetchedAt: new Date().toISOString() };
+	return { state: 'unknown', ownerUnrecognized: false, note, fetchedAt: new Date().toISOString() };
 }
 
 async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
@@ -237,47 +240,24 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 	const parsed = text ? parseByPlatform(room.platform, extractJson(text)) : null;
 
 	if (parsed) {
-		if (ownerMatches(parsed.ownerName, room.ownerMatch)) {
-			const status: LiveStatus = {
-				state: parsed.state,
-				ownerName: parsed.ownerName,
-				roomName: parsed.roomName,
-				roomRetaken: false,
-				fetchedAt: new Date().toISOString(),
-			};
-			await writeCache(file, status);
-			return status;
-		}
-		// 房主对不上：以平台返回为准，但只陈述"房间现在归谁"，不推测对方何时接手。
+		// 昵称对不上只作为提示，不改状态、也不下"房间换人"的结论。
 		const status: LiveStatus = {
-			state: 'unknown',
+			state: parsed.state,
 			ownerName: parsed.ownerName,
-			roomRetaken: true,
-			note: `该房间现由「${parsed.ownerName}」使用`,
+			roomName: parsed.roomName,
+			ownerUnrecognized: ownerUnrecognized(parsed.ownerName, room.ownerMatch),
 			fetchedAt: new Date().toISOString(),
 		};
 		await writeCache(file, status);
 		return status;
 	}
 
-	// 主接口没通：退一步只看房间页标题，判断房间还是不是本人，状态仍标未知。
+	// 主接口没通：退一步只读房间页标题，确认房间号还有人在用，状态仍标未知。
 	if (room.platform === 'douyu') {
 		const page = await fetchText(`https://www.douyu.com/${room.roomId}`);
 		const pageOwner = page ? pageOwnerFromTitle(room.platform, page) : undefined;
-		if (pageOwner && !ownerMatches(pageOwner, room.ownerMatch)) {
-			const status: LiveStatus = {
-				state: 'unknown',
-				ownerName: pageOwner,
-				roomRetaken: true,
-				note: `该房间现由「${pageOwner}」使用`,
-				fetchedAt: new Date().toISOString(),
-			};
-			await writeCache(file, status);
-			return status;
-		}
 		if (pageOwner) {
-			// 房间还是本人的，只是这次没拿到开播状态——不能因此说房间没了。
-			return unknownStatus('房间确认为本人所有，但本次未取到开播状态');
+			return unknownStatus(`房间页显示的主播是「${pageOwner}」，但本次未取到开播状态`);
 		}
 	}
 
@@ -305,16 +285,16 @@ async function loadAll(): Promise<LiveSnapshot> {
 	});
 
 	const counts = new Map<LiveState, number>();
-	let retaken = 0;
+	let unrecognized = 0;
 	for (const status of Object.values(statuses)) {
 		counts.set(status.state, (counts.get(status.state) ?? 0) + 1);
-		if (status.roomRetaken) retaken += 1;
+		if (status.ownerUnrecognized) unrecognized += 1;
 	}
 
 	const parts = (['live', 'replay', 'offline', 'unknown'] as LiveState[])
 		.filter((state) => counts.has(state))
 		.map((state) => `${LIVE_STATE_LABEL[state]} ${counts.get(state)}`);
-	if (retaken > 0) parts.push(`房间已换人 ${retaken}`);
+	if (unrecognized > 0) parts.push(`平台昵称与旧叫法不同 ${unrecognized}`);
 
 	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0);
 	const fetchNote = networkFetches > 0 ? `，联网抓取 ${networkFetches} 次${viaProxy > 0 ? `（代理 ${viaProxy}）` : ''}` : '';

@@ -21,7 +21,7 @@ export const PLATFORM_META: Record<Platform, { label: string; color: string; sho
 
 /**
  * 直播间地址。OB 名单与房间号见 `src/data/ob.ts`——那里只收录核实过的房间，
- * 并且会在构建期用平台接口自查房间是否已注销或易主。
+ * 开播状态由 `src/lib/liveApi.ts` 在构建期抓取。
  */
 export function roomUrl(platform: Platform, roomId: string): string {
 	if (platform === 'douyu') return `https://www.douyu.com/${roomId}`;

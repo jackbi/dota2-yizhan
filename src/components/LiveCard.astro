@@ -10,8 +10,7 @@ interface Props {
 
 const { member: m, live } = Astro.props;
 const meta = PLATFORM_META[m.platform];
-const retaken = live?.roomRetaken ?? false;
-const label = retaken ? '房间已换人' : LIVE_STATE_LABEL[live?.state ?? 'unknown'];
+const label = LIVE_STATE_LABEL[live?.state ?? "unknown"];
 ---
 
 <a
@@ -38,7 +37,7 @@ const label = retaken ? '房间已换人' : LIVE_STATE_LABEL[live?.state ?? 'unk
 			<span
 				class:list={[
 					'h-1.5 w-1.5 rounded-full',
-					live?.state === 'live' && !retaken
+					live?.state === 'live'
 						? 'animate-pulse bg-[#22c55e]'
 						: live?.state === 'replay'
 							? 'bg-gold'

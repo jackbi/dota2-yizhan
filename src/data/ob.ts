@@ -173,7 +173,9 @@ export const OB_MEMBERS: ObMember[] = [
 		aliases: ['狗哥', '狗妹', '烟头狗', '垃圾狗', '妇女之友'],
 		platform: 'douyu',
 		roomId: '312407',
-		ownerMatch: ['sansheng', '王兆辉', '狗哥'],
+		// 312407 是 2019 年斗鱼官方稿里给狗哥的房间，账号后来改名叫「叁肆叁肆」——
+		// 房间号没变，只是昵称对不上旧叫法了。
+		ownerMatch: ['sansheng', '王兆辉', '狗哥', '叁肆叁肆'],
 		membership: '正式成员',
 		role: '五号位 Support',
 		achievement: 'TI4 冠军（Newbee）',

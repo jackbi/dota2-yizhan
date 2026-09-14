@@ -12,7 +12,7 @@ const { members, snapshot } = Astro.props;
 const statusOf = (m: ObMember) => snapshot.statuses[`${m.platform}:${m.roomId}`];
 const isLive = (m: ObMember) => {
 	const s = statusOf(m);
-	return s?.state === 'live' && !s.roomRetaken;
+	return s?.state === 'live';
 };
 const defaultIds = members.filter(isLive).map((m) => m.id);
 ---
@@ -115,7 +115,7 @@ const defaultIds = members.filter(isLive).map((m) => m.id);
 											live ? 'animate-pulse bg-[#22c55e]' : s?.state === 'replay' ? 'bg-gold' : 'bg-zinc-500',
 										]}
 									/>
-									{m.name} · {s?.roomRetaken ? '房间信息有变' : LIVE_STATE_LABEL[s?.state ?? 'unknown']}
+									{m.name} · {LIVE_STATE_LABEL[s?.state ?? 'unknown']}
 								</span>
 								<span class="text-xs text-faint">{meta.label} · 房间 {m.roomId}</span>
 							</div>
@@ -134,8 +134,10 @@ const defaultIds = members.filter(isLive).map((m) => m.id);
 							</a>
 						</div>
 						{
-							s?.roomRetaken && s.note && (
-								<p class="mt-1.5 text-xs text-gold">{m.name}：{s.note}。</p>
+							s?.ownerUnrecognized && s.ownerName && (
+								<p class="mt-1.5 text-xs text-faint">
+									{m.name}：平台当前昵称「{s.ownerName}」，与常用叫法不同，可能只是改过名。
+								</p>
 							)
 						}
 					</div>

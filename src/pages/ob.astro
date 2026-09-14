@@ -8,8 +8,8 @@ import { formatIso } from '../lib/format';
 const snapshot = await fetchLiveSnapshot();
 const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platform}:${m.roomId}`];
 
-const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live' && !liveOf(m)?.roomRetaken).length;
-const retakenRooms = OB_MEMBERS.filter((m) => liveOf(m)?.roomRetaken);
+const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live').length;
+const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 ---
 
 <Layout
@@ -41,10 +41,10 @@ const retakenRooms = OB_MEMBERS.filter((m) => liveOf(m)?.roomRetaken);
 			开播状态抓取于 <span class="text-cream/80">{formatIso(snapshot.at)}</span>（东八区）。本站是静态站点，
 			状态是<strong class="text-cream/80">构建那一刻的快照</strong>，之后的变化请以直播间页面为准。
 			{
-				retakenRooms.length > 0 && (
-					<span class="text-gold">
-						本次构建发现 {retakenRooms.length} 个房间已由他人使用（
-						{retakenRooms.map((m) => `${m.name} ${m.roomId}`).join('、')}），已在其卡片上标注。
+				unrecognized.length > 0 && (
+					<span class="text-faint">
+						另有 {unrecognized.length} 个房间的平台昵称与常用叫法不同（
+						{unrecognized.map((m) => `${m.name} ${m.roomId}`).join('、')}），可能只是改过账号名。
 					</span>
 				)
 			}
@@ -69,13 +69,13 @@ const retakenRooms = OB_MEMBERS.filter((m) => liveOf(m)?.roomRetaken);
 				</li>
 				<li>
 					<span class="text-cream">开播状态：</span>
-					构建期分别请求斗鱼与虎牙的房间接口，再用返回的房主昵称自查房间是否仍属于本人。
-					房主昵称对不上时才会说房间已由他人使用；抓不到状态就显示「状态未知」，不做推测。
+					构建期分别请求斗鱼与虎牙的房间接口，直接采用平台返回的开播状态与直播间标题。
+					抓不到就显示「状态未知」，不做推测。
 				</li>
 				<li>
-					<span class="text-cream">房间号会变：</span>
-					主播转平台或换房间后，旧房间号可能由他人接手。页面上的「房间已换人」是构建期拿平台返回的房主昵称核对出来的，
-					并不代表名单本身有误。
+					<span class="text-cream">关于昵称：</span>
+					平台昵称与常用叫法不同时（例如狗哥的房间现在显示「叁肆叁肆」）会原样标出来，
+					但不据此判断房间归属——改个账号名就会对不上。
 				</li>
 				<li>
 					<span class="text-cream">待补充：</span>

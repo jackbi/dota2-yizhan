@@ -17,7 +17,7 @@ export interface ObMember {
 	roomId: string;
 	/**
 	 * 平台接口返回的房主昵称里应当出现的关键词（小写比较）。
-	 * 用于构建期自查房间是否已注销或易主——房间号会随主播转平台而失效。
+	 * 用于判断平台昵称是否与常用叫法对不上（仅作提示，不下结论）。
 	 */
 	ownerMatch: string[];
 	/**
@@ -39,13 +39,19 @@ export type LiveState = 'live' | 'replay' | 'offline' | 'unknown';
 /** 一个直播间在构建期的实际状态。 */
 export interface LiveStatus {
 	state: LiveState;
-	/** 平台返回的房主昵称，用来自查房间是否仍属于本人 */
+	/** 平台返回的房主昵称 */
 	ownerName?: string;
-	/** 直播间当前标题（仅房主对得上时才可信） */
+	/** 直播间当前标题 */
 	roomName?: string;
-	/** 房间现由他人使用（已用平台返回的房主昵称核实） */
-	roomRetaken: boolean;
-	/** 房间失效、接口没响应等需要额外说明的情况 */
+	/**
+	 * 平台昵称与名单里的常用叫法对不上。
+	 *
+	 * **只作提示，不作结论**：主播改个账号名就会对不上（狗哥的 312407 现在叫「叁肆叁肆」），
+	 * 所以这里既不改写 state，也不说"房间换人"。曾经据此类字段断言过"房间已注销"，
+	 * 两次全错，因此现在只把平台昵称原样显示出来，判断交给读者。
+	 */
+	ownerUnrecognized: boolean;
+	/** 接口没响应等情况需要说明时使用 */
 	note?: string;
 	/** 本次抓取时间，ISO 字符串 */
 	fetchedAt: string;

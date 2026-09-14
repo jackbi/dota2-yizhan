@@ -8,7 +8,7 @@ import { formatIso } from '../lib/format';
 const snapshot = await fetchLiveSnapshot();
 const liveCount = OB_MEMBERS.filter((m) => {
 	const s = snapshot.statuses[`${m.platform}:${m.roomId}`];
-	return s?.state === 'live' && !s.roomRetaken;
+	return s?.state === 'live';
 }).length;
 ---
 
