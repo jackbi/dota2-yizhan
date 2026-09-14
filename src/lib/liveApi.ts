@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
+import { extractJson, fetchNote, fetchText, sleep } from './fetchText';
 import { OB_ROOMS } from '../data/ob';
 import type { LiveSnapshot, LiveState, LiveStatus, Platform } from '../data/types';
 
@@ -44,24 +45,14 @@ import type { LiveSnapshot, LiveState, LiveStatus, Platform } from '../data/type
 
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'live');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
-const PROXY_MODE = (process.env.LIVE_PROXY ?? 'auto').toLowerCase();
-const JINA_PREFIX = 'https://r.jina.ai/';
 
 /** 开播状态变化很快，缓存只用来省掉同一轮构建里的重复请求。 */
 const TTL_SECONDS = 5 * 60;
-const DIRECT_TIMEOUT_MS = 6000;
-const PROXY_TIMEOUT_MS = 25_000;
 /** 代理是第三方服务，别把它打爆。 */
 const CONCURRENCY = 3;
-/** 直连与代理都不稳，两条路各重试几轮。 */
-const ATTEMPTS = 3;
-const ATTEMPT_DELAY_MS = 600;
 /** 抓取失败后等同伴进程写缓存的轮次与间隔。 */
 const PEER_WAIT_ROUNDS = 5;
 const PEER_WAIT_MS = 500;
-
-const UA =
-	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 export const LIVE_STATE_LABEL: Record<LiveState, string> = {
 	live: '直播中',
@@ -88,18 +79,6 @@ interface ParsedRoom {
 
 function str(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
-}
-
-/** 从纯 JSON 或 r.jina.ai 的 "Markdown Content:" 包裹里取出 JSON 对象。 */
-function extractJson(text: string): unknown {
-	const start = text.indexOf('{');
-	const end = text.lastIndexOf('}');
-	if (start < 0 || end <= start) return null;
-	try {
-		return JSON.parse(text.slice(start, end + 1));
-	} catch {
-		return null;
-	}
 }
 
 function parseDouyu(json: unknown): ParsedRoom | null {
@@ -155,57 +134,6 @@ function pageOwnerFromTitle(platform: Platform, text: string): string | undefine
 	if (!title) return undefined;
 	const second = title.split('_')[1]?.replace(/直播$/, '').trim();
 	return second || undefined;
-}
-
-// ---------------------------------------------------------------- 抓取
-
-let networkFetches = 0;
-let viaProxy = 0;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** 直连，被网络重置时返回 null。 */
-async function tryDirect(url: string): Promise<string | null> {
-	if (PROXY_MODE === 'jina') return null;
-	try {
-		const res = await fetch(url, {
-			headers: { 'User-Agent': UA, Accept: 'text/html,application/json,text/plain,*/*' },
-			signal: AbortSignal.timeout(DIRECT_TIMEOUT_MS),
-		});
-		if (!res.ok) return null;
-		return await res.text();
-	} catch {
-		// 直连被重置（本机到 douyu/huya 就是这样），换代理。
-		return null;
-	}
-}
-
-async function tryProxy(url: string): Promise<string | null> {
-	if (PROXY_MODE === 'off') return null;
-	try {
-		// 不要给 r.jina.ai 带 User-Agent：带上浏览器 UA 反而会触发它的 Cloudflare
-		// 人机验证（403 "Just a moment..."），不带才会正常返回内容。
-		// 这和 STRATZ 那边"UA 必须是 STRATZ_API"是同一类坑。
-		const res = await fetch(`${JINA_PREFIX}${url}`, { signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
-		if (!res.ok) return null;
-		return await res.text();
-	} catch {
-		// 代理也不通。
-		return null;
-	}
-}
-
-/** 直连优先，被网络重置时退回读取代理；两条路都不稳，各重试若干轮。 */
-async function fetchText(url: string): Promise<string | null> {
-	for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-		const text = (await tryDirect(url)) ?? (await tryProxy(url));
-		if (text) {
-			networkFetches += 1;
-			return text;
-		}
-		if (attempt < ATTEMPTS - 1) await sleep(ATTEMPT_DELAY_MS);
-	}
-	return null;
 }
 
 // ---------------------------------------------------------------- 缓存
@@ -358,13 +286,13 @@ async function loadAll(): Promise<LiveSnapshot> {
 	if (unrecognized > 0) parts.push(`平台昵称与旧叫法不同 ${unrecognized}`);
 
 	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0) + (counts.get('closed') ?? 0);
-	const fetchNote = networkFetches > 0 ? `，联网抓取 ${networkFetches} 次${viaProxy > 0 ? `（代理 ${viaProxy}）` : ''}` : '';
+	const note = fetchNote();
 
 	await reportSource(
 		'live',
 		'直播开播状态',
-		networkFetches > 0 ? 'fresh' : usable > 0 ? 'cache' : 'empty',
-		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}${fetchNote}`,
+		note ? 'fresh' : usable > 0 ? 'cache' : 'empty',
+		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}${note}`,
 	);
 
 	return { at: new Date().toISOString(), statuses };
