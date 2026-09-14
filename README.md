@@ -158,18 +158,40 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
   即 PerimeterX）、以及浏览器对第三方 Cookie 的分区。所以每格都固定留了「打开直播间」外链，
   空白时直接跳官方页。
 
-本机 `curl` 到 `douyu.com` / `huya.com` 的 TLS 握手仍被重置（`SSL_ERROR_SYSCALL`），**但嵌入本身
-已经验证到文档层**：headless Chrome 能拿到 `https://www.douyu.com/9999`（`200 text/html`，标题就是
-YYF 的房间），把它放进 iframe 后页面照样渲染出斗鱼 logo 和无样式的导航链接——平台**没有**拦嵌入。
-拦的话 Chrome 报的是 `ERR_BLOCKED_BY_RESPONSE`，而不是把内容画出来。
+本机 `curl` 到 `douyu.com` / `huya.com` 的 TLS 握手仍被重置（`SSL_ERROR_SYSCALL`），但**嵌入已经
+端到端验证过了**：headless Chrome 能拿到 `https://www.douyu.com/9999`（`200 text/html`，标题就是
+YYF 的房间），放进 iframe 后页面照常渲染、视频真的在播——平台**没有**拦嵌入。拦的话 Chrome 报的是
+`ERR_BLOCKED_BY_RESPONSE`，而不是把内容画出来。
 
-没画面的原因是 `*.douyucdn.cn` 上的 CSS / JS / 封面被重置（一次加载 79 个资源全部失败），
-播放器起不来。所以「能不能出画面」取决于你所在网络能不能直连各家 CDN，
-请在能直连的机器上打开 `/live` 实测一次。
+**B站 是反例，它拦。** `live.bilibili.com` 的响应头带 `X-Frame-Options: SAMEORIGIN`，
+iframe 里的文档请求直接被拒（同样是 `net::ERR_BLOCKED_BY_RESPONSE`）。所以手动添加虽然认 B站 链接，
+但那个格子只会是黑的，页面上写明了。
 
-注：`loading="lazy"` 的 iframe 在窄屏下是有意义的——那里墙面被排在长长的房间列表下面，
-滚到跟前才开始加载。iframe 只带 `allow="… fullscreen …"`，不再叠 `allowfullscreen`：
-Chrome 会为两者并存报一条 "Allow attribute will take precedence" 警告。
+### 分屏页的「只显示画面」
+
+每格嵌的是平台**整个直播间页面**，导航、弹幕、礼物、推荐位都在里面，画面自然小。iframe 跨域，
+父页面碰不到里面的 DOM，所以唯一的办法是把 iframe 放大再错位（`transform: scale() translate()`），
+让播放器正好落在格子里，外层 `overflow: hidden` 裁掉其余部分。两家都没有官方嵌入播放器
+（查过开放平台，没有），要真正"只取流"必须自建后端解流，不在静态站的能力范围内。
+
+定位靠 **URL 片段锚点**：斗鱼 `#js-player-video`、虎牙 `#J_playerMain`。两个坑都是实测踩出来的：
+
+- **锚点必须"加载完再补"，不能只写在初次导航的地址里。** 两家都是客户端渲染，播放器容器出现在
+  浏览器的片段滚动**之后**，滚不滚全看运气——同一平台 `9999` 滚到了（scrollY=1379），
+  `88660` 完全没滚（scrollY=1），页面上露出一条房间信息条。
+- **只能补一次。** 斗鱼是 Next.js，每次 hash 变化都会走一次路由转场；反复补会让它不停"跳过转场"，
+  最后把播放器整个刷没（补三次实测两格全黑 + 252 条 `AbortError: Transition was skipped`）。
+  另外记一条浏览器行为：加片段、换片段是同文档导航、不重新加载，但**去掉**片段会让 iframe 整页重载
+  （本地页面数 `load` 次数验证过）。
+
+补锚点后的实测值（1280×720 视口冷启动）：斗鱼 `(32, 0) 813×457`、虎牙 `(90, 60) 785×442`
+（虎牙页头是 `fixed`，吸顶占 60px）。**广告是后到的**，个别房间仍会偏——实测同一平台一间正好、
+一间偏 180px，所以每格左下角有一组上下微调＋复位，**按房间 key 存在 `localStorage`**。
+取景时 iframe 的逻辑视口固定 1280×720，格子的缩放用 `ResizeObserver` 跟着重算（换格数、进全屏都不会错位）。
+
+注：`loading="lazy"` 的 iframe 在窄屏下是有意义的——那里墙面排在长长的房间列表下面，滚到跟前才开始加载。
+iframe 只带 `allow="… fullscreen …"`，不再叠 `allowfullscreen`：Chrome 会为两者并存报一条
+"Allow attribute will take precedence" 警告。
 
 **房间列表**由 `src/lib/roomList.ts` 在构建期抓，两个来源都是平台给分区页用的那份数据：
 
