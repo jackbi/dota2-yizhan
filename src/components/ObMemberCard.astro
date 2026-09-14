@@ -8,9 +8,11 @@ import BiliVideoCard from './BiliVideoCard.astro';
 interface Props {
 	member: ObMember;
 	live?: LiveStatus;
+	/** 站内头像路径（`/avatars/xxx.jpg`）。拿不到时不传，退回首字母占位。 */
+	avatar?: string;
 }
 
-const { member: m, live } = Astro.props;
+const { member: m, live, avatar } = Astro.props;
 const meta = PLATFORM_META[m.platform];
 const url = roomUrl(m.platform, m.roomId);
 const state = live?.state ?? 'unknown';
@@ -33,12 +35,25 @@ const ringClass =
 	class="flex scroll-mt-24 flex-col rounded-2xl border border-line bg-surface p-5 transition hover:border-dota/50 hover:bg-surface-2"
 >
 	<div class="flex items-start gap-4">
-		<div class:list={['relative h-14 w-14 shrink-0 overflow-hidden rounded-xl', ringClass]}>
-			<div
-				class="flex h-full w-full items-center justify-center bg-gradient-to-br from-dota to-dota-deep font-display text-lg text-white"
-			>
+		{/*
+			头像压在首字母上：图加载出来就盖住它，加载失败（或本来就没抓到）就露出
+			品牌渐变色块 + 首字母。用背景图而不是 <img>，失败时不会出现破图图标。
+		*/}
+		<div
+			class:list={[
+				'relative h-14 w-14 shrink-0 overflow-hidden rounded-xl bg-gradient-to-br from-dota to-dota-deep',
+				ringClass,
+			]}
+			aria-hidden="true"
+		>
+			<span class="absolute inset-0 flex items-center justify-center font-display text-lg text-white">
 				{m.name.slice(0, 2)}
-			</div>
+			</span>
+			{
+				avatar && (
+					<span class="absolute inset-0 bg-cover bg-center" style={`background-image:url('${avatar}')`} />
+				)
+			}
 		</div>
 
 		<div class="min-w-0 flex-1">

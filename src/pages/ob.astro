@@ -5,10 +5,16 @@ import BiliVideoCard from '../components/BiliVideoCard.astro';
 import { OB_MEMBERS } from '../data/ob';
 import { JIANXUE_FENGHOU, JIANXUE_VIDEOS, OB_MEMBER_VIDEOS } from '../data/obVideos';
 import { fetchLiveSnapshot } from '../lib/liveApi';
+import { localizeAvatars } from '../lib/avatars';
 import { formatIso } from '../lib/format';
 
 const snapshot = await fetchLiveSnapshot();
 const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platform}:${m.roomId}`];
+
+// 头像原本是平台接口顺带返回的 CDN 地址（`LiveStatus.avatar`），这里取回字节换成本站路径。
+// key 用 `平台:房间号`，和分屏页保持一致——否则同一个人会被当成两张图各下一遍。
+const roomKey = (m: (typeof OB_MEMBERS)[number]) => `${m.platform}:${m.roomId}`;
+const avatars = await localizeAvatars(OB_MEMBERS.map((m) => ({ key: roomKey(m), avatar: liveOf(m)?.avatar })));
 
 const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live').length;
 const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
@@ -83,8 +89,19 @@ const stats: { label: string; value: string; accent?: boolean }[] = [
 							href={`#member-${m.id}`}
 							class="group inline-flex items-center gap-2 rounded-lg border border-line bg-surface-2/60 py-1 pl-1 pr-3 transition hover:border-dota/60 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dota-light focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
 						>
-							<span class="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-dota to-dota-deep font-display text-[10px] text-white">
+							<span
+								class="relative flex h-6 w-6 items-center justify-center overflow-hidden rounded bg-gradient-to-br from-dota to-dota-deep font-display text-[10px] text-white"
+								aria-hidden="true"
+							>
 								{m.name.slice(0, 2)}
+								{
+									avatars.get(roomKey(m)) && (
+										<span
+											class="absolute inset-0 bg-cover bg-center"
+											style={`background-image:url('${avatars.get(roomKey(m))}')`}
+										/>
+									)
+								}
 							</span>
 							<span class="text-xs text-muted transition group-hover:text-cream">{m.name}</span>
 							<span
@@ -178,7 +195,7 @@ const stats: { label: string; value: string; accent?: boolean }[] = [
 		</div>
 
 		<div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
-			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} />)}
+			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} avatar={avatars.get(roomKey(m))} />)}
 		</div>
 
 		<section class="mt-12 rounded-2xl border border-line bg-surface p-6">
