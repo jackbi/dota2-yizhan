@@ -157,9 +157,18 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
   即 PerimeterX）、以及浏览器对第三方 Cookie 的分区。所以每格都固定留了「打开直播间」外链，
   空白时直接跳官方页。
 
-本机**无法**端到端验证：到 `douyu.com` / `huya.com` 的 TLS 握手被重置，只能走 `r.jina.ai`
-读文本，浏览器测试只会得到 `net::ERR_CONNECTION_CLOSED`（不是 `ERR_BLOCKED_BY_RESPONSE`，
-后者才代表被响应头拒绝）。所以要确认的话，得在有国内网络的机器上打开页面看。
+本机 `curl` 到 `douyu.com` / `huya.com` 的 TLS 握手仍被重置（`SSL_ERROR_SYSCALL`），**但嵌入本身
+已经验证到文档层**：headless Chrome 能拿到 `https://www.douyu.com/9999`（`200 text/html`，标题就是
+YYF 的房间），把它放进 iframe 后页面照样渲染出斗鱼 logo 和无样式的导航链接——平台**没有**拦嵌入。
+拦的话 Chrome 报的是 `ERR_BLOCKED_BY_RESPONSE`，而不是把内容画出来。
+
+没画面的原因是 `*.douyucdn.cn` 上的 CSS / JS / 封面被重置（一次加载 79 个资源全部失败），
+播放器起不来。所以「能不能出画面」取决于你所在网络能不能直连各家 CDN，
+请在能直连的机器上打开 `/live` 实测一次。
+
+注：`loading="lazy"` 的 iframe 在窄屏下是有意义的——那里墙面被排在长长的房间列表下面，
+滚到跟前才开始加载。iframe 只带 `allow="… fullscreen …"`，不再叠 `allowfullscreen`：
+Chrome 会为两者并存报一条 "Allow attribute will take precedence" 警告。
 
 **房间列表**由 `src/lib/roomList.ts` 在构建期抓，两个来源都是平台给分区页用的那份数据：
 
@@ -180,6 +189,21 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 
 抓取层（直连优先、失败退回代理、重试、`extractJson`）抽在 `src/lib/fetchText.ts`，
 `liveApi` 与 `roomList` 共用。
+
+**两种全屏是并列的**，都在右侧工具栏里，共用一套沉浸样式：
+
+- 「网页全屏」只把面板抽成 `position: fixed; inset: 0` 铺满浏览器窗口，并用 `body` 上的
+  `.wall-immersive-lock` 锁住底下的滚动；Esc 退出（系统全屏时按 Esc 归浏览器管，
+  所以监听里要先 `if (document.fullscreenElement) return`，否则会把两个全屏一起关掉）。
+- 「浏览器全屏」走 `requestFullscreen()`，进的是系统全屏。状态只能从 `fullscreenchange` 事件里读，
+  因为用户可能按 Esc 或 F11 退出；进系统全屏时「网页全屏」按钮会被禁掉——那时它已没有可见效果。
+  这个接口缺失或被拒时退回网页全屏并提示，不让按钮点了没反应。
+- 沉浸模式下**格子不再锁 16:9**，改成 `grid-rows-*` 平分视口高度（`IMMERSIVE_GRID_CLASS`），
+  1440×900 下 4 格从 268px 长到 381px。切换全屏只改类名、**绝不重渲染**：`renderWall()`
+  会重建 `innerHTML`，把已加载的 iframe 全部冲掉，那等于一全屏就把画面停了。
+- 一个坑：`.wall-immersive` 必须写 `margin: 0`。父容器是 Tailwind 的 `space-y-4`，会给面板自己
+  留下 1rem 上外边距，而 fixed 元素一旦带外边距，`inset: 0` 解出来的高度就会少掉那 1rem
+  （实测 900 → 884），表现为全屏后底下空一条。
 
 ### 视频：只信 B站 自己的接口
 
