@@ -1,17 +1,23 @@
 ---
-import type { Streamer } from '../data/types';
-import { PLATFORM_META } from '../data/site';
+import type { LiveStatus, ObMember } from '../data/types';
+import { PLATFORM_META, roomUrl } from '../data/site';
+import { LIVE_STATE_LABEL } from '../lib/liveApi';
 
 interface Props {
-	streamer: Streamer;
+	member: ObMember;
+	live?: LiveStatus;
 }
 
-const { streamer: s } = Astro.props;
-const meta = PLATFORM_META[s.platform];
+const { member: m, live } = Astro.props;
+const meta = PLATFORM_META[m.platform];
+const game = live?.category;
+const label = live?.ownerMismatch ? '房间信息有变' : LIVE_STATE_LABEL[live?.state ?? 'unknown'];
 ---
 
 <a
-	href="/live"
+	href={roomUrl(m.platform, m.roomId)}
+	target="_blank"
+	rel="noopener noreferrer"
 	class="group flex items-center gap-3 rounded-xl border border-line bg-ink/60 p-3 transition hover:border-dota/50"
 >
 	<div class="relative h-16 w-28 shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-dota to-dota-deep">
@@ -20,17 +26,27 @@ const meta = PLATFORM_META[s.platform];
 				<path d="M8 5v14l11-7z" fill="currentColor" />
 			</svg>
 		</span>
-		<span class="absolute bottom-1.5 left-2 text-xs font-semibold text-white">{s.name}</span>
+		<span class="absolute bottom-1.5 left-2 text-xs font-semibold text-white">{m.name}</span>
 		<span class="absolute right-1.5 top-1.5 rounded bg-black/50 px-1.5 py-0.5 text-[10px] font-bold" style={`color:${meta.color}`}>
 			{meta.short}
 		</span>
 	</div>
 	<div class="min-w-0 flex-1">
-		<p class="truncate font-medium text-cream group-hover:text-dota-light">{s.name}</p>
-		<p class="truncate text-xs text-muted">{s.tag}</p>
-		<p class="mt-1 flex items-center gap-1 text-xs text-[#4ade80]">
-			<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-[#22c55e]"></span>
-			{(s.viewers / 1000).toFixed(1)}k 人观看
+		<p class="truncate font-medium text-cream group-hover:text-dota-light">{m.name}</p>
+		<p class="truncate text-xs text-muted">{game ?? m.tag}</p>
+		<p class="mt-1 flex items-center gap-1 text-xs text-faint">
+			<span
+				class:list={[
+					'h-1.5 w-1.5 rounded-full',
+					live?.state === 'live' && !live.ownerMismatch
+						? 'animate-pulse bg-[#22c55e]'
+						: live?.state === 'replay'
+							? 'bg-gold'
+							: 'bg-zinc-500',
+				]}
+			/>
+			{label}
+			{live?.popularity ? ` · ${(live.popularity / 10000).toFixed(1)} 万热度` : ''}
 		</p>
 	</div>
 </a>

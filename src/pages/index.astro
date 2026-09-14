@@ -4,8 +4,9 @@ import SectionHeader from '../components/SectionHeader.astro';
 import LiveCard from '../components/LiveCard.astro';
 import NewsCard from '../components/NewsCard.astro';
 import TournamentCard from '../components/TournamentCard.astro';
-import { LIVE_NOW, STREAMERS } from '../data/site';
+import { OB_MEMBERS } from '../data/ob';
 import { getTournaments } from '../lib/tournamentsApi';
+import { fetchLiveSnapshot } from '../lib/liveApi';
 import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
 import { fetchCommunityThreads } from '../lib/ngaApi';
 import { fetchPatchUpdates } from '../lib/patchesApi';
@@ -35,6 +36,12 @@ try {
 }
 
 const bundle = await getTournaments();
+/** 首页直播条只放构建期确实在播的人；拿不到状态就整块不展示，不编造。 */
+const liveSnapshot = await fetchLiveSnapshot();
+const liveMembers = OB_MEMBERS.filter((m) => {
+	const s = liveSnapshot.statuses[`${m.platform}:${m.roomId}`];
+	return s?.state === 'live' && !s.ownerMismatch;
+});
 // 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
 const now = Math.floor(Date.now() / 1000);
 const notFinished = bundle.events.filter((e) => e.status !== 'completed');
@@ -42,7 +49,7 @@ const upcoming = (notFinished.length > 0 ? notFinished : bundle.events).slice(0,
 
 const FEATURES = [
 	{ href: '/live', title: '分屏直播', desc: '在一个页面聚合观看多位 OB 主播，自由切换分屏布局。', icon: 'screen' },
-	{ href: '/ob', title: 'OB 大家庭', desc: '认识 DOTA2 社区最受欢迎的老将们，实时关注开播状态。', icon: 'users' },
+	{ href: '/ob', title: 'OB 大家庭', desc: 'OB 十人名单、真实姓名、荣誉、直播间与开播状态快照。', icon: 'users' },
 	{ href: '/news', title: '官方新闻', desc: 'DOTA2 官网资讯与赛事动态，正文在站内直接阅读。', icon: 'news' },
 	{ href: '/community', title: '社区热帖', desc: '汇总 NGA 刀塔版块的热帖榜，跟着社区追当前最热的讨论。', icon: 'chat' },
 	{ href: '/tournaments', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
@@ -59,8 +66,8 @@ const FEATURES = [
 		<div class="relative mx-auto max-w-7xl px-4 py-16 sm:px-6 sm:py-24 lg:px-8">
 			<div class="max-w-3xl">
 				<span class="inline-flex items-center gap-2 rounded-full border border-dota/40 bg-dota/10 px-3 py-1 text-xs font-medium text-dota-light">
-					<span class="h-1.5 w-1.5 animate-pulse rounded-full bg-dota-light"></span>
-					OB 天团 · 正在热播
+					<span class:list={['h-1.5 w-1.5 rounded-full bg-dota-light', liveMembers.length > 0 && 'animate-pulse']}></span>
+					{liveMembers.length > 0 ? `OB 天团 · ${liveMembers.length} 位正在直播` : 'OB 大家庭 · 十位老将'}
 				</span>
 				<h1 class="mt-6 font-display text-4xl leading-tight sm:text-5xl lg:text-6xl">
 					DOTA2
@@ -90,13 +97,24 @@ const FEATURES = [
 			<div class="mt-12 rounded-2xl border border-line bg-surface/60 p-5 backdrop-blur">
 				<div class="mb-4 flex items-center justify-between">
 					<h2 class="flex items-center gap-2 font-display text-lg">
-						<span class="flex h-2.5 w-2.5 animate-pulse rounded-full bg-[#22c55e]"></span>
-						正在直播
+						<span
+							class:list={[
+								'flex h-2.5 w-2.5 rounded-full',
+								liveMembers.length > 0 ? 'animate-pulse bg-[#22c55e]' : 'bg-zinc-500',
+							]}
+						></span>
+						{liveMembers.length > 0 ? '正在直播' : '开播状态'}
 					</h2>
 					<a href="/live" class="text-sm text-dota-light transition hover:text-gold">全部直播 →</a>
 				</div>
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-					{LIVE_NOW.slice(0, 4).map((s) => <LiveCard streamer={s} />)}
+					{liveMembers.slice(0, 4).map((m) => <LiveCard member={m} live={liveSnapshot.statuses[`${m.platform}:${m.roomId}`]} />)}
+					{liveMembers.length === 0 && (
+						<p class="col-span-full rounded-xl border border-line bg-ink/60 p-4 text-sm text-muted">
+							这个构建时刻没有抓到正在开播的房间。开播状态是构建期快照，可能只是恰好都没在播——
+							<a href="/ob" class="text-dota-light hover:text-gold">去 OB 大家庭</a> 可以看每个人的固定直播间。
+						</p>
+					)}
 				</div>
 			</div>
 		</div>

@@ -1,17 +1,60 @@
 export type Platform = 'douyu' | 'huya' | 'bilibili' | 'youtube';
 
-export interface Streamer {
+/**
+ * OB 大家庭的一员。
+ *
+ * 只放能核实或有明确社区共识的字段；`aliases` 与 `jokes` 属于社区流传内容，
+ * 页面必须整体标注出处，且不收感情纠纷、赌博与私生活相关的梗。
+ */
+export interface ObMember {
 	id: string;
+	/** 游戏 ID */
 	name: string;
-	alias: string;
+	realName: string;
+	/** 社区外号，粉丝整理，非官方 */
+	aliases: string[];
 	platform: Platform;
 	roomId: string;
-	embedUrl: string;
-	avatar?: string;
+	/**
+	 * 平台接口返回的房主昵称里应当出现的关键词（小写比较）。
+	 * 用于构建期自查房间是否已注销或易主——房间号会随主播转平台而失效。
+	 */
+	ownerMatch: string[];
+	membership: '正式成员' | '编外';
+	role: string;
+	achievement: string;
+	champions: string[];
 	tag: string;
-	live: boolean;
-	viewers: number;
 	description: string;
+	/** 社区流传的梗，非官方 */
+	jokes: string[];
+}
+
+export type LiveState = 'live' | 'replay' | 'offline' | 'unknown';
+
+/** 一个直播间在构建期的实际状态。 */
+export interface LiveStatus {
+	state: LiveState;
+	/** 平台返回的房主昵称 */
+	ownerName?: string;
+	roomName?: string;
+	category?: string;
+	/** 平台自定义的「热度 / 人气」，**不是**真实观看人数 */
+	popularity?: number;
+	/** 房间当前房主与本人对不上（已注销或已易主） */
+	ownerMismatch: boolean;
+	/** 本次抓取时间，ISO 字符串 */
+	fetchedAt: string;
+	/** 房间失效等需要额外说明的情况 */
+	note?: string;
+}
+
+/** 一次构建拿到的全部开播状态快照。 */
+export interface LiveSnapshot {
+	/** 抓取时间，ISO 字符串 */
+	at: string;
+	/** key 为 `${platform}:${roomId}` */
+	statuses: Record<string, LiveStatus>;
 }
 
 /** 新闻列表卡片的展示数据。 */

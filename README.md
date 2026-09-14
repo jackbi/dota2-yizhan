@@ -26,6 +26,7 @@ pnpm preview    # 预览 dist/
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
 | `.cache/translate/` | 机器翻译结果 | 永久 |
 | `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
+| `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
@@ -47,13 +48,32 @@ pnpm preview    # 预览 dist/
 说明每个源这一轮是新抓的、吃缓存的，还是根本没拿到：
 
 ```
-[data-source-report] 数据源（6）：
-[data-source-report]   STRATZ 英雄数据 — 没有数据：请求未拿到数据（限流、挑战页或接口异常）
-[data-source-report]   赛事日历 — 使用缓存：5 个赛事，1 场进行中；来源：超凡电竞（不可用） / OpenDota（本地缓存）
-[data-source-report]   比赛阵容与 BP — 联网抓取：64 场已开赛比赛匹配到 8 场 Valve 比赛（STRATZ 8 场）
+[data-source-report] 数据源（8）：
+[data-source-report]   直播开播状态 — 联网抓取：11 个房间：直播中 5、轮播中 1、未开播 3、房间已失效 2，联网抓取 11 次（代理 11）
+[data-source-report]   官方更新日志 — 联网抓取：8 条，最新 7.41d（2026-06-05），联网抓取 1 次
+[data-source-report]   赛事日历 — 联网抓取：7 个赛事，1 场进行中；来源：Liquipedia / OpenDota
 ```
 
 没有数据的源排在最前面。原始记录在 `.cache/health/`，dev 下不会自动汇总，可以直接翻。
+
+## OB 名单与开播状态
+
+`src/data/ob.ts` 是 OB 大家庭的唯一名单来源，只写有出处的内容：十人名单以斗鱼官方签约通稿
+（2018-12-07「OB 战队目前共有九人」）与 2019-06-13 OB 官博「十人全家福」为准，老陈作为
+前身「龙宝川」成员按「编外」收录。外号与梗属于社区流传内容，页面上单独标注，且不收感情纠纷、
+赌博与私生活相关的内容。
+
+开播状态由 `src/lib/liveApi.ts` 在构建期抓取，两个前提决定了它的形态：
+
+- 斗鱼、虎牙的房间页都是客户端渲染，且通常禁止被 iframe 嵌套，而两家的房间接口都**没有 CORS 头**，
+  浏览器里取不到。所以状态只能在构建期抓，页面上显示的是**构建那一刻的快照**并标注抓取时间——
+  静态站点做不到实时。`/ob` 与 `/live` 都不显示观看人数，只显示平台自己的热度值。
+- 部分网络到 `douyu.com` / `huya.com` 的 TLS 握手会被直接重置（开发这个项目时就遇到过），
+  所以除了直连还留了 `r.jina.ai` 读取代理做回退，用 `LIVE_PROXY` 控制。
+
+房间号会随主播转平台或换房间而失效，因此每个成员都带 `ownerMatch`：构建期用接口返回的房主昵称
+自查，对不上就在卡片上标「房间已注销」或「房间现房主为某某」，而不是继续假装那是本人的直播间。
+**抓不到状态一律显示「状态未知」**，任何情况下都不写死假的「正在直播」与假人气值。
 
 ## 环境变量
 
@@ -66,6 +86,7 @@ pnpm preview    # 预览 dist/
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
+| `LIVE_PROXY` | 否 | 直播间接口的取数方式：`auto`（默认，直连优先、被重置时退回 `r.jina.ai`）、`jina`（只走代理）、`off`（只直连） |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
 
 ## 赛事数据来自 Liquipedia

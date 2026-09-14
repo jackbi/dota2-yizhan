@@ -1,13 +1,20 @@
 ---
-import type { Streamer } from '../data/types';
-import { PLATFORM_META } from '../data/site';
+import type { LiveSnapshot, ObMember } from '../data/types';
+import { PLATFORM_META, roomUrl } from '../data/site';
+import { LIVE_STATE_LABEL } from '../lib/liveApi';
 
 interface Props {
-	streamers: Streamer[];
+	members: ObMember[];
+	snapshot: LiveSnapshot;
 }
 
-const { streamers } = Astro.props;
-const defaultIds = streamers.filter((s) => s.live).map((s) => s.id);
+const { members, snapshot } = Astro.props;
+const statusOf = (m: ObMember) => snapshot.statuses[`${m.platform}:${m.roomId}`];
+const isLive = (m: ObMember) => {
+	const s = statusOf(m);
+	return s?.state === 'live' && !s.ownerMismatch;
+};
+const defaultIds = members.filter(isLive).map((m) => m.id);
 ---
 
 <div class="space-y-6">
@@ -33,46 +40,62 @@ const defaultIds = streamers.filter((s) => s.live).map((s) => s.id);
 
 		<div id="stream-chips" class="mt-4 flex flex-wrap gap-2">
 			{
-				streamers.map((s) => {
-					const meta = PLATFORM_META[s.platform];
+				members.map((m) => {
+					const meta = PLATFORM_META[m.platform];
+					const s = statusOf(m);
+					const live = isLive(m);
 					return (
 						<button
 							type="button"
-							data-id={s.id}
+							data-id={m.id}
 							class:list={[
 								'group flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition',
 								'border-line text-muted hover:border-dota hover:text-cream',
 							]}
-							aria-pressed={defaultIds.includes(s.id) ? 'true' : 'false'}
+							aria-pressed={defaultIds.includes(m.id) ? 'true' : 'false'}
 						>
-							<span class:list={['h-2 w-2 rounded-full', s.live ? 'bg-[#22c55e]' : 'bg-zinc-500']} />
-							<span class="font-semibold text-cream">{s.name}</span>
+							<span
+								class:list={[
+									'h-2 w-2 rounded-full',
+									live ? 'bg-[#22c55e]' : s?.state === 'replay' ? 'bg-gold' : 'bg-zinc-500',
+								]}
+							/>
+							<span class="font-semibold text-cream">{m.name}</span>
 							<span class="rounded px-1 py-0.5 text-[10px] font-bold" style={`background:${meta.color};color:#fff`}>
 								{meta.short}
 							</span>
-							<span class="hidden text-xs text-faint sm:inline">{s.live ? `${(s.viewers / 1000).toFixed(1)}k` : '离线'}</span>
+							<span class="hidden text-xs text-faint sm:inline">
+								{live && s?.popularity ? `${(s.popularity / 10000).toFixed(1)}万` : LIVE_STATE_LABEL[s?.state ?? 'unknown']}
+							</span>
 						</button>
 					);
 				})
 			}
 		</div>
+
+		<p class="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-faint">
+			斗鱼与虎牙通常不允许自己的直播间被别的网页内嵌（出于版权与统计原因），因此下方画面很可能空白。
+			每个画面右下角都留了「打开直播间」，空白时直接点它跳转官方页面即可。
+		</p>
 	</div>
 
 	<div id="live-grid" class="grid gap-3">
 		{
-			streamers.map((s) => {
-				const meta = PLATFORM_META[s.platform];
+			members.map((m) => {
+				const meta = PLATFORM_META[m.platform];
+				const s = statusOf(m);
+				const live = isLive(m);
 				return (
 					<div
 						class="live-tile"
-						data-id={s.id}
-						data-default={defaultIds.includes(s.id) ? 'true' : 'false'}
-						hidden={!defaultIds.includes(s.id)}
+						data-id={m.id}
+						data-default={defaultIds.includes(m.id) ? 'true' : 'false'}
+						hidden={!defaultIds.includes(m.id)}
 					>
 						<div class="group relative aspect-video overflow-hidden rounded-xl border border-line bg-ink-2">
 							<iframe
-								data-src={s.embedUrl.startsWith('https://live.bilibili.com/') ? s.embedUrl.replace('live.bilibili.com', 'live.bilibili.com/player') : s.embedUrl}
-								title={`${s.name} 直播间`}
+								data-src={roomUrl(m.platform, m.roomId)}
+								title={`${m.name} 直播间`}
 								class="live-frame h-full w-full"
 								allow="autoplay; fullscreen; picture-in-picture"
 								allowfullscreen
@@ -86,26 +109,42 @@ const defaultIds = streamers.filter((s) => s.live).map((s) => s.id);
 									</svg>
 								</span>
 								<span class="flex items-center gap-2 text-sm text-cream/90">
-									<span class:list={['h-2 w-2 rounded-full', s.live ? 'animate-pulse bg-[#22c55e]' : 'bg-zinc-500']} />
-									{s.live ? `${s.name} · 直播中` : `${s.name} · 未开播`}
+									<span
+										class:list={[
+											'h-2 w-2 rounded-full',
+											live ? 'animate-pulse bg-[#22c55e]' : s?.state === 'replay' ? 'bg-gold' : 'bg-zinc-500',
+										]}
+									/>
+									{m.name} · {s?.ownerMismatch ? '房间信息有变' : LIVE_STATE_LABEL[s?.state ?? 'unknown']}
 								</span>
-								<span class="text-xs text-faint">{meta.label} · 房间 {s.roomId}</span>
+								<span class="text-xs text-faint">{meta.label} · 房间 {m.roomId}</span>
 							</div>
 
 							<div class="absolute left-3 top-3 flex items-center gap-2">
-								<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-cream backdrop-blur">{s.name}</span>
-								<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-[#4ade80]">{s.live ? `${(s.viewers / 1000).toFixed(1)}k 人` : '离线'}</span>
+								<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-cream backdrop-blur">{m.name}</span>
+								{
+									live && s?.popularity && (
+										<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-[#4ade80] backdrop-blur">
+											{(s.popularity / 10000).toFixed(1)} 万热度
+										</span>
+									)
+								}
 							</div>
 
 							<a
-								href={s.embedUrl}
+								href={roomUrl(m.platform, m.roomId)}
 								target="_blank"
 								rel="noopener noreferrer"
-								class="absolute bottom-3 right-3 rounded-md bg-dota px-3 py-1.5 text-xs font-medium text-white opacity-0 transition hover:bg-dota-light group-hover:opacity-100"
+								class="absolute bottom-3 right-3 rounded-md bg-dota px-3 py-1.5 text-xs font-medium text-white transition hover:bg-dota-light"
 							>
 								打开直播间
 							</a>
 						</div>
+						{
+							s?.ownerMismatch && (
+								<p class="mt-1.5 text-xs text-gold">{m.name}：{s.note}，该房间可能已不属于本人。</p>
+							)
+						}
 					</div>
 				);
 			})
@@ -125,13 +164,26 @@ const defaultIds = streamers.filter((s) => s.live).map((s) => s.id);
 
 		const applyLayout = (count: number) => {
 			grid.dataset.layout = String(count);
-			grid.className = 'grid gap-3 ' + (count === 1 ? 'grid-cols-1' : count === 2 ? 'grid-cols-1 sm:grid-cols-2' : count === 4 ? 'grid-cols-2' : count === 6 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4');
+			grid.className =
+				'grid gap-3 ' +
+				(count === 1
+					? 'grid-cols-1'
+					: count === 2
+						? 'grid-cols-1 sm:grid-cols-2'
+						: count === 4
+							? 'grid-cols-2'
+							: count === 6
+								? 'grid-cols-2 lg:grid-cols-3'
+								: 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4');
 		};
 
 		const render = () => {
 			tiles.forEach((t) => {
 				const on = selected.has(t.dataset.id!);
 				t.hidden = !on;
+				// 只有真正显示出来的画面才加载 iframe，避免一进页面就请求十几个直播间。
+				const frame = t.querySelector<HTMLIFrameElement>('.live-frame');
+				if (frame && on && !frame.src && frame.dataset.src) frame.src = frame.dataset.src;
 			});
 		};
 
@@ -154,7 +206,7 @@ const defaultIds = streamers.filter((s) => s.live).map((s) => s.id);
 			});
 		});
 
-		applyLayout(4);
+		applyLayout(Math.max(1, Math.min(4, selected.size || 1)));
 		render();
 	})();
 </script>
