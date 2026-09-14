@@ -149,44 +149,109 @@ const STATS = [
 			</aside>
 
 			<div class="space-y-4">
-				<div class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface p-4">
-					<div id="wall-layout" class="flex items-center gap-1 rounded-lg border border-line p-1" role="group" aria-label="分屏格数">
-						{
-							[1, 2, 4, 6, 9].map((n) => (
-								<button
-									type="button"
-									data-layout={n}
-									aria-pressed="true"
-									class="min-w-9 rounded-md px-2.5 py-1.5 text-sm font-medium text-muted transition hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:bg-dota aria-pressed:text-white"
-								>
-									{n}
-								</button>
-							))
-						}
-					</div>
-					<div class="flex items-center gap-2">
-						<button
-							id="wall-stop"
-							type="button"
-							class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-						>
-							停止全部画面
-						</button>
-						<button
-							id="wall-clear"
-							type="button"
-							class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-						>
-							清空
-						</button>
-					</div>
-					<p class="w-full text-[11px] leading-relaxed text-faint sm:w-auto sm:flex-1">
-						<span id="wall-status" class="text-cream/70">墙上 0 / 4 格</span> ·
-						每个格子都是一个完整的直播间页面，开太多会卡，建议 4 格以内；切换格数会重新排布并停掉已加载的画面。
-					</p>
-				</div>
+				<div id="wall-panel" class="space-y-4">
+					<div
+						id="wall-toolbar"
+						class="flex flex-wrap items-center gap-x-3 gap-y-3 rounded-2xl border border-line bg-surface p-4"
+					>
+						<div id="wall-layout" class="flex items-center gap-1 rounded-lg border border-line p-1" role="group" aria-label="分屏格数">
+							{
+								[1, 2, 4, 6, 9].map((n) => (
+									<button
+										type="button"
+										data-layout={n}
+										aria-pressed="true"
+										class="min-w-9 rounded-md px-2.5 py-1.5 text-sm font-medium text-muted transition hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:bg-dota aria-pressed:text-white"
+									>
+										{n}
+									</button>
+								))
+							}
+						</div>
+						<div class="flex items-center gap-2">
+							<button
+								id="wall-stop"
+								type="button"
+								class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							>
+								停止全部画面
+							</button>
+							<button
+								id="wall-clear"
+								type="button"
+								class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							>
+								清空
+							</button>
+						</div>
 
-				<div id="wall" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+						{/* 两种全屏是并列的：网页全屏只是把面板铺满浏览器窗口，浏览器全屏才进系统全屏。 */}
+						<div class="flex items-center gap-2 sm:border-l sm:border-line sm:pl-3">
+							<button
+								id="wall-page-full"
+								type="button"
+								aria-pressed="false"
+								title="铺满浏览器窗口，不进入系统全屏（Esc 退出）"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light disabled:cursor-not-allowed disabled:opacity-40"
+							>
+								<svg
+									width="13"
+									height="13"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<rect x="3" y="3" width="18" height="18" rx="2"></rect>
+									<path d="M12 7v10M9 10l3-3 3 3M9 14l3 3 3-3"></path>
+								</svg>
+								<span class="wall-fs-label">网页全屏</span>
+							</button>
+							<button
+								id="wall-browser-full"
+								type="button"
+								aria-pressed="false"
+								title="进入系统全屏（Esc 退出）"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+							>
+								<svg
+									width="13"
+									height="13"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M16 21h3a2 2 0 0 0 2-2v-3M8 21H5a2 2 0 0 1-2-2v-3"
+									></path>
+								</svg>
+								<span class="wall-fs-label">浏览器全屏</span>
+							</button>
+						</div>
+
+						<p class="w-full text-[11px] leading-relaxed text-faint sm:w-auto sm:flex-1">
+							<span id="wall-status" class="text-cream/70">墙上 0 / 4 格</span> ·
+							<span class="wall-hint-long">
+								每个格子都是一个完整的直播间页面，开太多会卡，建议 4 格以内；切换格数会重新排布并停掉已加载的画面。
+							</span>
+						</p>
+						<p
+							id="wall-note"
+							role="status"
+							aria-live="polite"
+							class="w-full text-[11px] leading-relaxed text-gold empty:hidden"
+						>
+						</p>
+					</div>
+
+					<div id="wall" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+				</div>
 
 				<noscript>
 					<p class="rounded-2xl border border-line bg-surface p-4 text-sm leading-relaxed text-muted">

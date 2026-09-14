@@ -41,6 +41,18 @@ const GRID_CLASS: Record<number, string> = {
 	9: 'grid-cols-2 lg:grid-cols-3',
 };
 
+/**
+ * 沉浸模式（网页全屏 / 浏览器全屏）下的网格：行列数写死并各自平分高度，
+ * 格子跟着视口长，不再按 16:9 留黑边。手机上窄，6/9 格退回两列多行。
+ */
+const IMMERSIVE_GRID_CLASS: Record<number, string> = {
+	1: 'grid-cols-1 grid-rows-1',
+	2: 'grid-cols-2 grid-rows-1',
+	4: 'grid-cols-2 grid-rows-2',
+	6: 'grid-cols-2 grid-rows-3 sm:grid-cols-3 sm:grid-rows-2',
+	9: 'grid-cols-2 grid-rows-5 sm:grid-cols-3 sm:grid-rows-3',
+};
+
 const STATE_LABEL: Record<string, string> = {
 	live: '直播中',
 	replay: '轮播中',
@@ -56,6 +68,9 @@ const countEl = document.getElementById('room-count');
 const searchEl = document.getElementById('room-search') as HTMLInputElement | null;
 const filterEl = document.getElementById('room-filters');
 const layoutEl = document.getElementById('wall-layout');
+const panelEl = document.getElementById('wall-panel');
+const pageFullBtn = document.getElementById('wall-page-full') as HTMLButtonElement | null;
+const browserFullBtn = document.getElementById('wall-browser-full') as HTMLButtonElement | null;
 
 if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	const rooms = new Map<string, RoomRef>();
@@ -64,6 +79,10 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	let query = '';
 	let filter = 'all';
 	let state: State = restore();
+	/** 网页全屏：面板脱离文档流铺满浏览器窗口。 */
+	let pageFull = false;
+	/** 浏览器全屏：由 fullscreenchange 同步，用户按 Esc 时也得跟着变。 */
+	let browserFull = false;
 
 	// ------------------------------------------------------------ 工具
 
@@ -231,7 +250,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 
 	function renderWall(): void {
 		const n = state.layout;
-		wallEl!.className = `grid gap-3 ${GRID_CLASS[n] ?? GRID_CLASS[4]}`;
+		wallEl!.className = `grid gap-3 ${gridClass(n)}`;
 		wallEl!.innerHTML = Array.from({ length: n }, (_, i) => tileHtml(i)).join('');
 		layoutEl!.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
 			b.setAttribute('aria-pressed', String(Number(b.dataset.layout) === n));
@@ -256,7 +275,6 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		frame.title = `${r.name} 直播间`;
 		frame.className = 'h-full w-full';
 		frame.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture; encrypted-media');
-		frame.setAttribute('allowfullscreen', '');
 		frame.setAttribute('loading', 'lazy');
 		body.prepend(frame);
 	}
@@ -264,6 +282,58 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	function stopAll(): void {
 		wallEl!.querySelectorAll('iframe').forEach((f) => f.remove());
 		renderWall();
+	}
+
+	// ------------------------------------------------------------ 全屏
+
+	function immersive(): boolean {
+		return pageFull || browserFull;
+	}
+
+	/** 沉浸模式下格子平分视口高度，网格类得换一套。 */
+	function gridClass(n: number): string {
+		const map = immersive() ? IMMERSIVE_GRID_CLASS : GRID_CLASS;
+		return map[n] ?? GRID_CLASS[n] ?? 'grid-cols-1';
+	}
+
+	function setNote(msg: string): void {
+		const el = document.getElementById('wall-note');
+		if (el) el.textContent = msg;
+	}
+
+	function syncFullButtons(): void {
+		if (pageFullBtn) {
+			pageFullBtn.setAttribute('aria-pressed', String(pageFull));
+			// 系统全屏时本来就是满屏，网页全屏再点没有任何可见效果，索性禁掉。
+			pageFullBtn.disabled = browserFull;
+			const label = pageFullBtn.querySelector('.wall-fs-label');
+			if (label) label.textContent = pageFull ? '退出网页全屏' : '网页全屏';
+		}
+		if (browserFullBtn) {
+			browserFullBtn.setAttribute('aria-pressed', String(browserFull));
+			const label = browserFullBtn.querySelector('.wall-fs-label');
+			if (label) label.textContent = browserFull ? '退出全屏' : '浏览器全屏';
+		}
+	}
+
+	/**
+	 * 只切类名，**绝不重渲染**：renderWall 会重建 innerHTML，把已经加载的 iframe 全部冲掉，
+	 * 那就成了"一全屏就把画面停了"。格子的高度改由 global.css 里的 .wall-immersive 规则接管，
+	 * 这样已加载的播放器不受影响。
+	 */
+	function applyImmersive(): void {
+		panelEl?.classList.toggle('wall-immersive', immersive());
+		// 网页全屏时面板盖住了整页，底下的滚动要锁住。
+		document.body.classList.toggle('wall-immersive-lock', pageFull);
+		wallEl!.className = `grid gap-3 ${gridClass(state.layout)}`;
+		syncFullButtons();
+	}
+
+	/** 系统全屏 API 缺失或被拒时的退路，总比按钮点了没反应强。 */
+	function fallbackToPageFull(reason: string): void {
+		pageFull = true;
+		applyImmersive();
+		setNote(reason);
 	}
 
 	// ------------------------------------------------------------ 加入 / 拖拽
@@ -350,6 +420,47 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	});
 
 	document.getElementById('wall-stop')?.addEventListener('click', stopAll);
+
+	// Esc 退出网页全屏。系统全屏时 Esc 归浏览器管（它会自己退出并触发 fullscreenchange），
+	// 这里让开，否则会把两个全屏一起关掉。
+	document.addEventListener('keydown', (e) => {
+		if (e.key !== 'Escape' || !pageFull || document.fullscreenElement) return;
+		pageFull = false;
+		applyImmersive();
+		setNote('');
+	});
+
+	pageFullBtn?.addEventListener('click', () => {
+		pageFull = !pageFull;
+		applyImmersive();
+		setNote(pageFull ? '已切到网页全屏：格子撑满窗口，按 Esc 或再点一次按钮退出。' : '');
+	});
+
+	browserFullBtn?.addEventListener('click', () => {
+		if (browserFull) {
+			void document.exitFullscreen();
+			return;
+		}
+		const target = panelEl ?? wallEl!;
+		const request = (target as HTMLElement & { requestFullscreen?: () => Promise<void> }).requestFullscreen;
+		if (!request) {
+			fallbackToPageFull('这个浏览器没有系统全屏接口，已改用网页全屏。');
+			return;
+		}
+		void request.call(target).catch(() => {
+			// 常见于嵌在 iframe 里且没给 allowfullscreen，或者不在用户手势里调用。
+			fallbackToPageFull('浏览器拒绝了系统全屏请求，已改用网页全屏。');
+		});
+	});
+
+	// 全屏状态只能从事件里读：用户可能按 Esc、按 F11，或由浏览器自己退出。
+	document.addEventListener('fullscreenchange', () => {
+		const was = browserFull;
+		browserFull = !!document.fullscreenElement;
+		applyImmersive();
+		if (browserFull) setNote('已进入浏览器全屏，按 Esc 退出。');
+		else if (was) setNote(pageFull ? '已退出浏览器全屏，仍在网页全屏。' : '');
+	});
 
 	document.getElementById('room-form')?.addEventListener('submit', (e) => {
 		e.preventDefault();

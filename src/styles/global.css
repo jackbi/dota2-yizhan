@@ -241,6 +241,53 @@ body {
 	clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
 }
 
+/*
+ * 分屏直播页的沉浸模式（`#wall-panel.wall-immersive`）。
+ *
+ * 网页全屏与浏览器全屏共用这一套：面板脱离文档流铺满视口，格子不再锁 16:9，
+ * 而是跟着视口伸缩——否则大屏上还是原来那点小画面，等于没全屏。
+ * 这里只改外层尺寸，iframe 内部的播放器怎么缩放由平台自己决定。
+ *
+ * 不加 @layer，好盖过 Tailwind 的 `aspect-video` 这类已分层工具类。
+ * z-index 要高于 Layout 里 sticky 的页头（z-50），低于跳转链接（z-100）。
+ */
+.wall-immersive {
+	background: var(--color-ink);
+	display: flex;
+	flex-direction: column;
+	inset: 0;
+	overflow: auto;
+	padding: 0.75rem;
+	position: fixed;
+	z-index: 60;
+	/*
+	 * 必须清掉 margin：父容器是 Tailwind 的 `space-y-4`，会给面板自己留下 1rem 上外边距。
+	 * fixed 元素一旦带上外边距，`inset: 0` 解出来的高度就会少掉那 1rem（实测 900 → 884）。
+	 */
+	margin: 0;
+}
+.wall-immersive #wall {
+	flex: 1;
+	min-height: 0;
+}
+/* 工具栏在全屏下收窄，省下的高度全给画面——手机上这一条能占掉四分之一屏。 */
+.wall-immersive #wall-toolbar {
+	gap: 0.5rem;
+	padding: 0.5rem 0.75rem;
+}
+.wall-immersive .wall-tile {
+	aspect-ratio: auto;
+	height: 100%;
+	min-height: 0;
+}
+/* 全屏后高度要留给画面，解释性文字收起来。 */
+.wall-immersive .wall-hint-long {
+	display: none;
+}
+.wall-immersive-lock {
+	overflow: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
 	html {
 		scroll-behavior: auto;
