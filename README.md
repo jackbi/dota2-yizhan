@@ -62,6 +62,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
 | `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
+| `.cache/avatars/` | 主播头像的字节（构建结束拷进 `dist/avatars/`） | 永久，30 天没用到就清理 |
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
@@ -190,6 +191,36 @@ Chrome 会为两者并存报一条 "Allow attribute will take precedence" 警告
 抓取层（直连优先、失败退回代理、重试、`extractJson`）抽在 `src/lib/fetchText.ts`，
 `liveApi` 与 `roomList` 共用。
 
+### 主播头像：取回来自已发
+
+`src/lib/avatars.ts`。OB 页与分屏页的头像都由它落地，**没有额外请求元数据**——
+头像地址本来就跟着房间数据一起取回来了：
+
+| 用途 | 来源字段 |
+| --- | --- |
+| OB 成员（斗鱼） | `betard` 的 `room.avatar.middle`（另有 `owner_avatar` 与 `big` 相同） |
+| OB 成员（虎牙） | `mp.huya.com` 的 `data.profileInfo.avatar180` |
+| 热门榜（斗鱼） | 分区页内嵌 JSON 的 `av` |
+| 热门榜（虎牙） | 榜单接口的 `avatar180` |
+
+**不直接热链的原因**：虎牙给的是 `http://huyaimg.msstatic.com/...`，站点一旦走 HTTPS 就是
+混合内容；允不允许外链由平台说了算（判不判 Referer 我们控制不了），失败就是一排破图；
+而且热链等于把访客的 IP 送给平台 CDN。所以构建期把字节取回来，页面只引用 `/avatars/xxx.jpg`。
+
+- 直连优先，被重置时退回 `wsrv.nl` 图片代理，顺便裁成正方并缩到 128px
+  （两家原图一个是 200×200、一个是 140×140，体积也不一样）。`LIVE_PROXY` 同样管这里：
+  `off` 只直连，`jina` 只走代理——jina 只能转文本，对图片来说就是纯代理。
+- 文件名是 `平台-房间号-地址哈希.jpg`，地址一变就换文件，不会串图；字节进 `.cache/avatars/`，
+  构建结束由 `astro.config.mjs` 把**本轮用到过**的拷进 `dist/avatars/`（用到的文件会刷新 mtime，
+  拷贝时以此判断），30 天没用到的从缓存里删掉。
+- 斗鱼 `isDefaultAvatar=1` 时**不取**：那是平台的系统默认图，不如页面自己的首字母占位。
+- 拿不到头像的房间不渲染 `<img>`，页面显示品牌渐变底 + 首字母。头像是用**背景图**而不是
+  `<img>` 画的，所以即使文件没发布也不会出现破图图标。
+
+> 给 `RoomRef` 加字段必须同时把 `roomList.ts` 里的 `CACHE_VERSION` 加一。缓存存的是**解析后**的
+> 对象，老缓存不会自己长出字段：加头像那次就没加版本，结果 64 个热门房间一个头像都没有，
+> 而构建汇总还写着「使用缓存」，看上去像抓取失败，其实是拿了一份旧形状的数据。
+
 **两种全屏是并列的**，都在右侧工具栏里，共用一套沉浸样式：
 
 - 「网页全屏」只把面板抽成 `position: fixed; inset: 0` 铺满浏览器窗口，并用 `body` 上的
@@ -241,7 +272,7 @@ Chrome 会为两者并存报一条 "Allow attribute will take precedence" 警告
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
-| `LIVE_PROXY` | 否 | 直播间接口与热门房间列表的取数方式：`auto`（默认，直连优先、被重置时退回 `r.jina.ai`）、`jina`（只走代理）、`off`（只直连） |
+| `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与主播头像的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
 
 ## 赛事数据来自 Liquipedia
