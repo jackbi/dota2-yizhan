@@ -56,11 +56,6 @@ const heatText = heat === null ? null : heat >= 10000 ? `${(heat / 10000).toFixe
 				<span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold" style={`background:${meta.color};color:#fff`}>
 					{meta.short}
 				</span>
-				{
-					m.membership === '编外' && (
-						<span class="shrink-0 rounded border border-gold/40 px-1.5 py-0.5 text-xs text-gold">编外</span>
-					)
-				}
 			</div>
 			<p class="mt-0.5 text-sm text-muted">
 				{m.realName}

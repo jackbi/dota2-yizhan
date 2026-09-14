@@ -20,6 +20,10 @@ export interface ObMember {
 	 * 用于构建期自查房间是否已注销或易主——房间号会随主播转平台而失效。
 	 */
 	ownerMatch: string[];
+	/**
+	 * 名单来源标注：十人正式名单，还是前身「龙宝川」的老成员。
+	 * 目前只作数据溯源保留，页面上不做区分展示。
+	 */
 	membership: '正式成员' | '编外';
 	role: string;
 	achievement: string;

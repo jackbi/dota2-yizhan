@@ -1,7 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import ObMemberCard from '../components/ObMemberCard.astro';
-import { OB_FULL_MEMBERS, OB_MEMBERS } from '../data/ob';
+import { OB_MEMBERS } from '../data/ob';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { formatIso } from '../lib/format';
 
@@ -10,31 +10,26 @@ const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platfo
 
 const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live' && !liveOf(m)?.ownerMismatch).length;
 const staleRooms = OB_MEMBERS.filter((m) => liveOf(m)?.ownerMismatch);
-const outsiders = OB_MEMBERS.filter((m) => m.membership === '编外');
 ---
 
 <Layout
 	title="OB 大家庭 · DOTA2 驿站"
-	description="OB（Old Boys）十人名单、真实姓名、位置与荣誉，以及各人直播间与构建期开播状态快照。"
+	description="OB（Old Boys）成员的真实姓名、位置与荣誉，以及各人直播间与构建期开播状态快照。"
 >
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 		<div class="mb-8">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">OB 大家庭</p>
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">这群老将，就是情怀</h1>
 			<p class="mt-3 max-w-3xl text-muted">
-				OB（Old Boys）是国内 DOTA2 退役选手组成的娱乐团体，2014 年下半年建队，从最初的六人一路扩到十人。
+				OB（Old Boys）是国内 DOTA2 退役选手组成的娱乐团体，2014 年下半年建队，从最初的六人一路壮大。
 				下面是各人的真实姓名、位置、荣誉、直播间与社区外号。
 			</p>
 		</div>
 
 		<div class="mb-6 flex flex-wrap items-center gap-3 text-sm">
 			<span class="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2">
-				<span class="text-faint">正式成员</span>
-				<span class="font-display text-cream">{OB_FULL_MEMBERS.length}</span>
-			</span>
-			<span class="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2">
-				<span class="text-faint">编外</span>
-				<span class="font-display text-cream">{outsiders.length}</span>
+				<span class="text-faint">成员</span>
+				<span class="font-display text-cream">{OB_MEMBERS.length}</span>
 			</span>
 			<span class="inline-flex items-center gap-2 rounded-full border border-[#22c55e]/40 bg-[#22c55e]/10 px-4 py-2 text-[#4ade80]">
 				<span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]"></span>
@@ -57,18 +52,7 @@ const outsiders = OB_MEMBERS.filter((m) => m.membership === '编外');
 		</p>
 
 		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-			{OB_FULL_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} />)}
-		</div>
-
-		<div class="mt-12">
-			<h2 class="font-display text-2xl">编外成员</h2>
-			<p class="mt-2 max-w-3xl text-sm text-muted">
-				OB 的前身是「周宝龙」解说三人组，而「周宝龙」的前身是「龙宝川」——下面这位就是那个「川」。
-				他辈分最老，却不在历次正式名单里，媒体口径是「OB 天团的好朋友」。
-			</p>
-			<div class="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-				{outsiders.map((m) => <ObMemberCard member={m} live={liveOf(m)} />)}
-			</div>
+			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} />)}
 		</div>
 
 		<section class="mt-12 rounded-2xl border border-line bg-surface p-6">
@@ -76,8 +60,9 @@ const outsiders = OB_MEMBERS.filter((m) => m.membership === '编外');
 			<ul class="mt-4 space-y-3 text-sm leading-relaxed text-muted">
 				<li>
 					<span class="text-cream">名单与房间号：</span>
-					以斗鱼官方签约通稿（2018-12-07，原文「OB 战队目前共有九人，分别为 YYF、Zhou、DD、龙神、820、宝哥、Hao、Mu、zsmj」）
-					和 2019-06-13 OB 官博「十人全家福」（新增狗哥）为准；各人的本名、位置与荣誉同样取自这份官方资料。
+					十人名单以斗鱼官方签约通稿（2018-12-07，原文「OB 战队目前共有九人，分别为 YYF、Zhou、DD、龙神、820、宝哥、Hao、Mu、zsmj」）
+					和 2019-06-13 OB 官博「十人全家福」（新增狗哥）为准；老陈是 OB 前身「龙宝川」三人组的成员，
+					与 OB 一起活动多年，因此同样收录在本页。各人的本名、位置与荣誉取自上述官方资料。
 				</li>
 				<li>
 					<span class="text-cream">外号与梗：</span>
@@ -94,7 +79,7 @@ const outsiders = OB_MEMBERS.filter((m) => m.membership === '编外');
 					并不代表名单本身有误。
 				</li>
 				<li>
-					<span class="text-cream">尚未收录：</span>
+					<span class="text-cream">待补充：</span>
 					老陈的真名与房间号目前只有自媒体与录像聚合站来源，缺少官方出处；若你能提供更权威的资料，欢迎补充。
 				</li>
 			</ul>
