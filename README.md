@@ -61,6 +61,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | `.cache/translate/` | 机器翻译结果 | 永久 |
 | `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
 | `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
+| `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
@@ -140,6 +141,46 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 于是可能出现"这个进程抓失败了、另一个进程刚抓到并写了缓存"。所以抓取失败后还会等一下重读缓存
 （`waitForPeerCache`），否则同一个房间在不同进程渲染出的页面里会一个显示直播中、一个显示状态未知。
 
+### 分屏直播页：嵌入结论与房间列表
+
+`src/pages/live.astro` + `src/scripts/liveWall.ts` 是左侧房间列表、右侧监控室的分屏页。
+列表与墙面都由浏览器渲染（`items.astro` / `heroes.astro` 也是这个路子），排布和自建房间存在
+`localStorage` 的 `dota2-live-wall/v1` 里。
+
+**能不能把别人的直播间嵌进自己页面？** 构建期查过，结论是"能嵌，但平台随时可能变"：
+
+- 斗鱼房间页**没有** `X-Frame-Options`，虎牙的 CSP 里**没有** `frame-ancestors`。
+  用 `api.hackertarget.com/httpheaders` 查的（先用 bing / github / MDN 三个已知会发
+  `X-Frame-Options` 的站点验证过这个工具确实会报，baidu / 斗鱼不报就是真没有）。
+- 两家的页面内联脚本、抽查的 JS chunk 里都没有 `top.location` / `frameElement` 这类防嵌代码。
+- 但**这些都不等于一定出画面**：还可能撞上登录要求、风控验证（斗鱼响应头里有 `X-Px`，
+  即 PerimeterX）、以及浏览器对第三方 Cookie 的分区。所以每格都固定留了「打开直播间」外链，
+  空白时直接跳官方页。
+
+本机**无法**端到端验证：到 `douyu.com` / `huya.com` 的 TLS 握手被重置，只能走 `r.jina.ai`
+读文本，浏览器测试只会得到 `net::ERR_CONNECTION_CLOSED`（不是 `ERR_BLOCKED_BY_RESPONSE`，
+后者才代表被响应头拒绝）。所以要确认的话，得在有国内网络的机器上打开页面看。
+
+**房间列表**由 `src/lib/roomList.ts` 在构建期抓，两个来源都是平台给分区页用的那份数据：
+
+- 斗鱼 `https://www.douyu.com/g_DOTA2`：房间列表以 JSON 内嵌在 HTML 里
+  （`{"cateInfo":…,"list":[{"authInfo":…,"rid":9999,"nn":"yyfyyf","ol":3612801,…}]}`）。
+  所以必须按**原始 HTML** 取——本机直连被重置时走代理，就得给 `r.jina.ai` 带
+  `x-respond-with: html`，否则它会把页面转成 markdown，那段 JSON 就没了。
+  页面里写的 `pagePath: /gapi/rknc/directory/mixListV1/2_3/` 直接请求是 **404**，别去试。
+  房间对象都以 `{"authInfo"` 开头，按它切块后在块内取字段，比整段正则安全。
+- 虎牙 `https://www.huya.com/cache.php?m=LiveList&do=getLiveListByPage&gameId=7`。
+  `gameId=7` 是 DOTA2（从 `m=Game&do=getGameList` 里查的：1 是英雄联盟、6 是 DOTA1）。
+  **房间号要取 `profileRoom`**：列表里的 `privateHost` 是 `longdd` 这种靓号字符串，
+  开播接口喂它会返回 422，只有 `profileRoom`（LongDD 是 678555）才认。
+
+热度值两家口径不同（斗鱼 `ol`、虎牙 `totalCount`），**不可横向比较**，所以页面上只用它做
+同平台内的提示，不做跨平台排序。热门榜本身只列当前开播的房间，因此这些房间一律标「榜单」
+而不是标绿点——绿点只给有构建期开播状态的 OB 成员，避免把榜单快照包装成实时状态。
+
+抓取层（直连优先、失败退回代理、重试、`extractJson`）抽在 `src/lib/fetchText.ts`，
+`liveApi` 与 `roomList` 共用。
+
 ### 视频：只信 B站 自己的接口
 
 `src/data/obVideos.ts` 是页面上的视频清单（23 支成员「名场面 / 人物志」+ 7 支剑雪封喉）。
@@ -176,7 +217,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
-| `LIVE_PROXY` | 否 | 直播间接口的取数方式：`auto`（默认，直连优先、被重置时退回 `r.jina.ai`）、`jina`（只走代理）、`off`（只直连） |
+| `LIVE_PROXY` | 否 | 直播间接口与热门房间列表的取数方式：`auto`（默认，直连优先、被重置时退回 `r.jina.ai`）、`jina`（只走代理）、`off`（只直连） |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
 
 ## 赛事数据来自 Liquipedia
