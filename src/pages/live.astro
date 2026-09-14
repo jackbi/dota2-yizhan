@@ -148,6 +148,9 @@ const STATS = [
 						</div>
 						<p class="text-[11px] leading-relaxed text-faint">
 							虎牙的房间号是数字（如 LongDD 的 678555），斗鱼的也是数字；链接会自动识别平台。
+							<span class="text-gold/80">B站 不支持外站嵌入</span>（它的响应头带着
+							<code class="rounded bg-surface-3 px-1 py-0.5">X-Frame-Options: SAMEORIGIN</code>），
+							加进去也只会是一个黑格子。
 						</p>
 					</form>
 				</div>
@@ -190,6 +193,33 @@ const STATS = [
 								class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
 							>
 								清空
+							</button>
+						</div>
+
+						{/* 取景：把平台页面裁到播放器区域，格子里的画面就大了。 */}
+						<div class="flex items-center gap-2">
+							<button
+								id="wall-crop"
+								type="button"
+								aria-pressed="false"
+								title="只显示平台播放器区域，把页面其余部分裁掉（切换会重新加载画面）"
+								class="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+							>
+								<svg
+									width="13"
+									height="13"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+									aria-hidden="true"
+								>
+									<path d="M6 2v14a2 2 0 0 0 2 2h14"></path>
+									<path d="M18 22V8a2 2 0 0 0-2-2H2"></path>
+								</svg>
+								只显示画面
 							</button>
 						</div>
 
@@ -294,6 +324,25 @@ const STATS = [
 							<span class="text-cream">音量没法从这边控制。</span>
 							iframe 是跨域的，父页面读不到它的音量，也没有静音按钮——
 							要安静就少开几格，或者在各格播放器里各自调。
+						</li>
+						<li>
+							<span class="text-cream">「只显示画面」是裁出来的，不是把流抽出来。</span>
+							每格嵌的仍然是平台自己的直播间页面，只是用 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]"
+								>transform</code
+							> 把它放大错位，让播放器正好落在格子里，其余部分被裁掉。定位靠 URL 片段锚点
+							（斗鱼 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">#js-player-video</code>、
+							虎牙 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">#J_playerMain</code>），
+							并且要等页面渲染完再补一次——平台页面里播放器的位置会被广告和推荐位顶来顶去。
+							广告是后到的，个别房间仍会偏，所以每格左下角留了上下按钮自己对齐。
+							视频上盖着的弹幕层属于播放器本身，去不掉。
+						</li>
+						<li>
+							<span class="text-cream">B站 嵌不进来。</span>
+							<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">live.bilibili.com</code>
+							的响应头带 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">X-Frame-Options: SAMEORIGIN</code>，
+							浏览器会直接拒绝（控制台报 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]"
+								>ERR_BLOCKED_BY_RESPONSE</code
+							>），格子里只会是黑的。这是 B站 自己的策略，绕不过去，所以只支持斗鱼与虎牙。
 						</li>
 						<li>
 							<span class="text-cream">热度不可横向比较。</span>
