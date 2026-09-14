@@ -104,21 +104,39 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	}
 
 	/** OB 成员才有构建期状态；热门榜只标「榜单」。 */
-	function statusDot(r: RoomRef): string {
-		const cls =
-			r.live === 'live'
-				? 'animate-pulse bg-[#22c55e]'
-				: r.live === 'replay'
-					? 'bg-gold'
-					: r.live
-						? 'bg-zinc-500'
-						: 'bg-dota';
-		return `<span class="h-1.5 w-1.5 shrink-0 rounded-full ${cls}" aria-hidden="true"></span>`;
+	function dotColor(r: RoomRef): string {
+		return r.live === 'live'
+			? 'animate-pulse bg-[#22c55e]'
+			: r.live === 'replay'
+				? 'bg-gold'
+				: r.live
+					? 'bg-zinc-500'
+					: 'bg-dota';
 	}
 
 	function statusText(r: RoomRef): string {
 		if (r.live) return STATE_LABEL[r.live] ?? '状态未知';
 		return '榜单';
+	}
+
+	/**
+	 * 头像 + 右下角状态点。
+	 *
+	 * 头像是**背景图**而不是 `<img>`：加载失败时不会渲染破图图标，而是露出底下的首字母占位
+	 * （品牌渐变底），所以拿不到头像的房间看起来一样整齐。状态点收进头像角上省一列宽度，
+	 * 同时用 `sr-only` 补一句状态文字——开播状态不能只靠颜色表达。
+	 */
+	function avatarBadge(r: RoomRef, size: 'row' | 'tile'): string {
+		const box = size === 'row' ? 'h-8 w-8 rounded-lg text-[10px]' : 'h-5 w-5 rounded text-[8px]';
+		const dot = size === 'row' ? 'h-2 w-2' : 'h-1.5 w-1.5';
+		return `<span class="relative shrink-0">
+			<span class="relative grid ${box} place-items-center overflow-hidden bg-gradient-to-br from-dota to-dota-deep font-display text-white" aria-hidden="true">
+				${esc(r.name.slice(0, 2))}
+				${r.avatar ? `<span class="absolute inset-0 bg-cover bg-center" style="background-image:url('${esc(r.avatar)}')"></span>` : ''}
+			</span>
+			<span class="absolute -bottom-0.5 -right-0.5 ${dot} rounded-full ring-2 ring-ink-2 ${dotColor(r)}" aria-hidden="true"></span>
+			<span class="sr-only">${esc(statusText(r))}</span>
+		</span>`;
 	}
 
 	function restore(): State {
@@ -176,7 +194,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				draggable="true" data-key="${esc(r.key)}">
 				<button type="button" class="room-add flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
 					data-key="${esc(r.key)}" aria-label="把 ${esc(r.name)} 加入监控室">
-					${statusDot(r)}
+					${avatarBadge(r, 'row')}
 					<span class="min-w-0 flex-1">
 						<span class="block truncate text-sm text-cream">${esc(r.name)}</span>
 						<span class="block truncate text-[11px] text-faint">${meta.label} ${esc(r.roomId)}${r.title ? ' · ' + esc(r.title) : ''}</span>
@@ -223,7 +241,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 
 		return `<div class="${base} border-line bg-ink-2" data-slot="${index}" data-key="${esc(r.key)}">
 			<div class="flex items-center gap-2 border-b border-line bg-surface/80 px-2 py-1.5">
-				${statusDot(r)}
+				${avatarBadge(r, 'tile')}
 				<span class="min-w-0 flex-1 truncate text-xs font-medium text-cream">${esc(r.name)}</span>
 				<span class="shrink-0 text-[10px] tabular-nums text-faint">${esc(r.roomId)}</span>
 				${badge(r.platform)}

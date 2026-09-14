@@ -3,6 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import { OB_MEMBERS } from '../data/ob';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { fetchPopularRooms } from '../lib/roomList';
+import { localizeAvatars } from '../lib/avatars';
 import { formatIso } from '../lib/format';
 import { roomUrl } from '../data/site';
 import type { RoomRef } from '../data/types';
@@ -21,6 +22,7 @@ const obRooms: RoomRef[] = OB_MEMBERS.map((m) => {
 		name: m.name,
 		title: s?.roomName,
 		live: s?.state,
+		avatar: s?.avatar,
 		source: 'ob',
 	};
 });
@@ -29,6 +31,12 @@ const obRooms: RoomRef[] = OB_MEMBERS.map((m) => {
 // 信息更多，所以保留 OB 版本，去掉热门榜里的重复项。
 const obKeys = new Set(obRooms.map((r) => r.key));
 const popularOnly = popular.filter((r) => !obKeys.has(r.key));
+
+// 头像的平台地址换成本站路径。拿不到就保持 undefined，页面上显示首字母——
+// 不渲染 <img>，所以不会出现"文件没发布、留下一排破图"。
+const allRooms = [...obRooms, ...popularOnly];
+const avatars = await localizeAvatars(allRooms);
+for (const r of allRooms) r.avatar = avatars.get(r.key);
 
 const liveCount = obRooms.filter((r) => r.live === 'live').length;
 const payload = JSON.stringify({ ob: obRooms, popular: popularOnly, snapshotAt: snapshot.at });
