@@ -97,6 +97,33 @@ export interface LiveSnapshot {
 	statuses: Record<string, LiveStatus>;
 }
 
+/** 分屏页左侧列表里一项的来源。 */
+export type RoomSource = 'ob' | 'popular' | 'manual';
+
+/**
+ * 分屏页左侧列表里的一项。
+ *
+ * `hot` 是平台自己的热度值：斗鱼取 `ol`、虎牙取 `totalCount`，两家口径不同，
+ * **不能横向比较**，所以页面上不拿它做跨平台排序。
+ */
+export interface RoomRef {
+	/** `${platform}:${roomId}`，同时用作 DOM 的 data-key */
+	key: string;
+	platform: Platform;
+	roomId: string;
+	/** 主播昵称 */
+	name: string;
+	/** 直播间标题 */
+	title?: string;
+	/** 平台热度，只有热门榜带 */
+	hot?: number;
+	/** 平台给主播打的标签（斗鱼是 roomLabel） */
+	labels?: string[];
+	/** OB 成员才有：构建期抓到的开播状态 */
+	live?: LiveState;
+	source: RoomSource;
+}
+
 /** 新闻列表卡片的展示数据。 */
 export interface NewsCardItem {
 	id: string;

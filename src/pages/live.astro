@@ -1,32 +1,246 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import LiveGrid from '../components/LiveGrid.astro';
 import { OB_MEMBERS } from '../data/ob';
 import { fetchLiveSnapshot } from '../lib/liveApi';
+import { fetchPopularRooms } from '../lib/roomList';
 import { formatIso } from '../lib/format';
+import { roomUrl } from '../data/site';
+import type { RoomRef } from '../data/types';
 
 const snapshot = await fetchLiveSnapshot();
-const liveCount = OB_MEMBERS.filter((m) => {
-	const s = snapshot.statuses[`${m.platform}:${m.roomId}`];
-	return s?.state === 'live';
-}).length;
+const popular = await fetchPopularRooms();
+
+const statusOf = (platform: string, roomId: string) => snapshot.statuses[`${platform}:${roomId}`];
+
+const obRooms: RoomRef[] = OB_MEMBERS.map((m) => {
+	const s = statusOf(m.platform, m.roomId);
+	return {
+		key: `${m.platform}:${m.roomId}`,
+		platform: m.platform,
+		roomId: m.roomId,
+		name: m.name,
+		title: s?.roomName,
+		live: s?.state,
+		source: 'ob',
+	};
+});
+
+// 热门榜里会有 OB 成员（YYF、820、ZSMJ 都在榜上）。OB 那条带构建期抓到的开播状态，
+// 信息更多，所以保留 OB 版本，去掉热门榜里的重复项。
+const obKeys = new Set(obRooms.map((r) => r.key));
+const popularOnly = popular.filter((r) => !obKeys.has(r.key));
+
+const liveCount = obRooms.filter((r) => r.live === 'live').length;
+const payload = JSON.stringify({ ob: obRooms, popular: popularOnly, snapshotAt: snapshot.at });
+
+const FILTERS = [
+	{ id: 'all', label: '全部' },
+	{ id: 'ob', label: 'OB 成员' },
+	{ id: 'popular', label: '热门榜' },
+	{ id: 'dy', label: '斗鱼' },
+	{ id: 'hy', label: '虎牙' },
+	{ id: 'manual', label: '我添加的' },
+];
+
+const STATS = [
+	{ label: '可选房间', value: String(obRooms.length + popularOnly.length) },
+	{ label: 'OB 在播', value: String(liveCount), accent: liveCount > 0 },
+	{ label: '斗鱼热门', value: String(popularOnly.filter((r) => r.platform === 'douyu').length) },
+	{ label: '虎牙热门', value: String(popularOnly.filter((r) => r.platform === 'huya').length) },
+];
 ---
 
-<Layout title="分屏直播 · DOTA2 驿站" description="网页端分屏直播，聚合观看多位 OB 主播，并显示构建期抓取的开播状态。">
-	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
-		<div class="mb-8">
+<Layout
+	title="分屏直播 · DOTA2 驿站"
+	description="网页端分屏监控室：左侧按热度与 OB 名单挑直播间，拖到右侧按格播放，支持搜索与按房间号添加。"
+>
+	<section class="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8">
+		<div class="mb-6">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">DOTA2 驿站 · 分屏直播</p>
-			<h1 class="mt-2 font-display text-3xl sm:text-4xl">聚合分屏，一屏多路</h1>
-			<p class="mt-3 max-w-2xl text-muted">
-				选择想要观看的主播，切换分屏数量，在一个页面随时掌握多路直播间动态。
-				每个画面右下角都能直接跳到官方直播间。
-			</p>
-			<p class="mt-3 text-sm text-faint">
-				开播状态抓取于 <span class="text-cream/80">{formatIso(snapshot.at)}</span>（静态站点快照，不随时间刷新），
-				当前 {liveCount} 位在播。
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">监控室</h1>
+			<p class="mt-3 max-w-3xl text-muted">
+				左边挑房间，右边按格播放。可以搜索、按平台筛选，也可以直接填房间号或用平台链接添加——
+				添加后的房间会留在浏览器里，下次打开还在。
 			</p>
 		</div>
 
-		<LiveGrid members={OB_MEMBERS} snapshot={snapshot} />
+		<div class="mb-6 flex flex-wrap items-center gap-2.5 text-sm">
+			{
+				STATS.map((s) => (
+					<span
+						class:list={[
+							'inline-flex items-center gap-2 rounded-full border px-4 py-2',
+							s.accent ? 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#4ade80]' : 'border-line bg-surface',
+						]}
+					>
+						{s.accent && <span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]" />}
+						<span class:list={['text-faint', s.accent && 'text-[#4ade80]/80']}>{s.label}</span>
+						<span class:list={['font-display', !s.accent && 'text-cream']}>{s.value}</span>
+					</span>
+				))
+			}
+		</div>
+
+		<div class="grid gap-5 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
+			<aside
+				class="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)]"
+				aria-label="直播间列表"
+			>
+				<div class="space-y-3 border-b border-line p-4">
+					<div>
+						<label for="room-search" class="sr-only">搜索直播间</label>
+						<input
+							id="room-search"
+							type="search"
+							placeholder="搜主播、标题或房间号…"
+							autocomplete="off"
+							class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+						/>
+					</div>
+
+					<div id="room-filters" class="flex flex-wrap gap-1.5" role="group" aria-label="筛选来源">
+						{
+							FILTERS.map((f) => (
+								<button
+									type="button"
+									data-filter={f.id}
+									aria-pressed={f.id === 'all' ? 'true' : 'false'}
+									class="rounded-md border border-line px-2.5 py-1 text-xs text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+								>
+									{f.label}
+								</button>
+							))
+						}
+					</div>
+
+					<form id="room-form" class="space-y-2 border-t border-line pt-3">
+						<div class="flex gap-2">
+							<label for="room-platform" class="sr-only">平台</label>
+							<select
+								id="room-platform"
+								class="rounded-lg border border-line bg-ink-2 px-2 py-1.5 text-xs text-cream focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							>
+								<option value="douyu">斗鱼</option>
+								<option value="huya">虎牙</option>
+							</select>
+							<label for="room-input" class="sr-only">房间号或直播间链接</label>
+							<input
+								id="room-input"
+								type="text"
+								placeholder="房间号，或粘贴直播间链接"
+								autocomplete="off"
+								class="min-w-0 flex-1 rounded-lg border border-line bg-ink-2 px-2.5 py-1.5 text-xs text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-invalid:border-gold"
+							/>
+							<button
+								type="submit"
+								class="shrink-0 rounded-lg bg-dota px-3 py-1.5 text-xs font-medium text-white transition hover:bg-dota-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							>
+								添加
+							</button>
+						</div>
+						<p class="text-[11px] leading-relaxed text-faint">
+							虎牙的房间号是数字（如 LongDD 的 678555），斗鱼的也是数字；链接会自动识别平台。
+						</p>
+					</form>
+				</div>
+
+				<div id="room-list" class="min-h-0 flex-1 space-y-1 overflow-y-auto p-2"></div>
+				<p id="room-count" class="border-t border-line px-4 py-2.5 text-[11px] text-faint">加载中…</p>
+			</aside>
+
+			<div class="space-y-4">
+				<div class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface p-4">
+					<div id="wall-layout" class="flex items-center gap-1 rounded-lg border border-line p-1" role="group" aria-label="分屏格数">
+						{
+							[1, 2, 4, 6, 9].map((n) => (
+								<button
+									type="button"
+									data-layout={n}
+									aria-pressed="true"
+									class="min-w-9 rounded-md px-2.5 py-1.5 text-sm font-medium text-muted transition hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:bg-dota aria-pressed:text-white"
+								>
+									{n}
+								</button>
+							))
+						}
+					</div>
+					<div class="flex items-center gap-2">
+						<button
+							id="wall-stop"
+							type="button"
+							class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+						>
+							停止全部画面
+						</button>
+						<button
+							id="wall-clear"
+							type="button"
+							class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+						>
+							清空
+						</button>
+					</div>
+					<p class="w-full text-[11px] leading-relaxed text-faint sm:w-auto sm:flex-1">
+						<span id="wall-status" class="text-cream/70">墙上 0 / 4 格</span> ·
+						每个格子都是一个完整的直播间页面，开太多会卡，建议 4 格以内；切换格数会重新排布并停掉已加载的画面。
+					</p>
+				</div>
+
+				<div id="wall" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+
+				<noscript>
+					<p class="rounded-2xl border border-line bg-surface p-4 text-sm leading-relaxed text-muted">
+						监控室需要 JavaScript（拖拽、记住墙上的房间都靠它）。直接去官方直播间：
+						{
+							obRooms.slice(0, 6).map((r) => (
+								<a href={roomUrl(r.platform, r.roomId)} class="text-dota-light hover:text-gold">
+									{r.name}
+								</a>
+							))
+						}
+					</p>
+				</noscript>
+
+				<section class="rounded-2xl border border-line bg-surface p-5">
+					<h2 class="font-display text-lg">关于「能不能直接在页面里播」</h2>
+					<ul class="mt-3 space-y-2.5 text-sm leading-relaxed text-muted">
+						<li>
+							<span class="text-cream">结论：能嵌，但平台随时可能变。</span>
+							构建期查过两家的响应头：斗鱼房间页<strong class="text-cream/80">没有</strong>
+							<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">X-Frame-Options</code>，
+							虎牙的 CSP 里<strong class="text-cream/80">没有</strong>
+							<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">frame-ancestors</code>，
+							两家的页面内联脚本里也没有防嵌逻辑。也就是说这里放的是各家的官方页面，
+							能不能出画面由平台说了算，本站不转码、不代理视频流。
+						</li>
+						<li>
+							<span class="text-cream">所以每格都留了「打开直播间」。</span>
+							如果某一格空白、停在验证页或提示要登录，就是平台这次不让嵌了，点右下角跳官方页即可。
+						</li>
+						<li>
+							<span class="text-cream">音量没法从这边控制。</span>
+							iframe 是跨域的，父页面读不到它的音量，也没有静音按钮——
+							要安静就少开几格，或者在各格播放器里各自调。
+						</li>
+						<li>
+							<span class="text-cream">热度不可横向比较。</span>
+							斗鱼取的是房间 `ol`、虎牙取的是 `totalCount`，两套口径不一样，
+							所以只在同平台内看看谁更热，不拿它做跨平台排序。
+						</li>
+						<li>
+							<span class="text-cream">热门榜的快照。</span>
+							榜单抓取于 <span class="text-cream/80">{formatIso(snapshot.at)}</span>，
+							只列当时正在开播的房间；OB 成员的状态同样是构建期快照，
+							两者都不随时间刷新。左边的绿点只代表 OB 成员，热门榜的房间一律标「榜单」。
+						</li>
+					</ul>
+				</section>
+			</div>
+		</div>
 	</section>
+
+	<script type="application/json" id="live-data" set:html={payload} is:inline />
+	<script>
+		import '../scripts/liveWall';
+	</script>
 </Layout>
