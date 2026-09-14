@@ -85,6 +85,14 @@ export interface LiveStatus {
 	ownerUnrecognized: boolean;
 	/** 接口没响应等情况需要说明时使用 */
 	note?: string;
+	/**
+	 * 主播头像。
+	 *
+	 * 解析阶段这里是**平台 CDN 地址**（斗鱼 `room.owner_avatar`、虎牙 `profileInfo.avatar180`），
+	 * 页面渲染前会用 `localizeAvatars()` 换成本站的 `/avatars/xxx.jpg`。
+	 * 平台用系统默认头像时（斗鱼 `isDefaultAvatar`）不取，宁可在页面上显示首字母。
+	 */
+	avatar?: string;
 	/** 本次抓取时间，ISO 字符串 */
 	fetchedAt: string;
 }
@@ -121,6 +129,13 @@ export interface RoomRef {
 	labels?: string[];
 	/** OB 成员才有：构建期抓到的开播状态 */
 	live?: LiveState;
+	/**
+	 * 主播头像。和在 `LiveStatus` 里一样：解析阶段是平台 CDN 地址
+	 * （斗鱼分区页的 `av`、虎牙榜单的 `avatar180`），页面渲染前由
+	 * `localizeAvatars()` 换成本站的 `/avatars/xxx.jpg`；拿不到就是 undefined，
+	 * 页面显示首字母。
+	 */
+	avatar?: string;
 	source: RoomSource;
 }
 

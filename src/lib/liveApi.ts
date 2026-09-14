@@ -75,10 +75,23 @@ interface ParsedRoom {
 	state: LiveState;
 	ownerName?: string;
 	roomName?: string;
+	avatar?: string;
 }
 
 function str(value: unknown): string | undefined {
 	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
+}
+
+/**
+ * 头像：`room.avatar` 是个 `{big, middle, small}` 对象，另有一个扁平的 `owner_avatar`
+ * 与 big 相同。取 middle——页面上最大也只显示到 56px，没必要拉 big。
+ * `isDefaultAvatar` 为 1 时斗鱼给的是系统默认图，那种图不如页面自己的首字母占位，
+ * 所以直接不要。
+ */
+function douyuAvatar(room: Record<string, unknown>): string | undefined {
+	if (Number(room.isDefaultAvatar) === 1) return undefined;
+	const sizes = (room.avatar ?? {}) as Record<string, unknown>;
+	return str(sizes.middle) ?? str(sizes.small) ?? str(room.owner_avatar);
 }
 
 function parseDouyu(json: unknown): ParsedRoom | null {
@@ -96,6 +109,7 @@ function parseDouyu(json: unknown): ParsedRoom | null {
 		state: status === '1' ? (looping ? 'replay' : 'live') : status === '2' ? 'offline' : 'unknown',
 		ownerName: str(room.nickname),
 		roomName: str(room.room_name),
+		avatar: douyuAvatar(room),
 	};
 }
 
@@ -109,6 +123,8 @@ function parseHuya(json: unknown): ParsedRoom | null {
 		state: live === 'ON' ? 'live' : live === 'REPLAY' ? 'replay' : live === 'OFF' ? 'offline' : 'unknown',
 		ownerName: str(profile.nick),
 		roomName: str(liveData.roomName),
+		// 虎牙给的是 http:// 地址，落地成本地文件后与协议无关，原样留着。
+		avatar: str(profile.avatar180),
 	};
 }
 
@@ -199,6 +215,7 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 				state: parsed.state,
 				ownerName: parsed.ownerName,
 				roomName: parsed.roomName,
+				avatar: parsed.avatar,
 				ownerUnrecognized: ownerUnrecognized(parsed.ownerName, room.ownerMatch),
 				fetchedAt: new Date().toISOString(),
 			};

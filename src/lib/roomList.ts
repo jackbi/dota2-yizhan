@@ -27,6 +27,15 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 /** 热门榜变化不快，而且拉一次要过代理，缓存给长一点。 */
 const TTL_SECONDS = 30 * 60;
 
+/**
+ * 缓存格式版本。**给 `RoomRef` 加字段就要加一。**
+ *
+ * 缓存里存的是解析后的对象，老缓存不会自己长出字段：加头像那次就没加版本，
+ * 结果 64 个热门房间一个头像都没有，而构建汇总还写着「使用缓存」，
+ * 看起来像抓取失败，实际是拿了一份旧形状的数据。加了版本号，形状一变缓存即失效自愈。
+ */
+const CACHE_VERSION = 2;
+
 const DOUYU_PAGE = 'https://www.douyu.com/g_DOTA2';
 const HUYA_LIST = 'https://www.huya.com/cache.php?m=LiveList&do=getLiveListByPage&gameId=7&page=1';
 
@@ -71,6 +80,8 @@ export function parseDouyuCategory(html: string): Omit<RoomRef, 'key' | 'source'
 			title: jsonStr(pick(/"rn":"((?:[^"\\]|\\.)*)"/)),
 			hot: Number(pick(/"ol":(\d+)/) ?? 0) || undefined,
 			labels: labels.length ? labels : undefined,
+			// 列表里每个房间都带头像（`av` 是 _middle.jpg 那一档）。
+			avatar: jsonStr(pick(/"av":"((?:[^"\\]|\\.)*)"/)),
 		});
 	}
 	return rooms;
@@ -87,7 +98,15 @@ export function parseHuyaCategory(json: unknown): Omit<RoomRef, 'key' | 'source'
 		if (!roomId || !name) continue;
 		const title = String(row.roomName ?? '').trim();
 		const hot = Number(String(row.totalCount ?? '').replace(/\D/g, '')) || undefined;
-		rooms.push({ platform: 'huya', roomId, name, title: title || undefined, hot });
+		const avatar = String(row.avatar180 ?? '').trim();
+		rooms.push({
+			platform: 'huya',
+			roomId,
+			name,
+			title: title || undefined,
+			hot,
+			avatar: avatar || undefined,
+		});
 	}
 	return rooms;
 }
@@ -100,7 +119,9 @@ async function readCache(file: string, ttlSeconds: number): Promise<RoomRef[] | 
 	try {
 		const stat = await fs.stat(file);
 		if (Date.now() - stat.mtimeMs >= ttlSeconds * 1000) return null;
-		return JSON.parse(await fs.readFile(file, 'utf8')) as RoomRef[];
+		const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as { v?: number; rooms?: RoomRef[] };
+		if (parsed.v !== CACHE_VERSION || !Array.isArray(parsed.rooms)) return null;
+		return parsed.rooms;
 	} catch {
 		return null;
 	}
@@ -109,7 +130,7 @@ async function readCache(file: string, ttlSeconds: number): Promise<RoomRef[] | 
 async function writeCache(file: string, rooms: RoomRef[]): Promise<void> {
 	try {
 		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(file, JSON.stringify(rooms), 'utf8');
+		await fs.writeFile(file, JSON.stringify({ v: CACHE_VERSION, rooms }), 'utf8');
 	} catch {
 		// 缓存写不进去不影响构建。
 	}
