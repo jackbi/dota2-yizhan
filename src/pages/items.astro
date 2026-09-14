@@ -41,7 +41,7 @@ import Layout from '../layouts/Layout.astro';
 
 		<div id="item-status" class="hidden rounded-2xl border border-line bg-surface p-8 text-center">
 			<p class="text-muted">装备数据加载失败，请检查网络后重试。</p>
-			<button id="item-retry" type="button" class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-light">重新加载</button>
+			<button id="item-retry" type="button" class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-dark">重新加载</button>
 		</div>
 
 		<div id="item-grid" class="min-h-[300px]">
@@ -83,7 +83,7 @@ import Layout from '../layouts/Layout.astro';
 		border-color: var(--color-dota-light);
 	}
 	.filter-chip[aria-pressed='true'] {
-		background: rgb(173 61 40 / 0.14);
+		background: rgb(198 82 44 / 0.14);
 		border-color: var(--color-dota);
 		color: var(--color-gold);
 	}
@@ -117,7 +117,7 @@ import Layout from '../layouts/Layout.astro';
 					<img src="${esc(it.imgUrl)}" alt="${esc(it.nameLoc)}" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-contain p-3 transition duration-300 group-hover:scale-105">
 					<span class="absolute left-2 top-2 rounded-md bg-ink/70 px-1.5 py-0.5 text-[11px] text-muted backdrop-blur">${esc(grpName)}</span>
 					<span class="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-ink/70 px-1.5 py-0.5 text-xs font-medium tabular-nums text-gold backdrop-blur">
-						<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="#e0a93f"/><circle cx="12" cy="12" r="6.5" fill="#b8860b"/></svg>
+						<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="var(--color-gold)"/><circle cx="12" cy="12" r="6.5" fill="var(--color-gold-deep)"/></svg>
 						${fullCost(it.cost)}
 					</span>
 					<span class="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-surface/70 to-transparent" aria-hidden="true"></span>

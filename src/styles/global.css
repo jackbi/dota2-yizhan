@@ -4,23 +4,43 @@
 	--font-display: "Russo One", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 	--font-body: "Chakra Petch", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
 
-	--color-dota: #ad3d28;
-	--color-dota-dark: #7e2a1b;
-	--color-dota-deep: #541c13;
-	--color-dota-light: #d64a2f;
-	--color-gold: #e0a93f;
-	--color-gold-deep: #b8860b;
+	/*
+	 * 主题色板 —— 一条「余烬」梯度。
+	 *
+	 * 四个基准色本身就是同色系由亮到暗的递进：
+	 *   #c6522c（余烬橙）→ #8f1613（深红）→ #3b1a13（暗棕），另有铜色 #8c4c23。
+	 * 为免语义与明度互相打架，每个色只承担一个角色，文字用色另取提亮档。
+	 *
+	 * 文字档必须提亮：给定的 #c6522c 直接当文字使，在卡片上只有 4.02:1，
+	 * 达不到 WCAG AA 要求的 4.5:1（旧主题的 #d64a2f 同样只有 4.27:1）。
+	 * 因此强调文字改用 #ea6134，即 #c6522c 等比提亮 18%，最差背景 4.64:1。
+	 */
 
-	--color-ink: #0e0b09;
-	--color-ink-2: #130f0c;
-	--color-surface: #191311;
-	--color-surface-2: #221a16;
-	--color-surface-3: #2c221c;
-	--color-line: #332822;
+	/* 品牌色：主按钮、描边、强调 */
+	--color-dota: #c6522c; /* 给定 */
+	--color-dota-dark: #8f1613; /* 给定：hover / 按下时的压暗档 */
+	--color-dota-deep: #2e1410; /* 派生：渐变最暗端 */
+	--color-dota-light: #ea6134; /* 派生：文字专用提亮档 */
 
-	--color-cream: #f2eae2;
-	--color-muted: #a89d90;
-	--color-faint: #6f665c;
+	/* 次级铜色 */
+	--color-gold: #d9a05e; /* 派生：#8c4c23 的提亮档，供文字 */
+	--color-gold-deep: #8c4c23; /* 给定：铜色填充与描边 */
+
+	/* 深棕底色阶 */
+	--color-ink: #150806;
+	--color-ink-2: #1c0b08;
+	--color-surface: #24100b;
+	--color-surface-2: #2f140f;
+	--color-surface-3: #3b1a13; /* 给定：标签 / 筹码底色 */
+	--color-line: #4a2519;
+
+	/*
+	 * 文本阶。`faint` 从 #6f665c 提亮到 #95847a：旧值在卡片上只有 3.27:1，
+	 * 而它承担的是房间号、播放量、投稿日期这类需要读的信息，不是纯装饰。
+	 */
+	--color-cream: #f4ebe3;
+	--color-muted: #b0a094;
+	--color-faint: #95847a;
 }
 
 html {
@@ -30,8 +50,8 @@ html {
 body {
 	@apply bg-ink text-cream font-body antialiased;
 	background-image:
-		radial-gradient(60rem 40rem at 80% -10%, rgb(173 61 40 / 0.12), transparent 60%),
-		radial-gradient(50rem 34rem at 0% 0%, rgb(224 169 63 / 0.06), transparent 55%),
+		radial-gradient(60rem 40rem at 80% -10%, rgb(198 82 44 / 0.14), transparent 60%),
+		radial-gradient(50rem 34rem at 0% 0%, rgb(140 76 35 / 0.12), transparent 55%),
 		linear-gradient(rgb(255 255 255 / 0.015) 1px, transparent 1px),
 		linear-gradient(90deg, rgb(255 255 255 / 0.015) 1px, transparent 1px);
 	background-size:
@@ -43,7 +63,7 @@ body {
 }
 
 ::selection {
-	background: rgb(173 61 40 / 0.6);
+	background: rgb(198 82 44 / 0.55);
 	color: #fff;
 }
 

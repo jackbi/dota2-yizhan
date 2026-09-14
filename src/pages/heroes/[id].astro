@@ -190,7 +190,7 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 			view.innerHTML = `
 				<div class="rounded-2xl border border-line bg-surface p-10 text-center">
 					<p class="text-muted">英雄数据加载失败，请检查网络后重试。</p>
-					<button data-retry class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-light">重新加载</button>
+					<button data-retry class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-dark">重新加载</button>
 				</div>`;
 			view.querySelector('[data-retry]')?.addEventListener('click', load);
 		};
@@ -346,7 +346,7 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 							${h.topVideo ? `
 								<video id="hero-top" class="absolute inset-0 h-full w-full object-contain object-center" autoplay muted loop playsinline preload="auto" referrerpolicy="no-referrer" poster="${esc(h.topImg || h.img)}" src="${esc(h.topVideo)}"></video>` : `
 								<img src="${esc(h.img)}" alt="${esc(h.name)}" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-contain object-center">`}
-							<div class="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_50%_at_50%_45%,rgba(173,61,40,0.18),transparent_70%)]" aria-hidden="true"></div>
+							<div class="pointer-events-none absolute inset-0 bg-[radial-gradient(60%_50%_at_50%_45%,rgba(198,82,44,0.18),transparent_70%)]" aria-hidden="true"></div>
 							<div class="pointer-events-none absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-ink via-ink/40 to-transparent" aria-hidden="true"></div>
 						</div>
 						<div class="absolute inset-x-0 bottom-0 p-6 sm:p-8">
