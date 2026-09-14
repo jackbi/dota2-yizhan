@@ -12,7 +12,7 @@ const { members, snapshot } = Astro.props;
 const statusOf = (m: ObMember) => snapshot.statuses[`${m.platform}:${m.roomId}`];
 const isLive = (m: ObMember) => {
 	const s = statusOf(m);
-	return s?.state === 'live' && !s.ownerMismatch;
+	return s?.state === 'live' && !s.roomRetaken;
 };
 const defaultIds = members.filter(isLive).map((m) => m.id);
 ---
@@ -65,7 +65,7 @@ const defaultIds = members.filter(isLive).map((m) => m.id);
 								{meta.short}
 							</span>
 							<span class="hidden text-xs text-faint sm:inline">
-								{live && s?.popularity ? `${(s.popularity / 10000).toFixed(1)}万` : LIVE_STATE_LABEL[s?.state ?? 'unknown']}
+								{LIVE_STATE_LABEL[s?.state ?? 'unknown']}
 							</span>
 						</button>
 					);
@@ -115,20 +115,13 @@ const defaultIds = members.filter(isLive).map((m) => m.id);
 											live ? 'animate-pulse bg-[#22c55e]' : s?.state === 'replay' ? 'bg-gold' : 'bg-zinc-500',
 										]}
 									/>
-									{m.name} · {s?.ownerMismatch ? '房间信息有变' : LIVE_STATE_LABEL[s?.state ?? 'unknown']}
+									{m.name} · {s?.roomRetaken ? '房间信息有变' : LIVE_STATE_LABEL[s?.state ?? 'unknown']}
 								</span>
 								<span class="text-xs text-faint">{meta.label} · 房间 {m.roomId}</span>
 							</div>
 
 							<div class="absolute left-3 top-3 flex items-center gap-2">
 								<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-cream backdrop-blur">{m.name}</span>
-								{
-									live && s?.popularity && (
-										<span class="rounded-md bg-ink/70 px-2 py-1 text-xs text-[#4ade80] backdrop-blur">
-											{(s.popularity / 10000).toFixed(1)} 万热度
-										</span>
-									)
-								}
 							</div>
 
 							<a
@@ -141,8 +134,8 @@ const defaultIds = members.filter(isLive).map((m) => m.id);
 							</a>
 						</div>
 						{
-							s?.ownerMismatch && (
-								<p class="mt-1.5 text-xs text-gold">{m.name}：{s.note}，该房间可能已不属于本人。</p>
+							s?.roomRetaken && s.note && (
+								<p class="mt-1.5 text-xs text-gold">{m.name}：{s.note}。</p>
 							)
 						}
 					</div>

@@ -12,34 +12,30 @@ const { member: m, live } = Astro.props;
 const meta = PLATFORM_META[m.platform];
 const url = roomUrl(m.platform, m.roomId);
 const state = live?.state ?? 'unknown';
-const mismatch = live?.ownerMismatch ?? false;
+const retaken = live?.roomRetaken ?? false;
 
-/** 房间已注销/易主时不再声称开播状态，房间号也随之标灰。 */
-const stateText = mismatch ? (live?.note ?? '房间信息有变') : LIVE_STATE_LABEL[state];
-const stateColor = mismatch
+/** 房间已换人时不再声称开播状态，房间号也随之标黄。 */
+const stateText = retaken ? '房间已换人' : LIVE_STATE_LABEL[state];
+const stateColor = retaken
 	? 'text-gold'
 	: state === 'live'
 		? 'text-[#4ade80]'
 		: state === 'replay'
 			? 'text-gold'
 			: 'text-faint';
-const dotClass = mismatch
+const dotClass = retaken
 	? 'bg-gold'
 	: state === 'live'
 		? 'animate-pulse bg-[#22c55e]'
 		: state === 'replay'
 			? 'bg-gold'
 			: 'bg-zinc-500';
-
-/** 平台给的是热度/人气，不是真实观看人数，单位也照平台口径写「万」。 */
-const heat = live?.popularity && live.popularity > 0 ? live.popularity : null;
-const heatText = heat === null ? null : heat >= 10000 ? `${(heat / 10000).toFixed(1)} 万热度` : `${heat} 热度`;
 ---
 
 <article
 	class:list={[
 		'group flex flex-col rounded-2xl border bg-surface p-5 transition',
-		mismatch ? 'border-gold/30' : 'border-line hover:border-dota/50 hover:bg-surface-2',
+		retaken ? 'border-gold/30' : 'border-line hover:border-dota/50 hover:bg-surface-2',
 	]} 
 >
 	<div class="flex items-start gap-4">
@@ -69,9 +65,22 @@ const heatText = heat === null ? null : heat >= 10000 ? `${(heat / 10000).toFixe
 			<span class:list={['h-1.5 w-1.5 rounded-full', dotClass]} />
 			{stateText}
 		</span>
-		{heatText && <span class="text-faint">{heatText}</span>}
-		{live?.category && <span class="text-faint">{live.category}</span>}
+		{live?.roomName && !retaken && <span class="truncate text-faint">{live.roomName}</span>}
 	</div>
+
+	{
+		retaken && live?.note && (
+			<p class="mt-2 rounded-lg border border-gold/30 bg-gold/5 px-2.5 py-1.5 text-xs leading-relaxed text-gold">
+				{live.note}
+				——房间号会随主播转平台、换房间而变化，这不代表名单有误。
+			</p>
+		)
+	}
+	{
+		!retaken && live?.note && (
+			<p class="mt-2 text-xs leading-relaxed text-faint">{live.note}</p>
+		)
+	}
 
 	<p class="mt-3 text-sm leading-relaxed text-muted">{m.description}</p>
 
@@ -118,7 +127,7 @@ const heatText = heat === null ? null : heat >= 10000 ? `${(heat / 10000).toFixe
 
 	<div class="mt-5 flex items-center justify-between gap-3 border-t border-line pt-4">
 		<span class="text-xs text-faint">
-			{meta.label} · 房间 <span class:list={[mismatch ? 'text-gold' : 'text-cream/80']}>{m.roomId}</span>
+			{meta.label} · 房间 <span class:list={[retaken ? 'text-gold' : 'text-cream/80']}>{m.roomId}</span>
 		</span>
 		<a
 			href={url}
@@ -126,12 +135,12 @@ const heatText = heat === null ? null : heat >= 10000 ? `${(heat / 10000).toFixe
 			rel="noopener noreferrer"
 			class:list={[
 				'inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition',
-				state === 'live' && !mismatch
+				state === 'live' && !retaken
 					? 'bg-dota text-white hover:bg-dota-light'
 					: 'border border-line text-muted hover:border-dota hover:text-dota-light',
 			]}
 		>
-			{mismatch ? '打开原房间' : state === 'live' ? '进入直播间' : '前往直播间'}
+			{retaken ? '打开原房间' : state === 'live' ? '进入直播间' : '前往直播间'}
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M7 17 17 7M9 7h8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>

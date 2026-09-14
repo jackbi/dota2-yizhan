@@ -8,8 +8,8 @@ import { formatIso } from '../lib/format';
 const snapshot = await fetchLiveSnapshot();
 const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platform}:${m.roomId}`];
 
-const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live' && !liveOf(m)?.ownerMismatch).length;
-const staleRooms = OB_MEMBERS.filter((m) => liveOf(m)?.ownerMismatch);
+const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live' && !liveOf(m)?.roomRetaken).length;
+const retakenRooms = OB_MEMBERS.filter((m) => liveOf(m)?.roomRetaken);
 ---
 
 <Layout
@@ -39,13 +39,12 @@ const staleRooms = OB_MEMBERS.filter((m) => liveOf(m)?.ownerMismatch);
 
 		<p class="mb-8 rounded-xl border border-line bg-surface/60 px-4 py-3 text-xs leading-relaxed text-faint">
 			开播状态抓取于 <span class="text-cream/80">{formatIso(snapshot.at)}</span>（东八区）。本站是静态站点，
-			状态是<strong class="text-cream/80">构建那一刻的快照</strong>，之后的开播变化请以直播间页面为准；
-			卡片上的「热度」是平台自定义指标，不等于真实观看人数。
+			状态是<strong class="text-cream/80">构建那一刻的快照</strong>，之后的变化请以直播间页面为准。
 			{
-				staleRooms.length > 0 && (
+				retakenRooms.length > 0 && (
 					<span class="text-gold">
-						本次构建检测到 {staleRooms.length} 个房间已注销或易主（
-						{staleRooms.map((m) => `${m.name} ${m.roomId}`).join('、')}），已在其卡片上标注。
+						本次构建发现 {retakenRooms.length} 个房间已由他人使用（
+						{retakenRooms.map((m) => `${m.name} ${m.roomId}`).join('、')}），已在其卡片上标注。
 					</span>
 				)
 			}
@@ -71,11 +70,11 @@ const staleRooms = OB_MEMBERS.filter((m) => liveOf(m)?.ownerMismatch);
 				<li>
 					<span class="text-cream">开播状态：</span>
 					构建期分别请求斗鱼与虎牙的房间接口，再用返回的房主昵称自查房间是否仍属于本人。
-					本页面不显示观看人数，只显示平台自己的热度值；抓不到状态时显示「状态未知」，不做推测。
+					房主昵称对不上时才会说房间已由他人使用；抓不到状态就显示「状态未知」，不做推测。
 				</li>
 				<li>
 					<span class="text-cream">房间号会变：</span>
-					主播转平台或换房间后，旧房间号可能被注销或由他人接手。页面上的「已注销 / 现房主为某某」就是这种情形的自动提示，
+					主播转平台或换房间后，旧房间号可能由他人接手。页面上的「房间已换人」是构建期拿平台返回的房主昵称核对出来的，
 					并不代表名单本身有误。
 				</li>
 				<li>

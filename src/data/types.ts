@@ -39,18 +39,16 @@ export type LiveState = 'live' | 'replay' | 'offline' | 'unknown';
 /** 一个直播间在构建期的实际状态。 */
 export interface LiveStatus {
 	state: LiveState;
-	/** 平台返回的房主昵称 */
+	/** 平台返回的房主昵称，用来自查房间是否仍属于本人 */
 	ownerName?: string;
+	/** 直播间当前标题（仅房主对得上时才可信） */
 	roomName?: string;
-	category?: string;
-	/** 平台自定义的「热度 / 人气」，**不是**真实观看人数 */
-	popularity?: number;
-	/** 房间当前房主与本人对不上（已注销或已易主） */
-	ownerMismatch: boolean;
+	/** 房间现由他人使用（已用平台返回的房主昵称核实） */
+	roomRetaken: boolean;
+	/** 房间失效、接口没响应等需要额外说明的情况 */
+	note?: string;
 	/** 本次抓取时间，ISO 字符串 */
 	fetchedAt: string;
-	/** 房间失效等需要额外说明的情况 */
-	note?: string;
 }
 
 /** 一次构建拿到的全部开播状态快照。 */

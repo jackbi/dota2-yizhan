@@ -10,8 +10,8 @@ interface Props {
 
 const { member: m, live } = Astro.props;
 const meta = PLATFORM_META[m.platform];
-const game = live?.category;
-const label = live?.ownerMismatch ? '房间信息有变' : LIVE_STATE_LABEL[live?.state ?? 'unknown'];
+const retaken = live?.roomRetaken ?? false;
+const label = retaken ? '房间已换人' : LIVE_STATE_LABEL[live?.state ?? 'unknown'];
 ---
 
 <a
@@ -33,12 +33,12 @@ const label = live?.ownerMismatch ? '房间信息有变' : LIVE_STATE_LABEL[live
 	</div>
 	<div class="min-w-0 flex-1">
 		<p class="truncate font-medium text-cream group-hover:text-dota-light">{m.name}</p>
-		<p class="truncate text-xs text-muted">{game ?? m.tag}</p>
+		<p class="truncate text-xs text-muted">{live?.roomName ?? m.tag}</p>
 		<p class="mt-1 flex items-center gap-1 text-xs text-faint">
 			<span
 				class:list={[
 					'h-1.5 w-1.5 rounded-full',
-					live?.state === 'live' && !live.ownerMismatch
+					live?.state === 'live' && !retaken
 						? 'animate-pulse bg-[#22c55e]'
 						: live?.state === 'replay'
 							? 'bg-gold'
@@ -46,7 +46,6 @@ const label = live?.ownerMismatch ? '房间信息有变' : LIVE_STATE_LABEL[live
 				]}
 			/>
 			{label}
-			{live?.popularity ? ` · ${(live.popularity / 10000).toFixed(1)} 万热度` : ''}
 		</p>
 	</div>
 </a>

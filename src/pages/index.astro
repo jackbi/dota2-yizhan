@@ -40,7 +40,7 @@ const bundle = await getTournaments();
 const liveSnapshot = await fetchLiveSnapshot();
 const liveMembers = OB_MEMBERS.filter((m) => {
 	const s = liveSnapshot.statuses[`${m.platform}:${m.roomId}`];
-	return s?.state === 'live' && !s.ownerMismatch;
+	return s?.state === 'live' && !s.roomRetaken;
 });
 // 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
 const now = Math.floor(Date.now() / 1000);
