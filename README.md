@@ -216,6 +216,11 @@ Chrome 会为两者并存报一条 "Allow attribute will take precedence" 警告
 - 斗鱼 `isDefaultAvatar=1` 时**不取**：那是平台的系统默认图，不如页面自己的首字母占位。
 - 拿不到头像的房间不渲染 `<img>`，页面显示品牌渐变底 + 首字母。头像是用**背景图**而不是
   `<img>` 画的，所以即使文件没发布也不会出现破图图标。
+- **dev 也要能看到**：`astro dev` 不跑构建，`dist/avatars/` 根本不存在，页面里引用的
+  `/avatars/xxx.jpg` 会整片 404——一度被当成"头像没抓到"。所以 `astro.config.mjs` 里另有一段
+  `avatars-in-dev` 中间件，dev 下直接从 `.cache/avatars/` 读（只认自己生成的文件名，
+  `path.basename` 挡掉路径穿越）。改完 `astro.config.mjs` 要重启 dev server 才生效，
+  不过 Astro 检测到配置变化一般会自己重启。
 
 > 给 `RoomRef` 加字段必须同时把 `roomList.ts` 里的 `CACHE_VERSION` 加一。缓存存的是**解析后**的
 > 对象，老缓存不会自己长出字段：加头像那次就没加版本，结果 64 个热门房间一个头像都没有，

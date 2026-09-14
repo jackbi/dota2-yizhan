@@ -1,5 +1,6 @@
 // @ts-check
 import { existsSync, promises as fs } from 'node:fs';
+import path from 'node:path';
 import { defineConfig } from 'astro/config';
 import tailwindcss from '@tailwindcss/vite';
 
@@ -161,10 +162,42 @@ const dataSourceReport = {
 	},
 };
 
+/**
+ * dev 下把 `.cache/avatars/` 挂到 `/avatars/` 上。
+ *
+ * 头像是**构建产物**：字节由 `astro:build:done` 拷进 `dist/avatars/`。而 `astro dev` 不跑构建，
+ * 页面里引用的 `/avatars/xxx.jpg` 就全是 404——页面上一个头像都出不来，控制台刷屏。
+ * 这里给 dev 加一段中间件直接从缓存目录读，省得"想看一眼头像还得先跑一次 build"。
+ *
+ * 只认自己生成的文件名（`平台-房间号-哈希.jpg`），`path.basename` 顺手挡掉 `../` 这类穿越。
+ */
+/** @type {import('astro').AstroIntegration} */
+const avatarsInDev = {
+	name: 'avatars-in-dev',
+	hooks: {
+		'astro:server:setup': ({ server }) => {
+			server.middlewares.use('/avatars', async (req, res, next) => {
+				const name = path.basename(decodeURIComponent((req.url ?? '').split('?')[0]));
+				if (!/^[a-z0-9-]+\.jpg$/.test(name)) return next();
+				try {
+					const bytes = await fs.readFile(new URL(name, AVATAR_DIR));
+					res.setHeader('Content-Type', 'image/jpeg');
+					// 缓存里的图可能刚被换掉，dev 下别让浏览器留旧的。
+					res.setHeader('Cache-Control', 'no-cache');
+					res.end(bytes);
+				} catch {
+					// 还没下到这张（或名字不对），交给后面的 404。
+					next();
+				}
+			});
+		},
+	},
+};
+
 // https://astro.build/config
 export default defineConfig({
 	vite: {
 		plugins: [tailwindcss()],
 	},
-	integrations: [dataSourceReport],
+	integrations: [dataSourceReport, avatarsInDev],
 });
