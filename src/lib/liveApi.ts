@@ -48,6 +48,9 @@ const CONCURRENCY = 3;
 /** 直连与代理都不稳，两条路各重试几轮。 */
 const ATTEMPTS = 3;
 const ATTEMPT_DELAY_MS = 600;
+/** 抓取失败后等同伴进程写缓存的轮次与间隔。 */
+const PEER_WAIT_ROUNDS = 5;
+const PEER_WAIT_MS = 500;
 
 const UA =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -56,8 +59,16 @@ export const LIVE_STATE_LABEL: Record<LiveState, string> = {
 	live: '直播中',
 	replay: '轮播中',
 	offline: '未开播',
+	closed: '房间已关闭',
 	unknown: '状态未知',
 };
+
+/**
+ * 斗鱼把房间播放关掉时，房间数据接口返回的是一张 HTML 提示页而不是 JSON：
+ * 「您观看的房间已被关闭，请选择其他直播进行观看哦！」。房间页本身还在
+ * （标题仍挂着主播名），所以这是"平台关闭了播放"，不是"主播没开播"。
+ */
+const ROOM_CLOSED_RE = /房间已被关闭|房间已下线|房间不存在/;
 
 // ---------------------------------------------------------------- 解析
 
@@ -237,22 +248,46 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 	if (!url) return unknownStatus('暂不支持该平台');
 
 	const text = await fetchText(url);
-	const parsed = text ? parseByPlatform(room.platform, extractJson(text)) : null;
+	if (text) {
+		const parsed = parseByPlatform(room.platform, extractJson(text));
+		if (parsed) {
+			// 昵称对不上只作为提示，不改状态、也不下"房间换人"的结论。
+			const status: LiveStatus = {
+				state: parsed.state,
+				ownerName: parsed.ownerName,
+				roomName: parsed.roomName,
+				ownerUnrecognized: ownerUnrecognized(parsed.ownerName, room.ownerMatch),
+				fetchedAt: new Date().toISOString(),
+			};
+			await writeCache(file, status);
+			return status;
+		}
 
-	if (parsed) {
-		// 昵称对不上只作为提示，不改状态、也不下"房间换人"的结论。
-		const status: LiveStatus = {
-			state: parsed.state,
-			ownerName: parsed.ownerName,
-			roomName: parsed.roomName,
-			ownerUnrecognized: ownerUnrecognized(parsed.ownerName, room.ownerMatch),
-			fetchedAt: new Date().toISOString(),
-		};
-		await writeCache(file, status);
-		return status;
+		// 斗鱼关闭房间播放时给的是一张提示页，这里如实记成 closed。
+		if (room.platform === 'douyu' && ROOM_CLOSED_RE.test(text)) {
+			const page = await fetchText(`https://www.douyu.com/${room.roomId}`);
+			const pageOwner = page ? pageOwnerFromTitle(room.platform, page) : undefined;
+			const status: LiveStatus = {
+				state: 'closed',
+				ownerName: pageOwner,
+				ownerUnrecognized: ownerUnrecognized(pageOwner, room.ownerMatch),
+				note: pageOwner
+					? `斗鱼已关闭该房间的播放（房间页仍显示主播为「${pageOwner}」）`
+					: '斗鱼已关闭该房间的播放',
+				fetchedAt: new Date().toISOString(),
+			};
+			await writeCache(file, status);
+			return status;
+		}
 	}
 
-	// 主接口没通：退一步只读房间页标题，确认房间号还有人在用，状态仍标未知。
+	// 主接口没通。Astro 会并行开多个渲染进程，每个进程各自跑一遍本模块（单飞只在进程内生效），
+	// 于是可能出现"这个进程失败了、另一个进程刚抓到并写了缓存"。直接标未知会让同一个房间
+	// 在不同进程渲染出的页面里不一致，所以先等一下看看同伴有没有写进来。
+	const raced = await waitForPeerCache(file);
+	if (raced) return raced;
+
+	// 退一步只读房间页标题，确认这个房间号现在显示的是谁，状态仍标未知。
 	if (room.platform === 'douyu') {
 		const page = await fetchText(`https://www.douyu.com/${room.roomId}`);
 		const pageOwner = page ? pageOwnerFromTitle(room.platform, page) : undefined;
@@ -261,9 +296,20 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 		}
 	}
 
-	const fallback = await readStale(file);
-	if (fallback) return fallback;
-	return unknownStatus('平台接口没有响应');
+	return (await readStale(file)) ?? unknownStatus('平台接口没有响应');
+}
+
+/**
+ * 等一会儿再看缓存：并行的渲染进程可能刚好抓到了同一个房间。
+ * 宁可慢一点，也不要把"这个进程没抓到"渲染成"状态未知"。
+ */
+async function waitForPeerCache(file: string): Promise<LiveStatus | null> {
+	for (let i = 0; i < PEER_WAIT_ROUNDS; i++) {
+		await sleep(PEER_WAIT_MS);
+		const cached = await readStale(file);
+		if (cached) return cached;
+	}
+	return null;
 }
 
 // ---------------------------------------------------------------- 对外接口
@@ -291,12 +337,12 @@ async function loadAll(): Promise<LiveSnapshot> {
 		if (status.ownerUnrecognized) unrecognized += 1;
 	}
 
-	const parts = (['live', 'replay', 'offline', 'unknown'] as LiveState[])
+	const parts = (['live', 'replay', 'offline', 'closed', 'unknown'] as LiveState[])
 		.filter((state) => counts.has(state))
 		.map((state) => `${LIVE_STATE_LABEL[state]} ${counts.get(state)}`);
 	if (unrecognized > 0) parts.push(`平台昵称与旧叫法不同 ${unrecognized}`);
 
-	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0);
+	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0) + (counts.get('closed') ?? 0);
 	const fetchNote = networkFetches > 0 ? `，联网抓取 ${networkFetches} 次${viaProxy > 0 ? `（代理 ${viaProxy}）` : ''}` : '';
 
 	await reportSource(

@@ -34,7 +34,12 @@ export interface ObMember {
 	jokes: string[];
 }
 
-export type LiveState = 'live' | 'replay' | 'offline' | 'unknown';
+/**
+ * `closed` 表示平台自己说这个房间已关闭——斗鱼的房间数据接口会返回
+ * 「您观看的房间已被关闭」提示页（而不是 JSON）。它和「未开播」不是一回事：
+ * 未开播是房间还在、只是没播；closed 是平台把播放关掉了。
+ */
+export type LiveState = 'live' | 'replay' | 'offline' | 'closed' | 'unknown';
 
 /** 一个直播间在构建期的实际状态。 */
 export interface LiveStatus {
