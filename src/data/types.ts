@@ -35,6 +35,33 @@ export interface ObMember {
 }
 
 /**
+ * 一支 B站 视频的元数据。
+ *
+ * 每个字段都取自 B站 自己的 `api.bilibili.com/x/web-interface/view?bvid=` 返回值，
+ * 不是从搜索结果、转载文案或二手资料里抄的——标题、时长、播放量与投稿人都以接口为准。
+ *
+ * `uploader` 是 B站 上的**实际投稿人**：经典老视频大多由粉丝搬运，搬运者不是原作者，
+ * 所以页面必须把投稿人写出来，不能默认它就是「喉哥发的」。
+ */
+export interface BiliVideo {
+	bv: string;
+	title: string;
+	/** B站 投稿人昵称 */
+	uploader: string;
+	/** B站 投稿人 UID */
+	uploaderUid: string;
+	/** 投稿日期，YYYY-MM-DD */
+	pubdate: string;
+	/** 时长（秒），由接口的 duration 字段直接给出 */
+	duration: number;
+	views: number;
+	/** 封面地址，B站 CDN，页面以 no-referrer 热链 */
+	cover: string;
+	/** 收录这支的理由，显示在卡片上，避免让人以为只是随便选的 */
+	why: string;
+}
+
+/**
  * `closed` 表示平台自己说这个房间已关闭——斗鱼的房间数据接口会返回
  * 「您观看的房间已被关闭」提示页（而不是 JSON）。它和「未开播」不是一回事：
  * 未开播是房间还在、只是没播；closed 是平台把播放关掉了。

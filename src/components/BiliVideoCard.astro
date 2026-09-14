@@ -1,0 +1,95 @@
+---
+import type { BiliVideo } from '../data/types';
+import { biliUrl, videoDuration, videoViews } from '../data/obVideos';
+
+interface Props {
+	video: BiliVideo;
+	/** row：缩略图在左，用于卡片内部的列表；tile：封面在上，用于专题墙 */
+	variant?: 'row' | 'tile';
+	/** 归属标签，例如成员名 */
+	owner?: string;
+	/** 是否显示「为什么收录这支」 */
+	showWhy?: boolean;
+}
+
+const { video: v, variant = 'row', owner, showWhy = true } = Astro.props;
+const url = biliUrl(v.bv);
+const isTile = variant === 'tile';
+const shortDate = v.pubdate.slice(0, 7).replace('-', '.');
+---
+
+<a
+	href={url}
+	target="_blank"
+	rel="noopener noreferrer"
+	class:list={[
+		'group flex overflow-hidden rounded-xl border border-line bg-surface-2/50 transition',
+		'hover:border-dota/60 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dota-light focus-visible:ring-offset-2 focus-visible:ring-offset-ink',
+		isTile ? 'flex-col' : 'gap-3 p-2.5',
+	]}
+>
+	<span
+		class:list={[
+			'relative block shrink-0 overflow-hidden bg-surface-3',
+			isTile ? 'aspect-video w-full' : 'aspect-video w-28 self-start rounded-lg',
+		]}
+	>
+		<img
+			src={v.cover}
+			alt=""
+			width="480"
+			height="270"
+			loading="lazy"
+			decoding="async"
+			referrerpolicy="no-referrer"
+			class="h-full w-full object-cover transition duration-300 group-hover:scale-[1.04]"
+		/>
+		<span
+			class="absolute bottom-1.5 right-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-white/95"
+		>
+			{videoDuration(v.duration)}
+		</span>
+		<span
+			class="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100"
+			aria-hidden="true"
+		>
+			<span class="flex h-8 w-8 items-center justify-center rounded-full bg-dota text-white shadow-lg">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+					<path d="M8 5.5v13l11-6.5z" />
+				</svg>
+			</span>
+		</span>
+		{
+			owner && (
+				<span class="absolute left-1.5 top-1.5 rounded bg-ink/85 px-1.5 py-0.5 text-[10px] font-semibold text-cream/90">
+					{owner}
+				</span>
+			)
+		}
+	</span>
+
+	<span class:list={['flex min-w-0 flex-1 flex-col', isTile ? 'gap-1 p-3 pt-2.5' : '']}>
+		<span class:list={['font-medium leading-snug text-cream', isTile ? 'text-sm line-clamp-2' : 'text-xs line-clamp-2']}>
+			{v.title}
+		</span>
+		{
+			showWhy && (
+				<span class:list={['leading-relaxed text-faint', isTile ? 'text-xs line-clamp-2' : 'text-[11px] line-clamp-2']}>
+					{v.why}
+				</span>
+			)
+		}
+		<span
+			class:list={[
+				'flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-faint',
+				isTile ? 'mt-1' : 'mt-auto pt-1',
+			]}
+		>
+			<span class="max-w-full truncate" title={`B站投稿人：${v.uploader}`}>UP {v.uploader}</span>
+			<span aria-hidden="true">·</span>
+			<span class="tabular-nums">{videoViews(v.views)}播放</span>
+			<span aria-hidden="true">·</span>
+			<span class="tabular-nums">{shortDate}</span>
+		</span>
+	</span>
+</a>

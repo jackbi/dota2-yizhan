@@ -2,6 +2,8 @@
 import type { LiveStatus, ObMember } from '../data/types';
 import { PLATFORM_META, roomUrl } from '../data/site';
 import { LIVE_STATE_LABEL } from '../lib/liveApi';
+import { OB_MEMBER_VIDEOS } from '../data/obVideos';
+import BiliVideoCard from './BiliVideoCard.astro';
 
 interface Props {
 	member: ObMember;
@@ -12,60 +14,75 @@ const { member: m, live } = Astro.props;
 const meta = PLATFORM_META[m.platform];
 const url = roomUrl(m.platform, m.roomId);
 const state = live?.state ?? 'unknown';
+const videos = OB_MEMBER_VIDEOS[m.id] ?? [];
 
 const stateText = LIVE_STATE_LABEL[state];
 const stateColor = state === 'live' ? 'text-[#4ade80]' : state === 'replay' ? 'text-gold' : 'text-faint';
 const dotClass =
 	state === 'live' ? 'animate-pulse bg-[#22c55e]' : state === 'replay' ? 'bg-gold' : 'bg-zinc-500';
+const ringClass =
+	state === 'live'
+		? 'ring-2 ring-[#22c55e]/60'
+		: state === 'replay'
+			? 'ring-2 ring-gold/50'
+			: 'ring-1 ring-line';
 ---
 
 <article
-	class:list={[
-		'group flex flex-col rounded-2xl border bg-surface p-5 transition',
-		'border-line hover:border-dota/50 hover:bg-surface-2',
-	]} 
+	id={`member-${m.id}`}
+	class="flex scroll-mt-24 flex-col rounded-2xl border border-line bg-surface p-5 transition hover:border-dota/50 hover:bg-surface-2"
 >
 	<div class="flex items-start gap-4">
-		<div class="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl">
-			<div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-dota to-dota-deep font-display text-lg text-white">
+		<div class:list={['relative h-14 w-14 shrink-0 overflow-hidden rounded-xl', ringClass]}>
+			<div
+				class="flex h-full w-full items-center justify-center bg-gradient-to-br from-dota to-dota-deep font-display text-lg text-white"
+			>
 				{m.name.slice(0, 2)}
 			</div>
-			<span class:list={['absolute -bottom-1 -right-1 h-4 w-4 rounded-full border-2 border-surface', dotClass]} />
 		</div>
 
 		<div class="min-w-0 flex-1">
 			<div class="flex flex-wrap items-center gap-2">
-				<h3 class="font-display text-lg">{m.name}</h3>
-				<span class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold" style={`background:${meta.color};color:#fff`}>
-					{meta.short}
+				<h3 class="font-display text-xl leading-none">{m.name}</h3>
+				<span
+					class="shrink-0 rounded px-1.5 py-0.5 text-xs font-semibold"
+					style={`background:${meta.color};color:#fff`}>{meta.short}</span
+				>
+				<span class:list={['ml-auto inline-flex items-center gap-1.5 text-xs font-medium', stateColor]}>
+					<span class:list={['h-1.5 w-1.5 rounded-full', dotClass]} />
+					{stateText}
 				</span>
 			</div>
-			<p class="mt-0.5 text-sm text-muted">
-				{m.realName}
-				<span class="text-faint"> · </span>{m.role}
+			<p class="mt-1.5 text-sm text-muted">
+				{m.realName}<span class="text-faint"> · </span>{m.role}
 			</p>
+			{live?.roomName && <p class="mt-1 truncate text-xs text-faint" title={live.roomName}>{live.roomName}</p>}
 		</div>
-	</div>
-
-	<div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-		<span class:list={['inline-flex items-center gap-1.5 font-medium', stateColor]}>
-			<span class:list={['h-1.5 w-1.5 rounded-full', dotClass]} />
-			{stateText}
-		</span>
-		{live?.roomName && <span class="truncate text-faint">{live.roomName}</span>}
 	</div>
 
 	{
 		live?.ownerUnrecognized && live.ownerName && (
-			<p class="mt-2 text-xs leading-relaxed text-faint">
-				平台当前昵称：<span class="text-cream/80">{live.ownerName}</span>
-				（与常用叫法不同，可能只是改过名）
+			<p class="mt-3 rounded-lg border border-line/70 bg-surface-2/60 px-3 py-2 text-xs leading-relaxed text-faint">
+				平台当前昵称：<span class="text-cream/80">{live.ownerName}</span>（与常用叫法不同，可能只是改过名）
 			</p>
 		)
 	}
-	{live?.note && <p class="mt-2 text-xs leading-relaxed text-faint">{live.note}</p>}
+	{live?.note && <p class="mt-3 text-xs leading-relaxed text-faint">{live.note}</p>}
 
-	<p class="mt-3 text-sm leading-relaxed text-muted">{m.description}</p>
+	<div class="mt-4">
+		<p class="text-xs font-medium uppercase tracking-wider text-faint">外号 · 社区流传</p>
+		<div class="mt-2 flex flex-wrap gap-1.5">
+			{
+				m.aliases.map((a) => (
+					<span class="rounded-md border border-line bg-surface-3/70 px-2 py-0.5 text-xs leading-5 text-cream/90 transition hover:border-dota/50 hover:bg-surface-3">
+						{a}
+					</span>
+				))
+			}
+		</div>
+	</div>
+
+	<p class="mt-4 text-sm leading-relaxed text-muted">{m.description}</p>
 
 	<p class="mt-3 text-xs leading-relaxed text-faint">
 		<span class="text-gold/80">主要荣誉：</span>{m.achievement}
@@ -82,22 +99,27 @@ const dotClass =
 		)
 	}
 
-	<div class="mt-4 border-t border-line pt-3">
-		<p class="text-xs text-faint">外号（社区流传）</p>
-		<p class="mt-1.5 flex flex-wrap gap-1.5">
-			{
-				m.aliases.map((a) => (
-					<span class="rounded-full border border-line px-2 py-0.5 text-xs text-cream/80">{a}</span>
-				))
-			}
-		</p>
-	</div>
+	{
+		videos.length > 0 && (
+			<div class="mt-5 border-t border-line pt-4">
+				<div class="flex items-baseline justify-between gap-3">
+					<p class="text-xs font-medium uppercase tracking-wider text-faint">名场面 · 人物志</p>
+					<span class="text-[11px] tabular-nums text-faint">{videos.length} 支</span>
+				</div>
+				<div class="mt-2.5 space-y-2">
+					{videos.map((v) => (
+						<BiliVideoCard video={v} />
+					))}
+				</div>
+			</div>
+		)
+	}
 
 	{
 		m.jokes.length > 0 && (
-			<div class="mt-3">
-				<p class="text-xs text-faint">梗（社区流传）</p>
-				<ul class="mt-1.5 space-y-1">
+			<div class="mt-5 border-t border-line pt-4">
+				<p class="text-xs font-medium uppercase tracking-wider text-faint">梗 · 社区流传</p>
+				<ul class="mt-2 grid gap-1 sm:grid-cols-2">
 					{m.jokes.map((j) => (
 						<li class="text-xs leading-relaxed text-muted">
 							<span class="text-dota-light">·</span> {j}
@@ -108,7 +130,7 @@ const dotClass =
 		)
 	}
 
-	<div class="mt-5 flex items-center justify-between gap-3 border-t border-line pt-4">
+	<div class="mt-auto flex items-center justify-between gap-3 border-t border-line pt-4">
 		<span class="text-xs text-faint">
 			{meta.label} · 房间 <span class="text-cream/80">{m.roomId}</span>
 		</span>
@@ -117,7 +139,7 @@ const dotClass =
 			target="_blank"
 			rel="noopener noreferrer"
 			class:list={[
-				'inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition',
+				'inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dota-light focus-visible:ring-offset-2 focus-visible:ring-offset-ink',
 				state === 'live'
 					? 'bg-dota text-white hover:bg-dota-light'
 					: 'border border-line text-muted hover:border-dota hover:text-dota-light',
@@ -125,7 +147,12 @@ const dotClass =
 		>
 			{state === 'live' ? '进入直播间' : '前往直播间'}
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-				<path d="M7 17 17 7M9 7h8v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+				<path
+					d="M7 17 17 7M9 7h8v8"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"></path>
 			</svg>
 		</a>
 	</div>

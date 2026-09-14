@@ -1,7 +1,9 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import ObMemberCard from '../components/ObMemberCard.astro';
+import BiliVideoCard from '../components/BiliVideoCard.astro';
 import { OB_MEMBERS } from '../data/ob';
+import { JIANXUE_FENGHOU, JIANXUE_VIDEOS, OB_MEMBER_VIDEOS } from '../data/obVideos';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { formatIso } from '../lib/format';
 
@@ -10,11 +12,22 @@ const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platfo
 
 const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live').length;
 const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
+const memberVideoCount = OB_MEMBERS.reduce((n, m) => n + (OB_MEMBER_VIDEOS[m.id]?.length ?? 0), 0);
+const totalVideos = memberVideoCount + JIANXUE_VIDEOS.length;
+const platforms = new Set(OB_MEMBERS.map((m) => m.platform)).size;
+
+const stats: { label: string; value: string; accent?: boolean }[] = [
+	{ label: '成员', value: String(OB_MEMBERS.length) },
+	{ label: '建队', value: '2014' },
+	{ label: '平台', value: `${platforms} 家` },
+	{ label: '正在直播', value: String(liveCount), accent: liveCount > 0 },
+	{ label: '收录视频', value: `${totalVideos} 支` },
+];
 ---
 
 <Layout
 	title="OB 大家庭 · DOTA2 驿站"
-	description="OB（Old Boys）成员的真实姓名、位置与荣誉，以及各人直播间与构建期开播状态快照。"
+	description="OB（Old Boys）成员的真实姓名、位置、外号、荣誉与直播间，并收录各人的名场面视频与剑雪封喉的 DotA 口述史。"
 >
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 		<div class="mb-8">
@@ -22,19 +35,27 @@ const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">这群老将，就是情怀</h1>
 			<p class="mt-3 max-w-3xl text-muted">
 				OB（Old Boys）是国内 DOTA2 退役选手组成的娱乐团体，2014 年下半年建队，从最初的六人一路壮大。
-				下面是各人的真实姓名、位置、荣誉、直播间与社区外号。
+				下面是各人的真实姓名、位置、外号、荣誉与直播间，以及各自的
+				<span class="text-cream/90">名场面</span>——另外单独收了
+				<span class="text-cream/90">{JIANXUE_FENGHOU.name}</span> 的 DotA 口述史。
 			</p>
 		</div>
 
-		<div class="mb-6 flex flex-wrap items-center gap-3 text-sm">
-			<span class="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-4 py-2">
-				<span class="text-faint">成员</span>
-				<span class="font-display text-cream">{OB_MEMBERS.length}</span>
-			</span>
-			<span class="inline-flex items-center gap-2 rounded-full border border-[#22c55e]/40 bg-[#22c55e]/10 px-4 py-2 text-[#4ade80]">
-				<span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]"></span>
-				{liveCount} 位正在直播
-			</span>
+		<div class="mb-6 flex flex-wrap items-center gap-2.5 text-sm">
+			{
+				stats.map((s) => (
+					<span
+						class:list={[
+							'inline-flex items-center gap-2 rounded-full border px-4 py-2',
+							s.accent ? 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#4ade80]' : 'border-line bg-surface',
+						]}
+					>
+						{s.accent && <span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]" />}
+						<span class:list={['text-faint', s.accent && 'text-[#4ade80]/80']}>{s.label}</span>
+						<span class:list={['font-display', !s.accent && 'text-cream']}>{s.value}</span>
+					</span>
+				))
+			}
 		</div>
 
 		<p class="mb-8 rounded-xl border border-line bg-surface/60 px-4 py-3 text-xs leading-relaxed text-faint">
@@ -42,7 +63,7 @@ const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 			状态是<strong class="text-cream/80">构建那一刻的快照</strong>，之后的变化请以直播间页面为准。
 			{
 				unrecognized.length > 0 && (
-					<span class="text-faint">
+					<span>
 						另有 {unrecognized.length} 个房间的平台昵称与常用叫法不同（
 						{unrecognized.map((m) => `${m.name} ${m.roomId}`).join('、')}），可能只是改过账号名。
 					</span>
@@ -50,7 +71,113 @@ const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 			}
 		</p>
 
-		<div class="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+		<nav class="mb-10 rounded-2xl border border-line bg-surface/60 p-4" aria-label="成员速览">
+			<div class="flex items-baseline justify-between gap-3">
+				<h2 class="text-xs font-medium uppercase tracking-wider text-faint">成员速览</h2>
+				<span class="text-[11px] text-faint">点名字跳到对应卡片</span>
+			</div>
+			<div class="mt-3 flex flex-wrap gap-1.5">
+				{
+					OB_MEMBERS.map((m) => (
+						<a
+							href={`#member-${m.id}`}
+							class="group inline-flex items-center gap-2 rounded-lg border border-line bg-surface-2/60 py-1 pl-1 pr-3 transition hover:border-dota/60 hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dota-light focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
+						>
+							<span class="flex h-6 w-6 items-center justify-center rounded bg-gradient-to-br from-dota to-dota-deep font-display text-[10px] text-white">
+								{m.name.slice(0, 2)}
+							</span>
+							<span class="text-xs text-muted transition group-hover:text-cream">{m.name}</span>
+							<span
+								class:list={[
+									'h-1.5 w-1.5 rounded-full',
+									liveOf(m)?.state === 'live'
+										? 'animate-pulse bg-[#22c55e]'
+										: liveOf(m)?.state === 'replay'
+											? 'bg-gold'
+											: 'bg-zinc-600',
+								]}
+								aria-hidden="true"
+							/>
+						</a>
+					))
+				}
+			</div>
+		</nav>
+
+		<section
+			class="relative mb-12 overflow-hidden rounded-3xl border border-gold/25 bg-gradient-to-br from-surface via-surface to-gold/[0.07] p-6 sm:p-8"
+			aria-labelledby="jianxue-title"
+		>
+			<div
+				class="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-gold/10 blur-3xl"
+				aria-hidden="true"
+			>
+			</div>
+
+			<div class="relative flex flex-wrap items-start justify-between gap-4">
+				<div class="max-w-2xl">
+					<p class="inline-flex items-center gap-2 rounded-full border border-gold/30 bg-gold/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-gold">
+						喉哥 · DotA 口述史
+					</p>
+					<h2 id="jianxue-title" class="mt-3 font-display text-2xl">
+						剑雪封喉：把这些故事讲下来的人
+					</h2>
+					<p class="mt-3 text-sm leading-relaxed text-muted">
+						他的《DotA 回忆录》《疯狂的 DotA》《天下 DotA》是 DOTA1 到 DOTA2 早期最重要的影像记录之一，
+						也是很多传奇的放大器——YYF 自己在直播里说过「当年做个视频就能让一个人封神」，
+						「7 进 7 出蓝猫」就是这么被记住的。他至今仍在更新《天下 DotA》。
+					</p>
+				</div>
+				<a
+					href={JIANXUE_FENGHOU.spaceUrl}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="inline-flex items-center gap-2 rounded-lg border border-gold/40 bg-gold/10 px-4 py-2.5 text-sm font-medium text-gold transition hover:bg-gold/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold focus-visible:ring-offset-2 focus-visible:ring-offset-ink"
+				>
+					{JIANXUE_FENGHOU.biliName} 的 B站主页
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+						<path
+							d="M7 17 17 7M9 7h8v8"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"></path>
+					</svg>
+				</a>
+			</div>
+
+			<div class="relative mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+				{
+					JIANXUE_VIDEOS.map((v) => (
+						<BiliVideoCard
+							video={v}
+							variant="tile"
+							owner={v.uploaderUid === JIANXUE_FENGHOU.uid ? '喉哥本人' : '粉丝搬运'}
+						/>
+					))
+				}
+			</div>
+
+			<p class="relative mt-4 text-xs leading-relaxed text-faint">
+				上面只有
+				<span class="text-cream/70">《天下 DotA》TI6 Wings 夺冠特辑</span>
+				是他自己频道发的（标「喉哥本人」）；其余几支是粉丝在不同时期搬运的（标「粉丝搬运」），
+				卡片上的 <span class="text-cream/70">UP</span> 是
+				<strong class="text-cream/70">实际投稿人</strong>，不是喉哥本人。他的早期作品原本主要发在优酷。
+			</p>
+		</section>
+
+		<div class="mb-6 flex items-end justify-between gap-4">
+			<div>
+				<h2 class="font-display text-2xl">成员档案</h2>
+				<p class="mt-1 text-sm text-muted">
+					每人一张卡：外号、荣誉、代表英雄、名场面视频与直播间。共 {OB_MEMBERS.length} 人，
+					{memberVideoCount} 支名场面视频。
+				</p>
+			</div>
+		</div>
+
+		<div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
 			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} />)}
 		</div>
 
@@ -93,6 +220,21 @@ const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 					<span class="text-cream">老陈的出处：</span>
 					斗鱼接口返回的房间昵称是「叫我老陈就好了」，与旧报道里「屠夫阿川的斗鱼 ID 是叫我老陈就好了」
 					对得上。他没有职业与 TI 荣誉，也不在 OB 的官方名单里，是通过前身「龙宝川」的关系收录进来的。
+				</li>
+				<li>
+					<span class="text-cream">视频：</span>
+					标题、时长、播放量与投稿人都取自 B站 自己的
+					<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px] text-cream/80"
+						>api.bilibili.com/x/web-interface/view</code
+					> 接口，逐条核对过，没有一条是凭搜索结果的转述写上去的。本站<strong class="text-cream/80"
+						>不托管任何视频</strong
+					>，只做外链；封面图热链自 B站 CDN。经典老视频大多是粉丝搬运，所以每张卡都会把
+					<strong class="text-cream/80">实际投稿人</strong>写出来——搬运者不是原作者，本页也不声称拥有这些内容。
+				</li>
+				<li>
+					<span class="text-cream">「名场面」怎么选的：</span>
+					优先成系列的人物回顾（如「OB 人物志」），其次是与某个具体梗直接对应的原始对局，
+					再次是本人频道发的切片。没有找到可靠对应视频的就不凑数。
 				</li>
 			</ul>
 		</section>
