@@ -56,7 +56,11 @@ export const OB_MEMBERS: ObMember[] = [
 		realName: '邹倚天',
 		aliases: ['566', '乌总', '乌鲁鲁', '八老板', '网恋教父', '乌贼', '不爱你', '日麻教父'],
 		platform: 'douyu',
-		roomId: '82088',
+		// 82088 是斗鱼靓号，只是别名：房间页 www.douyu.com/82088 的 <title> 和
+		// www.douyu.com/507882 完全一样，但 betard 接口只认 507882，喂它 82088
+		// 会返回「您观看的房间已被关闭」的提示页——曾据此误报 820「房间已关闭」。
+		// 507882 与直播分区榜里「820邹倚天」的房间号一致。
+		roomId: '507882',
 		ownerMatch: ['820', '邹倚天', '乌鲁鲁'],
 		membership: '正式成员',
 		role: '五号位（原主 C / 队长）',

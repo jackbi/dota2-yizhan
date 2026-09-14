@@ -11,10 +11,18 @@ import type { LiveSnapshot, LiveState, LiveStatus, Platform } from '../data/type
  * ## 数据源
  *
  * 斗鱼用 `https://www.douyu.com/betard/{id}`——房间页自己加载的那份 JSON，房主昵称与
- * 开播状态都是当前值。**不要用 `open.douyucdn.cn/api/RoomApi/room/{id}`**：它对部分房间
- * 返回的是十几年前的僵尸记录（820 的 82088 返回 2014-10-27 的 start_time、房主
- * 「用户已注销」、分区「英雄联盟」，而房间页标题明确写着「820邹倚天DOTA2直播」）。
- * 曾据它下过"房间已注销"的错误结论，所以整条链路里已经不碰它了。
+ * 开播状态都是当前值。npm 上的 `douyu-api` 包（renmu123/douyu-video-cli）里的
+ * `live.getRoomInfo` 就是这一行 `axios.get(\`https://www.douyu.com/betard/${roomId}\`)`，
+ * 没有更神奇的东西；它的直播流接口要 eval 平台 JS 拿签名，跟开播状态无关。
+ *
+ * **斗鱼的「靓号」不能喂给 betard。** 82088 是 820 的靓号别名：
+ * `www.douyu.com/82088` 与 `www.douyu.com/507882` 的 `<title>` 一字不差，但 betard/82088
+ * 返回的是「您观看的房间已被关闭」提示页，betard/507882 才是真正的房间 JSON。
+ * 曾据此把正在直播的 820 误报成「房间已关闭」，所以房间号一律以平台接口认的规范号为准。
+ *
+ * **不要用 `open.douyucdn.cn/api/RoomApi/room/{id}`**：它返回的是十几年前的僵尸记录
+ * （820 的旧房间返回 2014-10-27 的 start_time、房主「用户已注销」、分区「英雄联盟」）。
+ * 整条链路里已经不碰它了。
  *
  * 虎牙用 `https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid={id}`。
  *
@@ -97,9 +105,16 @@ function extractJson(text: string): unknown {
 function parseDouyu(json: unknown): ParsedRoom | null {
 	const room = (json as { room?: Record<string, unknown> } | null)?.room;
 	if (!room) return null;
+	// 开播标志是 show_status（1 开播 / 2 未开播）。同一个 room 对象里还有个
+	// status，它在开播和未开播的房间上都是 '1'（实测 9999/110/88660/8445951/312407
+	// 全是 '1'），拿它判断会把所有房间都算成直播中——npm 包 douyu-api 的
+	// getRoomInfo 文档注释就写错了，别照抄。
 	const status = String(room.show_status ?? '');
+	// videoLoop=1 表示房间在放录像轮播：房间挂的是"开播"，但主播本人不在播。
+	// 虎牙同类状态是 liveStatus=REPLAY，两边都归到 replay。
+	const looping = Number(room.videoLoop) === 1;
 	return {
-		state: status === '1' ? 'live' : status === '2' ? 'offline' : 'unknown',
+		state: status === '1' ? (looping ? 'replay' : 'live') : status === '2' ? 'offline' : 'unknown',
 		ownerName: str(room.nickname),
 		roomName: str(room.room_name),
 	};

@@ -75,8 +75,14 @@ const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 				<li>
 					<span class="text-cream">「房间已关闭」是什么意思：</span>
 					这是平台自己给的状态，和「未开播」不同——未开播是房间还在、只是没播；
-					已关闭是斗鱼关掉了该房间的播放。820 的 82088 现在就是这个状态：房间页仍然挂着他的名字，
-					但斗鱼的开播信息已经关闭，最后一次开播停在 2026 年 5 月。
+					已关闭是斗鱼关掉了该房间的播放，接口返回的是一张「您观看的房间已被关闭」的提示页而不是房间数据。
+					喂了斗鱼的「靓号」最容易撞上它。
+				</li>
+				<li>
+					<span class="text-cream">关于「靓号」：</span>
+					卡片上的房间号一律是平台接口认的<strong class="text-cream/80">规范房间号</strong>，不是靓号。
+					820 的靓号 82088 打开的也是他的房间页，但开播信息接口只认 507882，拿 82088 去问会得到
+					「房间已关闭」的提示——本页因此用的是 507882。
 				</li>
 				<li>
 					<span class="text-cream">关于昵称：</span>
@@ -84,8 +90,9 @@ const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
 					但不据此判断房间归属——改个账号名就会对不上。
 				</li>
 				<li>
-					<span class="text-cream">待补充：</span>
-					老陈的真名与房间号目前只有自媒体与录像聚合站来源，缺少官方出处；若你能提供更权威的资料，欢迎补充。
+					<span class="text-cream">老陈的出处：</span>
+					斗鱼接口返回的房间昵称是「叫我老陈就好了」，与旧报道里「屠夫阿川的斗鱼 ID 是叫我老陈就好了」
+					对得上。他没有职业与 TI 荣誉，也不在 OB 的官方名单里，是通过前身「龙宝川」的关系收录进来的。
 				</li>
 			</ul>
 		</section>
