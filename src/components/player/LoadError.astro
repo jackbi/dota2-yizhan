@@ -1,0 +1,20 @@
+---
+/**
+ * 「这一块没取到」的局部提示条。
+ *
+ * 用在页面主体还能看、只有某一块数据缺失的地方（统计表、对局列表）。整页失败的场景
+ * 请用 `PlayerNotice`。文案由 `playerContext` 的 `loadSecondary()` 给出，组件只负责画。
+ */
+interface Props {
+	message: string;
+}
+
+const { message } = Astro.props;
+/** 重试就是重新请求当前地址：STRATZ 这类失败多为限流/挑战页，隔一会儿确实可能恢复。 */
+const retryHref = `${Astro.url.pathname}${Astro.url.search}`;
+---
+
+<div class="rounded-xl border border-dota/40 bg-dota/10 px-5 py-8 text-center">
+	<p class="mx-auto max-w-md text-sm leading-relaxed text-muted">{message}</p>
+	<a href={retryHref} class="mt-3 inline-block text-xs text-dota-light transition hover:text-cream">重新加载本页 →</a>
+</div>

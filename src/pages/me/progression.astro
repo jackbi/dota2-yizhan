@@ -1,11 +1,12 @@
 ---
+import LoadError from '../../components/player/LoadError.astro';
 import Panel from '../../components/player/Panel.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import WinRateChart from '../../components/player/WinRateChart.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
 import { rankInfo } from '../../lib/dotaLabels';
 import { formatDay } from '../../lib/format';
-import { loadPlayer, noticeProps } from '../../lib/playerContext';
+import { loadPlayer, loadSecondary, noticeProps } from '../../lib/playerContext';
 import { readSession } from '../../lib/session';
 import { loadPlayerMatches, loadPlayerProgression, type GroupRow } from '../../lib/stratzPlayer';
 
@@ -19,12 +20,14 @@ const loaded = await loadPlayer(session.accountId);
 /** 走势只取最近这些场：更早的段位/打法早已不同，混进来反而看不出「最近怎么样」。 */
 const TREND_MATCHES = 100;
 
-const [progression, recent] = loaded.ok
-	? await Promise.all([
-			loadPlayerProgression(session.accountId).catch(() => ({ ranks: [], names: [], leaderboard: [] })),
-			loadPlayerMatches(session.accountId, { take: TREND_MATCHES, skip: 0 }).catch(() => []),
-		])
-	: [{ ranks: [], names: [], leaderboard: [] }, []];
+// 两个请求并行；主资料取不到时不起后续请求（STRATZ 多半正限流）。
+const [progressionLoad, matchesLoad] = await Promise.all([
+	loaded.ok ? loadSecondary(() => loadPlayerProgression(session.accountId)) : Promise.resolve(null),
+	loaded.ok ? loadSecondary(() => loadPlayerMatches(session.accountId, { take: TREND_MATCHES, skip: 0 })) : Promise.resolve(null),
+]);
+
+const progression = progressionLoad?.ok ? progressionLoad.data : { ranks: [], names: [], leaderboard: [] };
+const recent = matchesLoad?.ok ? matchesLoad.data : [];
 
 const current = rankInfo(loaded.ok ? loaded.profile.seasonRank : null);
 
@@ -77,63 +80,67 @@ const names = [...progression.names].reverse();
 							{loaded.profile.behaviorScore !== null && (
 								<div class="mt-1 text-xs text-faint">行为分 {loaded.profile.behaviorScore}</div>
 							)}
-							{progression.leaderboard.length > 0 && (
+							{progressionLoad?.ok && progression.leaderboard.length > 0 && (
 								<div class="mt-1 text-xs text-gold">天梯排名 #{progression.leaderboard[0].rank}</div>
 							)}
 						</div>
 					</div>
 				</Panel>
 
-				<Panel title="近期胜率走势" hint={`最近 ${recent.length} 场`} class="lg:col-span-2">
-					<WinRateChart points={trend} />
+				<Panel title="近期胜率走势" hint={matchesLoad?.ok ? `最近 ${recent.length} 场` : undefined} class="lg:col-span-2">
+					{matchesLoad && !matchesLoad.ok ? (
+						<LoadError message={matchesLoad.message} />
+					) : (
+						<WinRateChart points={trend} />
+					)}
 				</Panel>
 			</div>
 
 			<div class="mt-5 grid gap-5 lg:grid-cols-2">
-				<Panel title="段位历史" hint={rankHistory.length > 0 ? `${rankHistory.length} 次变化` : undefined}>
-					{
-						rankHistory.length === 0 ? (
-							<p class="text-sm leading-relaxed text-muted">
-								STRATZ 没有提供这个账号的段位历史。段位历史来自逐赛季快照，如果你很少打天梯或账号较老，
-								这里本来就是空的——上方「当前段位」仍然是准的。
-							</p>
-						) : (
-							<ul class="space-y-2">
-								{rankHistory.map((row) => {
-									const info = rankInfo(row.rank);
-									return (
-										<li class="flex items-center gap-3 text-sm">
-											<img src={info.medalImg} alt="" width="28" height="28" class="h-7 w-7 object-contain" />
-											<span class="flex-1 text-cream">{info.label}</span>
-											<span class="text-xs text-faint">{row.isCore ? '核心' : '辅助'}</span>
-											<span class="w-24 text-right text-xs text-faint">
-												{row.at ? formatDay(row.at) : '—'}
-											</span>
-										</li>
-									);
-								})}
-							</ul>
-						)
-					}
-				</Panel>
-
-				<Panel title="名字历史" hint={names.length > 0 ? `${names.length} 个` : undefined}>
-					{
-						names.length === 0 ? (
-							<p class="text-sm text-muted">STRATZ 没有记录到改名历史。</p>
-						) : (
-							<ul class="space-y-2">
-								{names.map((row) => (
+				<Panel title="段位历史" hint={progressionLoad?.ok && rankHistory.length > 0 ? `${rankHistory.length} 次变化` : undefined}>
+					{progressionLoad && !progressionLoad.ok ? (
+						<LoadError message={progressionLoad.message} />
+					) : rankHistory.length === 0 ? (
+						<p class="text-sm leading-relaxed text-muted">
+							STRATZ 没有提供这个账号的段位历史。段位历史来自逐赛季快照，如果你很少打天梯或账号较老，
+							这里本来就是空的——上方「当前段位」仍然是准的。
+						</p>
+					) : (
+						<ul class="space-y-2">
+							{rankHistory.map((row) => {
+								const info = rankInfo(row.rank);
+								return (
 									<li class="flex items-center gap-3 text-sm">
-										<span class="min-w-0 flex-1 truncate text-cream">{row.name}</span>
-										<span class="shrink-0 text-xs text-faint">
-											{row.lastSeen ? `至 ${formatDay(row.lastSeen)}` : '—'}
+										<img src={info.medalImg} alt="" width="28" height="28" class="h-7 w-7 object-contain" />
+										<span class="flex-1 text-cream">{info.label}</span>
+										<span class="text-xs text-faint">{row.isCore ? '核心' : '辅助'}</span>
+										<span class="w-24 text-right text-xs text-faint">
+											{row.at ? formatDay(row.at) : '—'}
 										</span>
 									</li>
-								))}
-							</ul>
-						)
-					}
+								);
+							})}
+						</ul>
+					)}
+				</Panel>
+
+				<Panel title="名字历史" hint={progressionLoad?.ok && names.length > 0 ? `${names.length} 个` : undefined}>
+					{progressionLoad && !progressionLoad.ok ? (
+						<LoadError message={progressionLoad.message} />
+					) : names.length === 0 ? (
+						<p class="text-sm text-muted">STRATZ 没有记录到改名历史。</p>
+					) : (
+						<ul class="space-y-2">
+							{names.map((row) => (
+								<li class="flex items-center gap-3 text-sm">
+									<span class="min-w-0 flex-1 truncate text-cream">{row.name}</span>
+									<span class="shrink-0 text-xs text-faint">
+										{row.lastSeen ? `至 ${formatDay(row.lastSeen)}` : '—'}
+									</span>
+								</li>
+							))}
+						</ul>
+					)}
 				</Panel>
 			</div>
 		</PlayerLayout>

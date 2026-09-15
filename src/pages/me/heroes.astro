@@ -1,9 +1,10 @@
 ---
 import HeroStatsTable from '../../components/player/HeroStatsTable.astro';
+import LoadError from '../../components/player/LoadError.astro';
 import Panel from '../../components/player/Panel.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
-import { loadPlayer, loadRefs, noticeProps } from '../../lib/playerContext';
+import { emptyRefs, loadPlayer, loadRefs, loadSecondary, noticeProps } from '../../lib/playerContext';
 import { readSession } from '../../lib/session';
 import { loadPlayerHeroes } from '../../lib/stratzPlayer';
 
@@ -22,9 +23,13 @@ const minMatches = MIN_MATCH_OPTIONS.includes(Number(Astro.url.searchParams.get(
 	? Number(Astro.url.searchParams.get('min'))
 	: 0;
 
-const [heroes, refs] = loaded.ok
-	? await Promise.all([loadPlayerHeroes(session.accountId, HERO_LIMIT).catch(() => []), loadRefs()])
-	: [[], { heroes: new Map(), items: new Map() }];
+// 两个请求并行；主资料取不到时不起后续请求（STRATZ 多半正限流）。
+const [heroesLoad, refs] = await Promise.all([
+	loaded.ok ? loadSecondary(() => loadPlayerHeroes(session.accountId, HERO_LIMIT)) : Promise.resolve(null),
+	loaded.ok ? loadRefs() : Promise.resolve(emptyRefs()),
+]);
+
+const heroes = heroesLoad?.ok ? heroesLoad.data : [];
 ---
 
 {
@@ -32,29 +37,32 @@ const [heroes, refs] = loaded.ok
 		<PlayerNotice {...noticeProps(loaded)} />
 	) : (
 		<PlayerLayout profile={loaded.profile} active="/me/heroes" title="英雄">
-			<Panel
-				title="英雄统计"
-				hint={`按场次排序，最多 ${HERO_LIMIT} 个`}
-			>
-				{/* 场次门槛：1 场的英雄胜率不是 0% 就是 100%，混在表里会误导。 */}
-				<div class="mb-4 flex flex-wrap items-center gap-2 text-xs">
-					<span class="text-faint">最低场次</span>
-					{MIN_MATCH_OPTIONS.map((option) => (
-						<a
-							href={`/me/heroes${option > 0 ? `?min=${option}` : ''}`}
-							class:list={[
-								'rounded-md border px-2.5 py-1 transition',
-								option === minMatches
-									? 'border-dota bg-dota/15 text-dota-light'
-									: 'border-line text-muted hover:text-cream',
-							]}
-						>
-							{option === 0 ? '全部' : `${option}+`}
-						</a>
-					))}
-				</div>
+			<Panel title="英雄统计" hint={heroesLoad?.ok ? `按场次排序，最多 ${HERO_LIMIT} 个` : undefined}>
+				{heroesLoad && !heroesLoad.ok ? (
+					<LoadError message={heroesLoad.message} />
+				) : (
+					<>
+						{/* 场次门槛：1 场的英雄胜率不是 0% 就是 100%，混在表里会误导。 */}
+						<div class="mb-4 flex flex-wrap items-center gap-2 text-xs">
+							<span class="text-faint">最低场次</span>
+							{MIN_MATCH_OPTIONS.map((option) => (
+								<a
+									href={`/me/heroes${option > 0 ? `?min=${option}` : ''}`}
+									class:list={[
+										'rounded-md border px-2.5 py-1 transition',
+										option === minMatches
+											? 'border-dota bg-dota/15 text-dota-light'
+											: 'border-line text-muted hover:text-cream',
+									]}
+								>
+									{option === 0 ? '全部' : `${option}+`}
+								</a>
+							))}
+						</div>
 
-				<HeroStatsTable heroes={heroes} refs={refs.heroes} minMatches={minMatches} />
+						<HeroStatsTable heroes={heroes} refs={refs.heroes} minMatches={minMatches} />
+					</>
+				)}
 			</Panel>
 		</PlayerLayout>
 	)

@@ -1,9 +1,10 @@
 ---
+import LoadError from '../../components/player/LoadError.astro';
 import Panel from '../../components/player/Panel.astro';
 import PeersTable from '../../components/player/PeersTable.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
-import { loadPlayer, noticeProps } from '../../lib/playerContext';
+import { loadPlayer, loadSecondary, noticeProps } from '../../lib/playerContext';
 import { readSession } from '../../lib/session';
 import { loadPlayerPeers } from '../../lib/stratzPlayer';
 
@@ -23,12 +24,14 @@ const minMatches = MIN_OPTIONS.includes(requested) ? requested : 1;
  * （那是 WITH / AGAINST 两个独立列表），所以这里如实分成两块，不做合并——
  * 合并会把「一起打过 3 场」和「对位过 3 场」混成一个没有意义的数字。
  */
-const [withPeers, againstPeers] = loaded.ok
-	? await Promise.all([
-			loadPlayerPeers(session.accountId, 'WITH').catch(() => []),
-			loadPlayerPeers(session.accountId, 'AGAINST').catch(() => []),
-		])
-	: [[], []];
+// 两个方向并行取；主资料取不到时不起后续请求（STRATZ 多半正限流）。
+const [withLoad, againstLoad] = await Promise.all([
+	loaded.ok ? loadSecondary(() => loadPlayerPeers(session.accountId, 'WITH')) : Promise.resolve(null),
+	loaded.ok ? loadSecondary(() => loadPlayerPeers(session.accountId, 'AGAINST')) : Promise.resolve(null),
+]);
+
+const withPeers = withLoad?.ok ? withLoad.data : [];
+const againstPeers = againstLoad?.ok ? againstLoad.data : [];
 
 const withShown = withPeers.filter((peer) => peer.matches >= minMatches).length;
 const againstShown = againstPeers.filter((peer) => peer.matches >= minMatches).length;
@@ -55,22 +58,30 @@ const againstShown = againstPeers.filter((peer) => peer.matches >= minMatches).l
 			</div>
 
 			<div class="grid gap-5 lg:grid-cols-2">
-				<Panel title="最常一起玩" hint={`${withShown} 人`}>
-					<PeersTable
-						peers={withPeers}
-						matchLabel="同队"
-						minMatches={minMatches}
-						emptyText={`没有同队 ${minMatches} 场以上的人。`}
-					/>
+				<Panel title="最常一起玩" hint={withLoad?.ok ? `${withShown} 人` : undefined}>
+					{withLoad && !withLoad.ok ? (
+						<LoadError message={withLoad.message} />
+					) : (
+						<PeersTable
+							peers={withPeers}
+							matchLabel="同队"
+							minMatches={minMatches}
+							emptyText={`没有同队 ${minMatches} 场以上的人。`}
+						/>
+					)}
 				</Panel>
 
-				<Panel title="最常对阵" hint={`${againstShown} 人`}>
-					<PeersTable
-						peers={againstPeers}
-						matchLabel="对阵"
-						minMatches={minMatches}
-						emptyText={`没有对阵 ${minMatches} 场以上的人。`}
-					/>
+				<Panel title="最常对阵" hint={againstLoad?.ok ? `${againstShown} 人` : undefined}>
+					{againstLoad && !againstLoad.ok ? (
+						<LoadError message={againstLoad.message} />
+					) : (
+						<PeersTable
+							peers={againstPeers}
+							matchLabel="对阵"
+							minMatches={minMatches}
+							emptyText={`没有对阵 ${minMatches} 场以上的人。`}
+						/>
+					)}
 				</Panel>
 			</div>
 		</PlayerLayout>

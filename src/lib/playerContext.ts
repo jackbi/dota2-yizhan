@@ -35,15 +35,35 @@ export async function loadPlayer(accountId: number): Promise<PlayerLoad> {
 		}
 		return { ok: true, profile };
 	} catch (error) {
-		return {
-			ok: false,
-			reason: 'upstream-error',
-			message:
-				error instanceof StratzError
-					? `数据源暂时不可用：${error.message}`
-					: '数据源暂时不可用，请稍后重试。',
-		};
+		return { ok: false, reason: 'upstream-error', message: upstreamMessage(error) };
 	}
+}
+
+/** 上游故障的统一文案。`StratzError` 带的是可操作的原因（限流 / 挑战页 / token 未配置）。 */
+function upstreamMessage(error: unknown): string {
+	return error instanceof StratzError ? `数据源暂时不可用：${error.message}` : '数据源暂时不可用，请稍后重试。';
+}
+
+/**
+ * 次级查询（统计表、对局列表）的结果。
+ *
+ * 与 `loadPlayer` 分开，是因为两者的容错级别不同：主资料取不到就没法渲染整页，可以整页
+ * 报错；次级查询失败时页面主体还在，必须把「这块没取到」画在内容位置上。用
+ * `.catch(() => [])` 把失败吞成空数组，只会让上游故障显示成「你还没有比赛记录」——是句假话。
+ */
+export type SecondaryLoad<T> = { ok: true; data: T } | { ok: false; message: string };
+
+export async function loadSecondary<T>(run: () => Promise<T>): Promise<SecondaryLoad<T>> {
+	try {
+		return { ok: true, data: await run() };
+	} catch (error) {
+		return { ok: false, message: upstreamMessage(error) };
+	}
+}
+
+/** 空查表：主资料没取到、或次级查询失败时用它兜底，页面照样能画（显示成「英雄 123」）。 */
+export function emptyRefs(): { heroes: Map<number, HeroRef>; items: Map<number, ItemRef> } {
+	return { heroes: new Map(), items: new Map() };
 }
 
 /**

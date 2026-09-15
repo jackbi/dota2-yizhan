@@ -1,10 +1,11 @@
 ---
+import LoadError from '../../components/player/LoadError.astro';
 import MatchList from '../../components/player/MatchList.astro';
 import Panel from '../../components/player/Panel.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
 import { gameModeLabel, lobbyLabel } from '../../lib/dotaLabels';
-import { loadPlayer, loadRefs, noticeProps, thousands, winRate } from '../../lib/playerContext';
+import { emptyRefs, loadPlayer, loadRefs, loadSecondary, noticeProps, thousands, winRate } from '../../lib/playerContext';
 import { readSession } from '../../lib/session';
 import { loadPlayerMatches } from '../../lib/stratzPlayer';
 
@@ -37,19 +38,24 @@ const page = Math.max(1, Number(params.get('page')) || 1);
 
 const hasHeroFilter = Number.isFinite(heroId) && heroId > 0;
 
-const [matches, refs] = loaded.ok
-	? await Promise.all([
-			loadPlayerMatches(session.accountId, {
-				take: PAGE_SIZE,
-				skip: (page - 1) * PAGE_SIZE,
-				gameModeIds: modeIds.length ? modeIds : undefined,
-				lobbyTypeIds: lobbyIds.length ? lobbyIds : undefined,
-				heroIds: hasHeroFilter ? [heroId] : undefined,
-				isVictory: outcome === 'win' ? true : outcome === 'loss' ? false : undefined,
-			}).catch(() => []),
-			loadRefs(),
-		])
-	: [[], { heroes: new Map(), items: new Map() }];
+// 两个请求并行；主资料取不到时不起后续请求（STRATZ 多半正限流）。
+const [matchesLoad, refs] = await Promise.all([
+	loaded.ok
+		? loadSecondary(() =>
+				loadPlayerMatches(session.accountId, {
+					take: PAGE_SIZE,
+					skip: (page - 1) * PAGE_SIZE,
+					gameModeIds: modeIds.length ? modeIds : undefined,
+					lobbyTypeIds: lobbyIds.length ? lobbyIds : undefined,
+					heroIds: hasHeroFilter ? [heroId] : undefined,
+					isVictory: outcome === 'win' ? true : outcome === 'loss' ? false : undefined,
+				}),
+			)
+		: Promise.resolve(null),
+	loaded.ok ? loadRefs() : Promise.resolve(emptyRefs()),
+]);
+
+const matches = matchesLoad?.ok ? matchesLoad.data : [];
 
 const wins = matches.filter((match) => match.win).length;
 const hasFilter = modeIds.length > 0 || lobbyIds.length > 0 || Boolean(outcome) || hasHeroFilter;
@@ -73,7 +79,10 @@ const heroOptions = [...refs.heroes.values()].sort((a, b) => a.name.localeCompar
 		<PlayerNotice {...noticeProps(loaded)} />
 	) : (
 		<PlayerLayout profile={loaded.profile} active="/me/matches" title="比赛">
-			<Panel title="比赛记录" hint={hasFilter ? `本页 ${matches.length} 场` : `共 ${thousands(loaded.profile.matchCount)} 场`}>
+			<Panel
+				title="比赛记录"
+				hint={!matchesLoad?.ok ? undefined : hasFilter ? `本页 ${matches.length} 场` : `共 ${thousands(loaded.profile.matchCount)} 场`}
+			>
 				{/* 筛选器：GET 表单，无 JS 也能用；选中态由 URL 决定。 */}
 				<form method="get" action="/me/matches" class="mb-5 flex flex-wrap items-end gap-3">
 					<label class="flex flex-col gap-1 text-xs text-faint">
@@ -133,43 +142,49 @@ const heroOptions = [...refs.heroes.values()].sort((a, b) => a.name.localeCompar
 					{hasFilter && <a href="/me/matches" class="text-xs text-faint transition hover:text-cream">清除</a>}
 				</form>
 
-				{
-					hasFilter && matches.length > 0 && (
-						<p class="mb-3 text-xs text-faint">
-							本页 {matches.length} 场，{wins} 胜 {matches.length - wins} 负（{winRate(wins, matches.length)}）
-						</p>
-					)
-				}
+				{matchesLoad && !matchesLoad.ok ? (
+					<LoadError message={matchesLoad.message} />
+				) : (
+					<>
+						{
+							hasFilter && matches.length > 0 && (
+								<p class="mb-3 text-xs text-faint">
+									本页 {matches.length} 场，{wins} 胜 {matches.length - wins} 负（{winRate(wins, matches.length)}）
+								</p>
+							)
+						}
 
-				<MatchList
-					matches={matches}
-					heroes={refs.heroes}
-					items={refs.items}
-					emptyText={page > 1 ? '这一页没有比赛了。' : hasFilter ? '没有符合筛选条件的比赛。' : '还没有比赛记录。'}
-				/>
+						<MatchList
+							matches={matches}
+							heroes={refs.heroes}
+							items={refs.items}
+							emptyText={page > 1 ? '这一页没有比赛了。' : hasFilter ? '没有符合筛选条件的比赛。' : '还没有比赛记录。'}
+						/>
 
-				{/* 分页：只做上一页/下一页——STRATZ 的 skip 是偏移量，没有稳定的总数可供跳页。 */}
-				<div class="mt-5 flex items-center justify-between text-sm">
-					{
-						page > 1 ? (
-							<a href={buildHref({ page: String(page - 1) })} class="text-dota-light transition hover:text-cream">
-								← 上一页
-							</a>
-						) : (
-							<span class="text-faint">← 上一页</span>
-						)
-					}
-					<span class="text-xs text-faint">第 {page} 页</span>
-					{
-						matches.length === PAGE_SIZE ? (
-							<a href={buildHref({ page: String(page + 1) })} class="text-dota-light transition hover:text-cream">
-								下一页 →
-							</a>
-						) : (
-							<span class="text-faint">下一页 →</span>
-						)
-					}
-				</div>
+						{/* 分页：只做上一页/下一页——STRATZ 的 skip 是偏移量，没有稳定的总数可供跳页。 */}
+						<div class="mt-5 flex items-center justify-between text-sm">
+							{
+								page > 1 ? (
+									<a href={buildHref({ page: String(page - 1) })} class="text-dota-light transition hover:text-cream">
+										← 上一页
+									</a>
+								) : (
+									<span class="text-faint">← 上一页</span>
+								)
+							}
+							<span class="text-xs text-faint">第 {page} 页</span>
+							{
+								matches.length === PAGE_SIZE ? (
+									<a href={buildHref({ page: String(page + 1) })} class="text-dota-light transition hover:text-cream">
+										下一页 →
+									</a>
+								) : (
+									<span class="text-faint">下一页 →</span>
+								)
+							}
+						</div>
+					</>
+				)}
 			</Panel>
 		</PlayerLayout>
 	)
