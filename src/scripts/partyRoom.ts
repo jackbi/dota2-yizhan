@@ -1006,6 +1006,7 @@ function renderRoom(): void {
 		dom.roomCode.textContent = roomCode;
 		dom.roomCount.textContent = '';
 		dom.roomRole.textContent = isHost ? '房主' : '';
+		clearDrag();
 		dom.teamGrid.replaceChildren();
 		dom.freePool.replaceChildren();
 		renderRolls();
@@ -1035,6 +1036,9 @@ function setHostToolsVisible(): void {
 function renderTeams(): void {
 	if (!room) return;
 	const state = room;
+	// 重建会把拖拽用到的节点一起换掉（拖拽中的卡片、高亮中的放置区都会成为孤儿），
+	// 所以先把拖拽状态清干净：宁可让正在拖的人重拖一次，也不要留下一个指向幽灵的 memberId。
+	clearDrag();
 	// 正在改队名时不要重建队伍区：重建会把输入框连同没提交的内容一起换掉。
 	// 队名的提交/取消自己会再调一次 renderTeams，不怕漏刷新。
 	const editing = document.activeElement;
@@ -1047,10 +1051,14 @@ function renderTeams(): void {
 
 	const free = L.freeMembers(state);
 	const pool = h('section', 'rounded-2xl border border-dashed border-line bg-surface/60 p-4');
+	// 空闲池也是一个放置区：把队里的人拖回来就是「退出队伍」（`moveMember` 的 teamId 为 null）。
+	pool.dataset.dropPool = '';
 	const head = h('div', 'flex items-baseline gap-2');
+	const canDragSelf = free.some((member) => member.id === selfId);
+	const hint = isHost ? ' · 拖 ⋮⋮ 到队伍，或用下拉' : canDragSelf ? ' · 拖 ⋮⋮ 或下拉归队' : '';
 	head.append(
 		h('h3', 'font-display text-sm text-muted', '空闲池'),
-		h('span', 'text-xs text-faint', `${free.length} 人${isHost ? ' · 用右侧下拉归队' : ''}`),
+		h('span', 'text-xs text-faint', `${free.length} 人${hint}`),
 	);
 	pool.append(head);
 	if (free.length === 0) {
@@ -1069,6 +1077,8 @@ function renderTeams(): void {
 
 function teamCard(state: RoomState, team: Team): HTMLElement {
 	const card = h('article', 'rounded-2xl border border-line bg-surface p-4');
+	// 放置区的标记放在整张卡上：拖到卡片里的任何位置都算拖到这个队。
+	card.dataset.dropTeam = team.id;
 
 	const head = h('div', 'flex items-center gap-2');
 	if (renamingTeamId === team.id) {
@@ -1129,8 +1139,35 @@ function teamCard(state: RoomState, team: Team): HTMLElement {
 	return card;
 }
 
+/**
+ * 拖拽手柄。
+ *
+ * `draggable` 只挂在这个小小的手柄上，**整张卡片不挂**：卡片里嵌着归队用的 `<select>`
+ * （还有队长的改名输入框），祖先带 `draggable` 之后那些控件在部分浏览器里点不动、选不中文本。
+ * 拖影另说——`dragstart` 里用 `setDragImage()` 换成整张卡，手感还是「拖着这个人走」。
+ */
+function dragHandle(member: Member): HTMLElement {
+	const grip = h(
+		'span',
+		'shrink-0 cursor-grab select-none px-0.5 text-[11px] leading-none tracking-tighter text-faint transition hover:text-cream',
+		'⋮⋮',
+	);
+	grip.draggable = true;
+	grip.dataset.memberDrag = member.id;
+	grip.title = `拖动 ${member.name} 归队`;
+	// 纯鼠标的快捷方式，等价操作是右边的下拉；不放进无障碍树，免得读屏念一串点。
+	grip.setAttribute('aria-hidden', 'true');
+	return grip;
+}
+
 function memberCard(state: RoomState, member: Member): HTMLElement {
 	const item = h('li', 'flex items-center gap-2 rounded-lg border border-line bg-ink-2 px-2 py-1.5');
+	item.dataset.memberId = member.id;
+
+	// 房主能挪任何人，其他人只能挪自己。下拉和拖拽共用这一个判断。
+	const editable = isHost || member.id === selfId;
+	if (editable) item.append(dragHandle(member));
+
 	item.append(avatarNode(member.name, member.avatar, 24));
 
 	const name = h('span', 'min-w-0 flex-1 truncate text-sm text-cream', member.name);
@@ -1143,10 +1180,9 @@ function memberCard(state: RoomState, member: Member): HTMLElement {
 	if (roll) item.append(h('span', 'shrink-0 text-xs tabular-nums text-gold', String(roll.value)));
 
 	/*
-	 * 归队用一个 <select> 而不是拖拽：拖拽在触屏和键盘上都要另做一套等价操作，
-	 * 而下拉天然三端可用。房主能挪任何人，其他人只能挪自己。
+	 * 归队仍然保留这个 <select>：拖拽在触屏和键盘上都没有等价操作，而下拉天然三端可用。
+	 * 换句话说 ⋮⋮ 手柄只是给鼠标加的一条快路，**不是唯一的路**，权限也完全一样（见 editable）。
 	 */
-	const editable = isHost || member.id === selfId;
 	const select = h('select', 'shrink-0 max-w-[7rem] rounded-md border border-line bg-surface px-1.5 py-1 text-xs text-muted focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold');
 	select.dataset.memberId = member.id;
 	select.disabled = !editable;
@@ -1204,6 +1240,132 @@ function renderChat(): void {
 		}),
 	);
 	dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
+}
+
+// ---------------------------------------------------------------- 拖拽归队
+
+/**
+ * 把空闲池里的人拖到队伍卡片上归队（反过来也能把队里的人拖回空闲池或另一个队）。
+ *
+ * HTML5 拖拽是个「只有两头」的接口：`dragstart` 里放数据、`dragover` 里决定接不接受，
+ * **中间不回调**。所以「现在拖的是谁」「当前高亮的是哪个放置区」只能自己拿变量记。
+ * 权限和下拉完全一致（房主挪任何人，其他人挪自己），走的是同一个 `moveMemberTo()`。
+ */
+let draggingMemberId: string | null = null;
+let draggingCard: HTMLElement | null = null;
+let activeDropZone: HTMLElement | null = null;
+
+/** 拖起来的那张卡淡化；垫在下面的放置区加一圈高亮。两个类名都在 liveWall.ts 里用过。 */
+const DRAG_SOURCE_CLASS = ['opacity-50'];
+const DROP_ZONE_CLASS = ['ring-2', 'ring-dota'];
+
+/** 命中的放置区：队伍卡（`data-drop-team`）或空闲池（`data-drop-pool`）。 */
+function dropZoneOf(target: EventTarget | null): HTMLElement | null {
+	return target instanceof Element ? target.closest<HTMLElement>('[data-drop-team],[data-drop-pool]') : null;
+}
+
+/** 放置区对应的队伍 id；空闲池是 `null`（`moveMember` 用它表示「退到空闲」）。 */
+function dropZoneTeam(zone: HTMLElement): string | null {
+	return zone.dataset.dropTeam ?? null;
+}
+
+/**
+ * 清掉全部拖拽痕迹。
+ *
+ * 除了 `dragend`，**重新渲染队伍区时也必须调**：`replaceChildren()` 会把拖拽的源节点从
+ * 文档里摘掉，浏览器随即中止这次拖拽，而 `dragend` 落在一个已经脱离文档的节点上、冒泡不到
+ * `document`——不主动清，`draggingMemberId` 就会永远停在那个幽灵身上。
+ */
+function clearDrag(): void {
+	activeDropZone?.classList.remove(...DROP_ZONE_CLASS);
+	activeDropZone = null;
+	draggingCard?.classList.remove(...DRAG_SOURCE_CLASS);
+	draggingCard = null;
+	draggingMemberId = null;
+}
+
+/** 高亮当前放置区。`dragover` 是连续触发的，这样写就不用管 dragleave 在子元素间乱跳的老问题。 */
+function setDropZone(zone: HTMLElement | null): void {
+	if (zone === activeDropZone) return;
+	activeDropZone?.classList.remove(...DROP_ZONE_CLASS);
+	activeDropZone = zone;
+	activeDropZone?.classList.add(...DROP_ZONE_CLASS);
+}
+
+/**
+ * 挪人。下拉和拖拽共用这一条路径，免得两条路的权限或提示走偏。
+ * 房主直接改本地权威状态；其他人把请求发给房主（房主只允许他挪自己，见 hostHandleCmd）。
+ */
+function moveMemberTo(memberId: string, teamId: string | null): void {
+	if (!room) return;
+	if (!L.memberById(room, memberId)) return;
+	if ((L.teamOf(room, memberId)?.id ?? null) === teamId) return; // 已经在那儿了，白跑一趟
+	const team = teamId ? room.teams.find((item) => item.id === teamId) : undefined;
+	if (teamId && !team) return;
+
+	/*
+	 * 队满时 `moveMember` 会原样返回，一个字都不说。在下拉里这最多算「选项没生效」，
+	 * 在拖拽里就是「我明明拖过去了，它自己弹回来」——所以自己先判一次，并把话说清楚。
+	 */
+	if (team && team.members.length >= room.teamSize) {
+		setNotice(`${team.name} 已经满 ${room.teamSize} 人了：先调高「每队上限」，或把人挪到别的队。`, 'warn');
+		return;
+	}
+
+	if (isHost) hostMutate((state) => L.moveMember(state, memberId, teamId), null);
+	else void roomActions?.cmd.send({ type: 'move', memberId, teamId });
+}
+
+function bindMemberDrag(): void {
+	document.addEventListener('dragstart', (event) => {
+		const grip =
+			event.target instanceof Element ? event.target.closest<HTMLElement>('[data-member-drag]') : null;
+		const memberId = grip?.dataset.memberDrag;
+		if (!grip || !memberId || !event.dataTransfer) return;
+
+		draggingMemberId = memberId;
+		draggingCard = grip.closest<HTMLElement>('li[data-member-id]');
+		// 不设数据的话 Firefox 根本不肯开始拖，哪怕我们只读自己的变量。
+		event.dataTransfer.setData('text/plain', (room && L.memberById(room, memberId)?.name) || '');
+		event.dataTransfer.effectAllowed = 'move';
+		// 拖影取整张卡片（手柄太小，捏着两个点飞不太像「拖着一个人」），
+		// 所以必须在加淡化类**之前**拍快照。
+		if (draggingCard) event.dataTransfer.setDragImage(draggingCard, 16, 16);
+		const card = draggingCard;
+		window.setTimeout(() => card?.classList.add(...DRAG_SOURCE_CLASS), 0);
+	});
+
+	document.addEventListener('dragover', (event) => {
+		if (!draggingMemberId || !room) return;
+		const zone = dropZoneOf(event.target);
+		if (!zone) {
+			setDropZone(null);
+			return;
+		}
+		// 必须 preventDefault：不调的话浏览器认为这里不接受放置，`drop` 压根不会触发
+		// （表现是「拖过去松手，什么都没发生，也不报错」）。
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+		// 只高亮「放下会真的改变什么」的目标：把人拖回他已经在的队/池，等于没动。
+		const to = dropZoneTeam(zone);
+		setDropZone(to === (L.teamOf(room, draggingMemberId)?.id ?? null) ? null : zone);
+	});
+
+	document.addEventListener('drop', (event) => {
+		// 先取值再清状态：下面这次移动会触发 renderRoom()，那里还会再清一遍。
+		const memberId = draggingMemberId;
+		const zone = dropZoneOf(event.target);
+		if (!memberId || !zone) {
+			clearDrag();
+			return;
+		}
+		event.preventDefault();
+		clearDrag();
+		moveMemberTo(memberId, dropZoneTeam(zone));
+	});
+
+	// 拖拽没落在任何放置区（按 Esc、拖到页面外、拖回原处）：也得清，否则高亮会留在页面上。
+	document.addEventListener('dragend', clearDrag);
 }
 
 // ---------------------------------------------------------------- 全屏
@@ -1346,22 +1508,15 @@ function bindEvents(): void {
 		else if (tool === 'clearRolls') hostMutate((state) => L.clearRolls(state), '重开了一轮 roll');
 	});
 
-	dom.teamGrid.addEventListener('change', (event) => {
+	// 归队：队伍区和空闲池里各有一个下拉，两者是同一件事，所以合并成一个委托监听
+	//（`#team-stage` 同时罩着这两块），并且和拖拽共用 `moveMemberTo()`。
+	dom.teamStage.addEventListener('change', (event) => {
 		const select = (event.target as HTMLElement).closest<HTMLSelectElement>('select[data-member-id]');
 		if (!select) return;
-		const memberId = select.dataset.memberId ?? '';
-		const teamId = select.value || null;
-		if (isHost) hostMutate((state) => L.moveMember(state, memberId, teamId), null);
-		else void roomActions?.cmd.send({ type: 'move', memberId, teamId });
+		moveMemberTo(select.dataset.memberId ?? '', select.value || null);
 	});
-	dom.freePool.addEventListener('change', (event) => {
-		const select = (event.target as HTMLElement).closest<HTMLSelectElement>('select[data-member-id]');
-		if (!select) return;
-		const memberId = select.dataset.memberId ?? '';
-		const teamId = select.value || null;
-		if (isHost) hostMutate((state) => L.moveMember(state, memberId, teamId), null);
-		else void roomActions?.cmd.send({ type: 'move', memberId, teamId });
-	});
+
+	bindMemberDrag();
 
 	document.addEventListener('click', (event) => {
 		const node = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-team-remove],[data-team-rename-start]');
