@@ -1,0 +1,36 @@
+---
+import Layout from '../../layouts/Layout.astro';
+
+interface Props {
+	title: string;
+	message: string;
+	/** 只有临时故障才值得让用户重试；配置缺失重试多少次都一样。 */
+	retryable?: boolean;
+}
+
+const { title, message, retryable = false } = Astro.props;
+---
+
+<Layout title={`${title} | DOTA2 驿站`}>
+	<div class="mx-auto max-w-2xl px-4 py-20 sm:px-6">
+		<div class="rounded-xl border border-line bg-surface px-6 py-10 text-center">
+			<h1 class="font-display text-xl text-cream">{title}</h1>
+			<p class="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted">{message}</p>
+			<div class="mt-6 flex justify-center gap-3">
+				{
+					retryable && (
+						<a
+							href="/me"
+							class="rounded-md bg-dota px-4 py-2 text-sm font-medium text-white transition hover:bg-dota-dark"
+						>
+							重新加载
+						</a>
+					)
+				}
+				<a href="/" class="rounded-md border border-line px-4 py-2 text-sm text-muted transition hover:text-cream">
+					返回首页
+				</a>
+			</div>
+		</div>
+	</div>
+</Layout>

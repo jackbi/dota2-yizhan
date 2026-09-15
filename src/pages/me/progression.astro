@@ -1,0 +1,141 @@
+---
+import Panel from '../../components/player/Panel.astro';
+import PlayerNotice from '../../components/player/PlayerNotice.astro';
+import WinRateChart from '../../components/player/WinRateChart.astro';
+import PlayerLayout from '../../layouts/PlayerLayout.astro';
+import { rankInfo } from '../../lib/dotaLabels';
+import { formatDay } from '../../lib/format';
+import { loadPlayer, noticeProps } from '../../lib/playerContext';
+import { readSession } from '../../lib/session';
+import { loadPlayerMatches, loadPlayerProgression, type GroupRow } from '../../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+const loaded = await loadPlayer(session.accountId);
+
+/** 走势只取最近这些场：更早的段位/打法早已不同，混进来反而看不出「最近怎么样」。 */
+const TREND_MATCHES = 100;
+
+const [progression, recent] = loaded.ok
+	? await Promise.all([
+			loadPlayerProgression(session.accountId).catch(() => ({ ranks: [], names: [], leaderboard: [] })),
+			loadPlayerMatches(session.accountId, { take: TREND_MATCHES, skip: 0 }).catch(() => []),
+		])
+	: [{ ranks: [], names: [], leaderboard: [] }, []];
+
+const current = rankInfo(loaded.ok ? loaded.profile.seasonRank : null);
+
+/** 把最近 N 场按天聚合，喂给累计胜率曲线。接口是倒序的，翻正。 */
+const byDay = new Map<number, { matches: number; wins: number }>();
+for (const match of recent) {
+	// 以 UTC 日切分，与 STRATZ 的 DATE_DAY 口径大致对齐；同一天跨时区归并差异可忽略。
+	const day = Math.floor(match.startTime / 86400) * 86400;
+	const row = byDay.get(day) ?? { matches: 0, wins: 0 };
+	row.matches += 1;
+	if (match.win) row.wins += 1;
+	byDay.set(day, row);
+}
+const trend: GroupRow[] = [...byDay.entries()]
+	.sort((a, b) => a[0] - b[0])
+	.map(([day, row]) => ({ key: String(day), matches: row.matches, wins: row.wins, imp: null }));
+
+/** 段位历史去重：同一个 rank 连续出现多次只留最后一条，读起来才像「什么时候打上去的」。 */
+const rankHistory = progression.ranks
+	.filter((row, index, list) => index === list.length - 1 || list[index + 1].rank !== row.rank)
+	.reverse();
+
+const names = [...progression.names].reverse();
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me/progression" title="进展">
+			<div class="grid gap-5 lg:grid-cols-3">
+				<Panel title="当前段位">
+					<div class="flex items-center gap-4">
+						<div class="relative h-20 w-20 shrink-0">
+							<img src={current.medalImg} alt={current.label} width="80" height="80" class="h-20 w-20 object-contain" />
+							{
+								current.starImg && (
+									<img
+										src={current.starImg}
+										alt=""
+										width="80"
+										height="80"
+										class="absolute inset-0 h-20 w-20 object-contain"
+									/>
+								)
+							}
+						</div>
+						<div>
+							<div class="font-display text-lg text-cream">{current.label}</div>
+							{loaded.profile.behaviorScore !== null && (
+								<div class="mt-1 text-xs text-faint">行为分 {loaded.profile.behaviorScore}</div>
+							)}
+							{progression.leaderboard.length > 0 && (
+								<div class="mt-1 text-xs text-gold">天梯排名 #{progression.leaderboard[0].rank}</div>
+							)}
+						</div>
+					</div>
+				</Panel>
+
+				<Panel title="近期胜率走势" hint={`最近 ${recent.length} 场`} class="lg:col-span-2">
+					<WinRateChart points={trend} />
+				</Panel>
+			</div>
+
+			<div class="mt-5 grid gap-5 lg:grid-cols-2">
+				<Panel title="段位历史" hint={rankHistory.length > 0 ? `${rankHistory.length} 次变化` : undefined}>
+					{
+						rankHistory.length === 0 ? (
+							<p class="text-sm leading-relaxed text-muted">
+								STRATZ 没有提供这个账号的段位历史。段位历史来自逐赛季快照，如果你很少打天梯或账号较老，
+								这里本来就是空的——上方「当前段位」仍然是准的。
+							</p>
+						) : (
+							<ul class="space-y-2">
+								{rankHistory.map((row) => {
+									const info = rankInfo(row.rank);
+									return (
+										<li class="flex items-center gap-3 text-sm">
+											<img src={info.medalImg} alt="" width="28" height="28" class="h-7 w-7 object-contain" />
+											<span class="flex-1 text-cream">{info.label}</span>
+											<span class="text-xs text-faint">{row.isCore ? '核心' : '辅助'}</span>
+											<span class="w-24 text-right text-xs text-faint">
+												{row.at ? formatDay(row.at) : '—'}
+											</span>
+										</li>
+									);
+								})}
+							</ul>
+						)
+					}
+				</Panel>
+
+				<Panel title="名字历史" hint={names.length > 0 ? `${names.length} 个` : undefined}>
+					{
+						names.length === 0 ? (
+							<p class="text-sm text-muted">STRATZ 没有记录到改名历史。</p>
+						) : (
+							<ul class="space-y-2">
+								{names.map((row) => (
+									<li class="flex items-center gap-3 text-sm">
+										<span class="min-w-0 flex-1 truncate text-cream">{row.name}</span>
+										<span class="shrink-0 text-xs text-faint">
+											{row.lastSeen ? `至 ${formatDay(row.lastSeen)}` : '—'}
+										</span>
+									</li>
+								))}
+							</ul>
+						)
+					}
+				</Panel>
+			</div>
+		</PlayerLayout>
+	)
+}

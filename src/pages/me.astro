@@ -1,0 +1,140 @@
+---
+import MatchList from '../components/player/MatchList.astro';
+import MatchTrend from '../components/player/MatchTrend.astro';
+import Panel from '../components/player/Panel.astro';
+import PlayerNotice from '../components/player/PlayerNotice.astro';
+import PlayerLayout from '../layouts/PlayerLayout.astro';
+import { positionLabel } from '../lib/dotaLabels';
+import { loadPlayer, loadRefs, noticeProps, percent, winRate } from '../lib/playerContext';
+import { readSession } from '../lib/session';
+import { loadPlayerHeroes, loadPlayerMatches } from '../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+const loaded = await loadPlayer(session.accountId);
+
+/** 概览只看最近这些场；完整历史在 /me/matches。 */
+const RECENT_LIMIT = 20;
+const TREND_LIMIT = 25;
+
+// 失败时不起后面的请求：STRATZ 多半正限流，再打三次只会更糟。
+const [recent, heroes, refs] = loaded.ok
+	? await Promise.all([
+			// 趋势与列表共用同一份请求：多取 5 场用于趋势，列表只截前 20。
+			loadPlayerMatches(session.accountId, { take: TREND_LIMIT, skip: 0 }).catch(() => []),
+			loadPlayerHeroes(session.accountId).catch(() => []),
+			loadRefs(),
+		])
+	: [[], [], { heroes: new Map(), items: new Map() }];
+
+// 接口按时间倒序返回；趋势图要正序，所以翻转一份副本。
+const trendMatches = [...recent].reverse().slice(-TREND_LIMIT);
+const topHeroes = heroes.slice(0, 6);
+
+/**
+ * 位置分布只统计**已取回的这 20 场**，并在标题里写明范围。
+ * 全部时间的位置分布要跑一次重聚合（见 /me/breakdown），不该拖慢概览页首屏。
+ */
+const positionCounts = new Map<string, { matches: number; wins: number }>();
+for (const match of recent) {
+	const key = match.position ?? 'UNKNOWN';
+	const row = positionCounts.get(key) ?? { matches: 0, wins: 0 };
+	row.matches += 1;
+	if (match.win) row.wins += 1;
+	positionCounts.set(key, row);
+}
+const positions = [...positionCounts.entries()].sort((a, b) => b[1].matches - a[1].matches);
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me" title="概况">
+	<div class="grid gap-5 lg:grid-cols-3">
+		<Panel title="趋势" hint={`最近 ${trendMatches.length} 场`} class="lg:col-span-2">
+			<MatchTrend matches={trendMatches} />
+
+			<div class="mt-6 border-t border-line pt-4">
+				<p class="mb-3 text-xs text-faint">最近 {recent.length} 场的位置分布</p>
+				{
+					positions.length === 0 ? (
+						<p class="text-sm text-muted">没有可用于统计的比赛。</p>
+					) : (
+						<ul class="space-y-2">
+							{positions.map(([key, row]) => (
+								<li class="flex items-center gap-3 text-xs">
+									<span class="w-16 shrink-0 text-muted">{positionLabel(key)}</span>
+									<span class="h-2 flex-1 overflow-hidden rounded-full bg-surface-3">
+										<span
+											class="block h-full rounded-full bg-dota"
+											style={`width: ${percent(row.matches, recent.length)}%`}
+										/>
+									</span>
+									<span class="w-24 shrink-0 text-right tabular-nums text-faint">
+										{row.matches} 场 · {winRate(row.wins, row.matches)}
+									</span>
+								</li>
+							))}
+						</ul>
+					)
+				}
+			</div>
+		</Panel>
+
+		<Panel title="最常用英雄" hint={`共 ${heroes.length} 个`}>
+			{
+				topHeroes.length === 0 ? (
+					<p class="text-sm text-muted">还没有英雄数据。</p>
+				) : (
+					<ul class="space-y-3">
+						{topHeroes.map((hero) => {
+							const info = refs.heroes.get(hero.heroId);
+							return (
+								<li class="flex items-center gap-3">
+									{info?.img ? (
+										<img
+											src={info.img}
+											alt=""
+											loading="lazy"
+											referrerpolicy="no-referrer"
+											class="h-8 w-14 shrink-0 rounded object-cover"
+										/>
+									) : (
+										<span class="h-8 w-14 shrink-0 rounded bg-surface-2" />
+									)}
+									<span class="min-w-0 flex-1">
+										<span class="block truncate text-sm text-cream">{info?.name ?? `英雄 ${hero.heroId}`}</span>
+										<span class="mt-1 block h-1.5 overflow-hidden rounded-full bg-surface-3">
+											<span
+												class="block h-full rounded-full"
+												style={`width: ${percent(hero.wins, hero.matches)}%; background: ${hero.wins * 2 >= hero.matches ? 'var(--color-dota)' : '#4a5568'}`}
+											/>
+										</span>
+									</span>
+									<span class="shrink-0 text-right text-xs tabular-nums">
+										<span class="block text-cream">{winRate(hero.wins, hero.matches)}</span>
+										<span class="block text-faint">{hero.matches} 场</span>
+									</span>
+								</li>
+							);
+						})}
+					</ul>
+				)
+			}
+			<a href="/me/heroes" class="mt-4 block text-xs text-dota-light transition hover:text-cream">查看全部英雄 →</a>
+		</Panel>
+	</div>
+
+	<div class="mt-5">
+		<Panel title="最近比赛" hint={`最近 ${Math.min(recent.length, RECENT_LIMIT)} 场`}>
+			<MatchList matches={recent.slice(0, RECENT_LIMIT)} heroes={refs.heroes} items={refs.items} />
+			<a href="/me/matches" class="mt-4 block text-xs text-dota-light transition hover:text-cream">查看全部比赛 →</a>
+		</Panel>
+	</div>
+		</PlayerLayout>
+	)
+}

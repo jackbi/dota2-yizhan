@@ -1,0 +1,61 @@
+---
+import HeroStatsTable from '../../components/player/HeroStatsTable.astro';
+import Panel from '../../components/player/Panel.astro';
+import PlayerNotice from '../../components/player/PlayerNotice.astro';
+import PlayerLayout from '../../layouts/PlayerLayout.astro';
+import { loadPlayer, loadRefs, noticeProps } from '../../lib/playerContext';
+import { readSession } from '../../lib/session';
+import { loadPlayerHeroes } from '../../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+const loaded = await loadPlayer(session.accountId);
+
+/** 取回的上限：STRATZ 的 heroesPerformance 按场次倒序，60 个足够覆盖绝大多数账号。 */
+const HERO_LIMIT = 60;
+const MIN_MATCH_OPTIONS = [0, 2, 5, 10];
+
+const minMatches = MIN_MATCH_OPTIONS.includes(Number(Astro.url.searchParams.get('min')))
+	? Number(Astro.url.searchParams.get('min'))
+	: 0;
+
+const [heroes, refs] = loaded.ok
+	? await Promise.all([loadPlayerHeroes(session.accountId, HERO_LIMIT).catch(() => []), loadRefs()])
+	: [[], { heroes: new Map(), items: new Map() }];
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me/heroes" title="英雄">
+			<Panel
+				title="英雄统计"
+				hint={`按场次排序，最多 ${HERO_LIMIT} 个`}
+			>
+				{/* 场次门槛：1 场的英雄胜率不是 0% 就是 100%，混在表里会误导。 */}
+				<div class="mb-4 flex flex-wrap items-center gap-2 text-xs">
+					<span class="text-faint">最低场次</span>
+					{MIN_MATCH_OPTIONS.map((option) => (
+						<a
+							href={`/me/heroes${option > 0 ? `?min=${option}` : ''}`}
+							class:list={[
+								'rounded-md border px-2.5 py-1 transition',
+								option === minMatches
+									? 'border-dota bg-dota/15 text-dota-light'
+									: 'border-line text-muted hover:text-cream',
+							]}
+						>
+							{option === 0 ? '全部' : `${option}+`}
+						</a>
+					))}
+				</div>
+
+				<HeroStatsTable heroes={heroes} refs={refs.heroes} minMatches={minMatches} />
+			</Panel>
+		</PlayerLayout>
+	)
+}

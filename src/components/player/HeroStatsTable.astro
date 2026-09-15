@@ -1,0 +1,109 @@
+---
+import type { HeroRef } from '../../lib/gameRefs';
+import { impTone } from '../../lib/dotaLabels';
+import { kda, percent, winRate } from '../../lib/playerContext';
+import type { HeroPerformance } from '../../lib/stratzPlayer';
+
+interface Props {
+	heroes: HeroPerformance[];
+	refs: Map<number, HeroRef>;
+	/** 场次门槛：低于它的英雄统计噪声太大，默认折叠掉。 */
+	minMatches?: number;
+}
+
+const { heroes, refs, minMatches = 0 } = Astro.props;
+const rows = heroes.filter((hero) => hero.matches >= minMatches);
+---
+
+{
+	rows.length === 0 ? (
+		<p class="rounded-xl border border-line bg-surface px-5 py-10 text-center text-sm text-muted">
+			没有满足条件的英雄记录。
+		</p>
+	) : (
+		<div class="overflow-x-auto">
+			<table class="w-full min-w-[42rem] border-collapse text-sm">
+				<thead>
+					<tr class="border-b border-line text-left text-xs text-faint">
+						<th class="px-3 py-2 font-normal">英雄</th>
+						<th class="px-3 py-2 text-right font-normal">场次</th>
+						<th class="px-3 py-2 text-right font-normal">胜率</th>
+						<th class="px-3 py-2 text-right font-normal">K / D / A</th>
+						<th class="px-3 py-2 text-right font-normal">KDA</th>
+						<th class="px-3 py-2 text-right font-normal">GPM</th>
+						<th class="px-3 py-2 text-right font-normal">XPM</th>
+						<th class="px-3 py-2 text-right font-normal">平均 IMP</th>
+					</tr>
+				</thead>
+				<tbody>
+					{rows.map((hero) => {
+						const info = refs.get(hero.heroId);
+						const rate = percent(hero.wins, hero.matches);
+						const tone = impTone(hero.imp);
+						return (
+							<tr class="border-b border-line/60 transition hover:bg-surface-2">
+								<td class="px-3 py-2">
+									<div class="flex items-center gap-2.5">
+										{/* 左侧色条按主属性上色，和英雄页一致 */}
+										<span
+											class="h-7 w-1 shrink-0 rounded-full"
+											style={`background: ${
+												info?.attr === 'STR'
+													? '#C0392B'
+													: info?.attr === 'AGI'
+														? '#2E8B57'
+														: info?.attr === 'INT'
+															? '#2980B9'
+															: '#E0A93F'
+											}`}
+										/>
+										{info?.img ? (
+											<img
+												src={info.img}
+												alt=""
+												loading="lazy"
+												referrerpolicy="no-referrer"
+												class="h-7 w-12 shrink-0 rounded object-cover"
+											/>
+										) : (
+											<span class="h-7 w-12 shrink-0 rounded bg-surface-2" />
+										)}
+										<span class="truncate text-cream">{info?.name ?? `英雄 ${hero.heroId}`}</span>
+									</div>
+								</td>
+								<td class="px-3 py-2 text-right tabular-nums text-muted">{hero.matches}</td>
+								<td class="px-3 py-2 text-right">
+									<div class="flex items-center justify-end gap-2">
+										<span class="h-1.5 w-16 overflow-hidden rounded-full bg-surface-3">
+											<span
+												class="block h-full rounded-full"
+												style={`width: ${rate}%; background: ${rate >= 50 ? 'var(--color-dota)' : '#4a5568'}`}
+											/>
+										</span>
+										<span class="w-12 tabular-nums text-muted">{winRate(hero.wins, hero.matches)}</span>
+									</div>
+								</td>
+								<td class="px-3 py-2 text-right tabular-nums text-muted">
+									{hero.kills.toFixed(1)} / {hero.deaths.toFixed(1)} / {hero.assists.toFixed(1)}
+								</td>
+								<td class="px-3 py-2 text-right tabular-nums text-cream">
+									{kda(hero.kills, hero.deaths, hero.assists).toFixed(2)}
+								</td>
+								<td class="px-3 py-2 text-right tabular-nums text-muted">{Math.round(hero.gpm)}</td>
+								<td class="px-3 py-2 text-right tabular-nums text-muted">{Math.round(hero.xpm)}</td>
+								<td
+									class:list={[
+										'px-3 py-2 text-right tabular-nums',
+										tone === 'good' ? 'text-gold' : tone === 'bad' ? 'text-muted' : 'text-faint',
+									]}
+								>
+									{hero.imp > 0 ? `+${hero.imp}` : hero.imp}
+								</td>
+							</tr>
+						);
+					})}
+				</tbody>
+			</table>
+		</div>
+	)
+}

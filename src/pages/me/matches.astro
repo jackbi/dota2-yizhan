@@ -1,0 +1,176 @@
+---
+import MatchList from '../../components/player/MatchList.astro';
+import Panel from '../../components/player/Panel.astro';
+import PlayerNotice from '../../components/player/PlayerNotice.astro';
+import PlayerLayout from '../../layouts/PlayerLayout.astro';
+import { gameModeLabel, lobbyLabel } from '../../lib/dotaLabels';
+import { loadPlayer, loadRefs, noticeProps, thousands, winRate } from '../../lib/playerContext';
+import { readSession } from '../../lib/session';
+import { loadPlayerMatches } from '../../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+const loaded = await loadPlayer(session.accountId);
+
+const PAGE_SIZE = 25;
+
+/** 筛选项固定成白名单，只认识这些值——不把任意 query 直接透给上游。 */
+const GAME_MODES = [1, 22, 2, 3, 4, 5, 18, 23, 16, 11];
+const LOBBY_TYPES = [7, 0, 6, 9, 2];
+
+/** `?mode=1,23` → [1,23]，只保留白名单内的，去重。 */
+function parseIntList(raw: string | null, allowed: number[]): number[] {
+	if (!raw) return [];
+	const wanted = new Set(raw.split(',').map(Number));
+	return allowed.filter((value) => wanted.has(value));
+}
+
+const params = Astro.url.searchParams;
+const modeIds = parseIntList(params.get('mode'), GAME_MODES);
+const lobbyIds = parseIntList(params.get('lobby'), LOBBY_TYPES);
+const outcome = params.get('outcome');
+const heroId = Number(params.get('hero'));
+const page = Math.max(1, Number(params.get('page')) || 1);
+
+const hasHeroFilter = Number.isFinite(heroId) && heroId > 0;
+
+const [matches, refs] = loaded.ok
+	? await Promise.all([
+			loadPlayerMatches(session.accountId, {
+				take: PAGE_SIZE,
+				skip: (page - 1) * PAGE_SIZE,
+				gameModeIds: modeIds.length ? modeIds : undefined,
+				lobbyTypeIds: lobbyIds.length ? lobbyIds : undefined,
+				heroIds: hasHeroFilter ? [heroId] : undefined,
+				isVictory: outcome === 'win' ? true : outcome === 'loss' ? false : undefined,
+			}).catch(() => []),
+			loadRefs(),
+		])
+	: [[], { heroes: new Map(), items: new Map() }];
+
+const wins = matches.filter((match) => match.win).length;
+const hasFilter = modeIds.length > 0 || lobbyIds.length > 0 || Boolean(outcome) || hasHeroFilter;
+
+/** 拼当前筛选下的链接，改一个参数、其余保持。页码变化时重置回第 1 页。 */
+function buildHref(overrides: Record<string, string | null>): string {
+	const next = new URLSearchParams(params);
+	for (const [key, value] of Object.entries(overrides)) {
+		if (value === null) next.delete(key);
+		else next.set(key, value);
+	}
+	const query = next.toString();
+	return `/me/matches${query ? `?${query}` : ''}`;
+}
+
+const heroOptions = [...refs.heroes.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me/matches" title="比赛">
+			<Panel title="比赛记录" hint={hasFilter ? `本页 ${matches.length} 场` : `共 ${thousands(loaded.profile.matchCount)} 场`}>
+				{/* 筛选器：GET 表单，无 JS 也能用；选中态由 URL 决定。 */}
+				<form method="get" action="/me/matches" class="mb-5 flex flex-wrap items-end gap-3">
+					<label class="flex flex-col gap-1 text-xs text-faint">
+						游戏模式
+						<select
+							name="mode"
+							class="rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-cream"
+						>
+							<option value="">全部</option>
+							{GAME_MODES.map((id) => (
+								<option value={String(id)} selected={modeIds.includes(id)}>
+									{gameModeLabel(id)}
+								</option>
+							))}
+						</select>
+					</label>
+
+					<label class="flex flex-col gap-1 text-xs text-faint">
+						房间类型
+						<select name="lobby" class="rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-cream">
+							<option value="">全部</option>
+							{LOBBY_TYPES.map((id) => (
+								<option value={String(id)} selected={lobbyIds.includes(id)}>
+									{lobbyLabel(id)}
+								</option>
+							))}
+						</select>
+					</label>
+
+					<label class="flex flex-col gap-1 text-xs text-faint">
+						英雄
+						<select name="hero" class="max-w-40 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-cream">
+							<option value="">全部</option>
+							{heroOptions.map((hero) => (
+								<option value={String(hero.id)} selected={hasHeroFilter && hero.id === heroId}>
+									{hero.name}
+								</option>
+							))}
+						</select>
+					</label>
+
+					<label class="flex flex-col gap-1 text-xs text-faint">
+						结果
+						<select name="outcome" class="rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-cream">
+							<option value="">全部</option>
+							<option value="win" selected={outcome === 'win'}>仅胜场</option>
+							<option value="loss" selected={outcome === 'loss'}>仅负场</option>
+						</select>
+					</label>
+
+					<button
+						type="submit"
+						class="rounded-md bg-dota px-4 py-2 text-sm font-medium text-white transition hover:bg-dota-dark"
+					>
+						筛选
+					</button>
+					{hasFilter && <a href="/me/matches" class="text-xs text-faint transition hover:text-cream">清除</a>}
+				</form>
+
+				{
+					hasFilter && matches.length > 0 && (
+						<p class="mb-3 text-xs text-faint">
+							本页 {matches.length} 场，{wins} 胜 {matches.length - wins} 负（{winRate(wins, matches.length)}）
+						</p>
+					)
+				}
+
+				<MatchList
+					matches={matches}
+					heroes={refs.heroes}
+					items={refs.items}
+					emptyText={page > 1 ? '这一页没有比赛了。' : hasFilter ? '没有符合筛选条件的比赛。' : '还没有比赛记录。'}
+				/>
+
+				{/* 分页：只做上一页/下一页——STRATZ 的 skip 是偏移量，没有稳定的总数可供跳页。 */}
+				<div class="mt-5 flex items-center justify-between text-sm">
+					{
+						page > 1 ? (
+							<a href={buildHref({ page: String(page - 1) })} class="text-dota-light transition hover:text-cream">
+								← 上一页
+							</a>
+						) : (
+							<span class="text-faint">← 上一页</span>
+						)
+					}
+					<span class="text-xs text-faint">第 {page} 页</span>
+					{
+						matches.length === PAGE_SIZE ? (
+							<a href={buildHref({ page: String(page + 1) })} class="text-dota-light transition hover:text-cream">
+								下一页 →
+							</a>
+						) : (
+							<span class="text-faint">下一页 →</span>
+						)
+					}
+				</div>
+			</Panel>
+		</PlayerLayout>
+	)
+}

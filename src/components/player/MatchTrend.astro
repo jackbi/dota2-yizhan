@@ -1,0 +1,41 @@
+---
+import { percent, winRate } from '../../lib/playerContext';
+import type { PlayerMatch } from '../../lib/stratzPlayer';
+
+/**
+ * 最近若干场的胜负走势。
+ *
+ * 手写柱子而不是引图表库：整站没有图表依赖，为一条 25 根的柱状图拉进 recharts
+ * 不划算（客户端体积、SSR 下还要处理水合）。数据是「胜/负」二值，柱子足够表达。
+ *
+ * 数据按时间**正序**传入，左边最早、右边最新，和阅读方向一致。
+ */
+interface Props {
+	matches: PlayerMatch[];
+}
+
+const { matches } = Astro.props;
+const wins = matches.filter((match) => match.win).length;
+const rate = percent(wins, matches.length);
+---
+
+<div class="flex items-end gap-1" role="img" aria-label={`最近 ${matches.length} 场胜率 ${winRate(wins, matches.length)}`}>
+	{
+		matches.map((match) => (
+			<span
+				class:list={['h-10 w-full min-w-1.5 rounded-sm', match.win ? 'bg-dota' : 'bg-[#4a5568]']}
+				style={`height: ${match.win ? '100%' : '55%'}`}
+				title={match.win ? '胜' : '负'}
+			/>
+		))
+	}
+</div>
+
+<div class="mt-3 flex items-baseline justify-between text-sm">
+	<span class="text-muted">
+		最近 {matches.length} 场胜率 <span class="font-medium text-cream">{winRate(wins, matches.length)}</span>
+	</span>
+	<span class:list={['text-xs', rate >= 50 ? 'text-gold' : 'text-faint']}>
+		{matches.length - wins} 负 / {wins} 胜
+	</span>
+</div>

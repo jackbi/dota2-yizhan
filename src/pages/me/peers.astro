@@ -1,0 +1,78 @@
+---
+import Panel from '../../components/player/Panel.astro';
+import PeersTable from '../../components/player/PeersTable.astro';
+import PlayerNotice from '../../components/player/PlayerNotice.astro';
+import PlayerLayout from '../../layouts/PlayerLayout.astro';
+import { loadPlayer, noticeProps } from '../../lib/playerContext';
+import { readSession } from '../../lib/session';
+import { loadPlayerPeers } from '../../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+const loaded = await loadPlayer(session.accountId);
+
+const MIN_OPTIONS = [1, 2, 5, 10];
+const requested = Number(Astro.url.searchParams.get('min'));
+const minMatches = MIN_OPTIONS.includes(requested) ? requested : 1;
+
+/**
+ * 两个方向各取一次。STRATZ 按账号分组时 **没有「同时在同队与对面」这一项**
+ * （那是 WITH / AGAINST 两个独立列表），所以这里如实分成两块，不做合并——
+ * 合并会把「一起打过 3 场」和「对位过 3 场」混成一个没有意义的数字。
+ */
+const [withPeers, againstPeers] = loaded.ok
+	? await Promise.all([
+			loadPlayerPeers(session.accountId, 'WITH').catch(() => []),
+			loadPlayerPeers(session.accountId, 'AGAINST').catch(() => []),
+		])
+	: [[], []];
+
+const withShown = withPeers.filter((peer) => peer.matches >= minMatches).length;
+const againstShown = againstPeers.filter((peer) => peer.matches >= minMatches).length;
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me/peers" title="队友与对手">
+			<div class="mb-4 flex flex-wrap items-center gap-2 text-xs">
+				<span class="text-faint">最低场次</span>
+				{MIN_OPTIONS.map((option) => (
+					<a
+						href={`/me/peers${option > 1 ? `?min=${option}` : ''}`}
+						class:list={[
+							'rounded-md border px-2.5 py-1 transition',
+							option === minMatches ? 'border-dota bg-dota/15 text-dota-light' : 'border-line text-muted hover:text-cream',
+						]}
+					>
+						{option}+
+					</a>
+				))}
+			</div>
+
+			<div class="grid gap-5 lg:grid-cols-2">
+				<Panel title="最常一起玩" hint={`${withShown} 人`}>
+					<PeersTable
+						peers={withPeers}
+						matchLabel="同队"
+						minMatches={minMatches}
+						emptyText={`没有同队 ${minMatches} 场以上的人。`}
+					/>
+				</Panel>
+
+				<Panel title="最常对阵" hint={`${againstShown} 人`}>
+					<PeersTable
+						peers={againstPeers}
+						matchLabel="对阵"
+						minMatches={minMatches}
+						emptyText={`没有对阵 ${minMatches} 场以上的人。`}
+					/>
+				</Panel>
+			</div>
+		</PlayerLayout>
+	)
+}

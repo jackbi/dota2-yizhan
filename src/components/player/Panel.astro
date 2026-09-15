@@ -1,0 +1,19 @@
+---
+/** 战绩页统一的卡片外壳：标题 + 可选汇总 + 内容。 */
+interface Props {
+	title: string;
+	/** 标题右侧的小字，比如「最近 25 场」「共 1338 场」。 */
+	hint?: string;
+	class?: string;
+}
+
+const { title, hint, class: className = '' } = Astro.props;
+---
+
+<section class:list={['rounded-xl border border-line bg-surface p-5', className]}>
+	<header class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+		<h2 class="font-display text-base text-cream">{title}</h2>
+		{hint && <span class="text-xs text-faint">{hint}</span>}
+	</header>
+	<slot />
+</section>

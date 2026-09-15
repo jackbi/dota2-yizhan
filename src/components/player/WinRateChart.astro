@@ -1,0 +1,73 @@
+---
+import type { GroupRow } from '../../lib/stratzPlayer';
+
+/**
+ * 累计胜率曲线。
+ *
+ * 画的是**累计**胜率而不是逐场胜率：逐场只有 0/100 两个值，画出来是锯齿噪声；
+ * 累计能看出「最近是不是在赢」这个真正想问的问题。
+ *
+ * 手写 SVG，理由同 `MatchTrend`：整站没有图表依赖，不该为一条折线引入一个库。
+ * `viewBox` 固定 100×100、`preserveAspectRatio="none"`，由外部容器决定实际尺寸。
+ */
+interface Props {
+	/** 按时间正序。 */
+	points: GroupRow[];
+	label?: string;
+}
+
+const { points, label = '累计胜率' } = Astro.props;
+
+let matches = 0;
+let wins = 0;
+const series: number[] = [];
+for (const point of points) {
+	matches += point.matches;
+	wins += point.wins;
+	if (matches > 0) series.push((wins / matches) * 100);
+}
+
+const last = series.at(-1) ?? 0;
+/**
+ * 纵轴不锁死 0–100：胜率几乎总在 40–60 之间，锁死会变成一条直线看不出变化。
+ * 留 5% 余量，并把上下限压到 0–100 之间。
+ */
+const lowest = series.length ? Math.min(...series) : 0;
+const highest = series.length ? Math.max(...series) : 0;
+const floor = Math.max(0, Math.floor(lowest - 5));
+const ceil = Math.min(100, Math.ceil(highest + 5));
+const span = ceil - floor || 1;
+
+const toY = (value: number): number => 100 - ((value - floor) / span) * 100;
+const path = series.map((value, index) => `${index === 0 ? 'M' : 'L'}${(index / Math.max(1, series.length - 1)) * 100},${toY(value)}`).join(' ');
+const area = series.length > 1 ? `${path} L100,100 L0,100 Z` : '';
+---
+
+{
+	series.length < 2 ? (
+		<p class="py-8 text-center text-sm text-muted">比赛太少，画不出走势。</p>
+	) : (
+		<div>
+			<div class="relative h-40 w-full">
+				<svg viewBox="0 0 100 100" preserveAspectRatio="none" class="h-full w-full" role="img" aria-label={`${label} 曲线`}>
+					<defs>
+						<linearGradient id="wrFill" x1="0" y1="0" x2="0" y2="1">
+							<stop offset="0%" stop-color="#c6522c" stop-opacity="0.35" />
+							<stop offset="100%" stop-color="#c6522c" stop-opacity="0" />
+						</linearGradient>
+					</defs>
+					{area && <path d={area} fill="url(#wrFill)" />}
+					{/* viewBox 是 100×100 被拉伸到实际尺寸，必须配 non-scaling-stroke，否则线宽会跟着横轴一起被拉变形 */}
+					<path d={path} fill="none" stroke="#ea6134" stroke-width="1.5" vector-effect="non-scaling-stroke" />
+				</svg>
+			</div>
+			<div class="mt-2 flex items-baseline justify-between text-xs text-faint">
+				<span>区间 {floor}% – {ceil}%</span>
+				<span>
+					{label} <span class="font-medium text-cream">{last.toFixed(1)}%</span>
+					<span class="ml-2">{matches} 场 / {wins} 胜</span>
+				</span>
+			</div>
+		</div>
+	)
+}

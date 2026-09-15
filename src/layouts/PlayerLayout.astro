@@ -1,0 +1,129 @@
+---
+import Avatar from '../components/player/Avatar.astro';
+import Layout from './Layout.astro';
+import { rankInfo } from '../lib/dotaLabels';
+import { formatDay } from '../lib/format';
+import type { PlayerProfile } from '../lib/stratzPlayer';
+import { percent, thousands, winRate } from '../lib/playerContext';
+
+interface Props {
+	profile: PlayerProfile;
+	/** 当前高亮的页签，取 `TABS` 里的 href。 */
+	active: string;
+	title: string;
+}
+
+const { profile, active, title } = Astro.props;
+const rank = rankInfo(profile.seasonRank);
+const rate = percent(profile.winCount, profile.matchCount);
+
+const TABS = [
+	{ href: '/me', label: '概况' },
+	{ href: '/me/matches', label: '比赛' },
+	{ href: '/me/heroes', label: '英雄' },
+	{ href: '/me/peers', label: '队友与对手' },
+	{ href: '/me/progression', label: '进展' },
+	{ href: '/me/breakdown', label: '分析' },
+];
+
+const stats = [
+	{ label: '比赛场次', value: thousands(profile.matchCount) },
+	{ label: '胜率', value: winRate(profile.winCount, profile.matchCount) },
+	{ label: '胜 - 负', value: `${thousands(profile.winCount)} - ${thousands(profile.matchCount - profile.winCount)}` },
+	{ label: '首场比赛', value: profile.firstMatchDate ? formatDay(profile.firstMatchDate) : '—' },
+	{ label: '最近比赛', value: profile.lastMatchDate ? formatDay(profile.lastMatchDate) : '—' },
+];
+---
+
+<Layout title={`${profile.name} · 我的战绩 | DOTA2 驿站`} description={`${profile.name} 的 DOTA2 战绩：比赛记录、英雄统计与分析。`}>
+	<div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+		<!-- 资料头 -->
+		<section class="overflow-hidden rounded-xl border border-line bg-surface">
+			<div class="h-24 bg-[radial-gradient(40rem_16rem_at_20%_-40%,rgba(198,82,44,0.45),transparent_65%)] sm:h-28"></div>
+			<div class="flex flex-col gap-6 px-5 pb-6 sm:px-7">
+				<div class="-mt-12 flex flex-wrap items-end gap-4 sm:-mt-14">
+					<Avatar src={profile.avatar} name={profile.name} size={96} rounded="lg" class="border-2" />
+
+					<div class="min-w-0 flex-1 pb-1">
+						<h1 class="truncate font-display text-2xl text-cream sm:text-3xl">{profile.name}</h1>
+						<div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+							{profile.realName && <span>{profile.realName}</span>}
+							{/* 站内没有公会页，这里只展示不链接，免得给出死链。 */}
+							{profile.guild && <span class="text-gold">[{profile.guild.tag || profile.guild.name}]</span>}
+							{profile.isDotaPlus && <span class="rounded bg-surface-3 px-1.5 py-0.5 text-xs text-gold">Dota Plus</span>}
+							{
+								profile.isAnonymous && (
+									<span class="rounded bg-surface-3 px-1.5 py-0.5 text-xs text-faint" title="该玩家隐藏了比赛数据">
+										资料未公开
+									</span>
+								)
+							}
+						</div>
+					</div>
+
+					<!-- 段位徽章 -->
+					<div class="flex items-center gap-3 pb-1" title={rank.label}>
+						<div class="relative h-16 w-16 shrink-0">
+							<img src={rank.medalImg} alt={rank.label} width="64" height="64" class="h-16 w-16 object-contain" />
+							{
+								rank.starImg && (
+									<img
+										src={rank.starImg}
+										alt=""
+										width="64"
+										height="64"
+										class="absolute inset-0 h-16 w-16 object-contain"
+									/>
+								)
+							}
+						</div>
+						<div class="text-sm">
+							<div class="font-medium text-cream">{rank.label}</div>
+							<div class="text-faint">当前段位</div>
+						</div>
+					</div>
+				</div>
+
+				<!-- 胜率条 -->
+				<div>
+					<div class="flex h-2 overflow-hidden rounded-full bg-surface-3">
+						<div class="bg-dota" style={`width: ${rate}%`}></div>
+					</div>
+					<div class="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-faint">
+						{
+							stats.map((item) => (
+								<span>
+									{item.label} <span class="text-muted">{item.value}</span>
+								</span>
+							))
+						}
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<!-- 页签 -->
+		<nav class="mt-6 flex gap-1 overflow-x-auto border-b border-line" aria-label="战绩页签">
+			{
+				TABS.map((tab) => (
+					<a
+						href={tab.href}
+						aria-current={tab.href === active ? 'page' : undefined}
+						class:list={[
+							'whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition',
+							tab.href === active
+								? 'border-dota text-dota-light'
+								: 'border-transparent text-muted hover:border-line hover:text-cream',
+						]}
+					>
+						{tab.label}
+					</a>
+				))
+			}
+		</nav>
+
+		<div class="mt-6">
+			<slot />
+		</div>
+	</div>
+</Layout>

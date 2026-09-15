@@ -1,0 +1,70 @@
+---
+/**
+ * 头像，带首字母兜底。
+ *
+ * 两个必须这么做、不能直接写 `<img>` 的原因：
+ *
+ * 1. **`referrerpolicy="no-referrer"`**。Steam 的头像 CDN 会拒掉带 Referer 的请求，
+ *    不写这个参数页面上就是一张破图（实测）。站内 `MatchRow`、比赛页早就统一这么用了。
+ * 2. **失败要有退路**。STRATZ 返回的 avatar 可能为空，也可能指向已删除的图；
+ *    底层铺一个首字母，图片加载失败时把它移除，露出来的就是首字母，不会出现破图图标。
+ *
+ * 首字母取自昵称——昵称同样是用户可控的，所以只用 `textContent` 之外的方式渲染不了，
+ * 这里走 Astro 的插值（自动转义），不拼 HTML。
+ */
+interface Props {
+	src?: string | null;
+	name: string;
+	/** 像素边长。 */
+	size?: number;
+	rounded?: 'full' | 'lg';
+	class?: string;
+}
+
+const { src, name, size = 32, rounded = 'full', class: className = '' } = Astro.props;
+const initial = name.trim().slice(0, 1) || '?';
+---
+
+<span
+	class:list={[
+		'relative inline-flex shrink-0 items-center justify-center overflow-hidden border border-line bg-surface-2 text-faint',
+		rounded === 'full' ? 'rounded-full' : 'rounded-lg',
+		className,
+	]}
+	style={`width:${size}px;height:${size}px`}
+>
+	<span aria-hidden="true" style={`font-size:${Math.round(size * 0.42)}px`}>{initial}</span>
+	{
+		src && (
+			<img
+				src={src}
+				alt=""
+				width={size}
+				height={size}
+				loading="lazy"
+				referrerpolicy="no-referrer"
+				data-avatar
+				class="absolute inset-0 h-full w-full object-cover"
+			/>
+		)
+	}
+</span>
+
+<script>
+	/**
+	 * 图片加载失败就把 `<img>` 摘掉，露出底下的首字母。
+	 *
+	 * `complete && naturalWidth === 0` 这一支是必要的：脚本在 HTML 之后才执行，
+	 * 那时已经失败的图不会再触发 `error`，只挂监听会漏掉它们。
+	 */
+	function dropBrokenAvatars(): void {
+		for (const img of document.querySelectorAll<HTMLImageElement>('img[data-avatar]')) {
+			if (img.complete && img.naturalWidth === 0) {
+				img.remove();
+				continue;
+			}
+			img.addEventListener('error', () => img.remove(), { once: true });
+		}
+	}
+	dropBrokenAvatars();
+</script>

@@ -1,0 +1,57 @@
+---
+import Avatar from './Avatar.astro';
+import { impTone } from '../../lib/dotaLabels';
+import { winRate } from '../../lib/playerContext';
+import type { PeerRow } from '../../lib/stratzPlayer';
+
+interface Props {
+	peers: PeerRow[];
+	/** 「共同游玩」与「对阵」的说法不同，交给调用方给词。 */
+	matchLabel: string;
+	emptyText: string;
+	minMatches: number;
+}
+
+const { peers, matchLabel, emptyText, minMatches } = Astro.props;
+const rows = peers.filter((peer) => peer.matches >= minMatches);
+---
+
+{
+	rows.length === 0 ? (
+		<p class="px-1 py-8 text-center text-sm text-muted">{emptyText}</p>
+	) : (
+		<ul class="divide-y divide-line/60">
+			{rows.map((peer) => {
+				const tone = impTone(peer.imp);
+				return (
+					<li class="flex items-center gap-3 py-2.5">
+						<Avatar src={peer.avatar} name={peer.name} size={32} />
+
+						<span class="min-w-0 flex-1">
+							<span class="block truncate text-sm text-cream">{peer.name}</span>
+							<span class="block text-[11px] text-faint">
+								{matchLabel} {peer.matches} 场
+								{peer.kda !== null && ` · KDA ${peer.kda.toFixed(2)}`}
+							</span>
+						</span>
+
+						<span class="shrink-0 text-right">
+							<span class="block text-sm tabular-nums text-cream">{winRate(peer.wins, peer.matches)}</span>
+							<span class="block text-[11px] text-faint">{peer.wins} 胜</span>
+						</span>
+
+						<span
+							class:list={[
+								'w-14 shrink-0 text-right text-xs tabular-nums',
+								tone === 'good' ? 'text-gold' : tone === 'bad' ? 'text-muted' : 'text-faint',
+							]}
+							title="这些比赛里的平均 IMP"
+						>
+							{peer.imp !== null ? (peer.imp > 0 ? `+${peer.imp}` : peer.imp) : '—'}
+						</span>
+					</li>
+				);
+			})}
+		</ul>
+	)
+}

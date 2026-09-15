@@ -1,0 +1,131 @@
+---
+import type { HeroRef, ItemRef } from '../../lib/gameRefs';
+import { gameModeLabel, impTone, positionLabel } from '../../lib/dotaLabels';
+import { formatMatchTime } from '../../lib/format';
+import { formatDuration, kda, thousands } from '../../lib/playerContext';
+import type { PlayerMatch } from '../../lib/stratzPlayer';
+
+interface Props {
+	matches: PlayerMatch[];
+	heroes: Map<number, HeroRef>;
+	items: Map<number, ItemRef>;
+	/** 传 true 时不显示「无比赛」提示，由页面自己说（比如筛选无结果）。 */
+	emptyText?: string;
+}
+
+const { matches, heroes, items, emptyText = '还没有比赛记录。' } = Astro.props;
+const nowSec = Math.floor(Date.now() / 1000);
+---
+
+{
+	matches.length === 0 ? (
+		<p class="rounded-xl border border-line bg-surface px-5 py-10 text-center text-sm text-muted">{emptyText}</p>
+	) : (
+		<ul class="space-y-2">
+			{matches.map((match) => {
+				const hero = heroes.get(match.heroId);
+				const tone = impTone(match.imp);
+				const ratio = kda(match.kills, match.deaths, match.assists);
+				return (
+					<li>
+						<a
+							href={`/matches/${match.matchId}`}
+							class:list={[
+								'grid grid-cols-[auto_1fr_auto] items-center gap-x-4 gap-y-2 rounded-lg border-l-4 border-y border-r border-line bg-surface px-3 py-3 transition hover:bg-surface-2 sm:grid-cols-[auto_1fr_auto_auto] sm:gap-x-5',
+								match.win ? 'border-l-dota' : 'border-l-[#5b6b8a]',
+							]}
+						>
+							<!-- 英雄 -->
+							<div class="flex w-36 items-center gap-2.5 sm:w-44">
+								{hero?.img ? (
+									<img
+										src={hero.img}
+										alt=""
+										loading="lazy"
+										referrerpolicy="no-referrer"
+										class="h-9 w-16 shrink-0 rounded object-cover"
+									/>
+								) : (
+									<span class="h-9 w-16 shrink-0 rounded bg-surface-2" />
+								)}
+								<span class="min-w-0">
+									<span class="block truncate text-sm font-medium text-cream">{hero?.name ?? `英雄 ${match.heroId}`}</span>
+									<span class="block truncate text-[11px] text-faint">
+										{positionLabel(match.position)} · {gameModeLabel(match.gameMode)}
+									</span>
+								</span>
+							</div>
+
+							<!-- 结果 + KDA -->
+							<div class="min-w-0">
+								<div class="flex items-center gap-2">
+									<span
+										class:list={[
+											'rounded px-1.5 py-0.5 text-[11px] font-bold',
+											match.win ? 'bg-dota/20 text-dota-light' : 'bg-surface-3 text-muted',
+										]}
+									>
+										{match.win ? '胜' : '负'}
+									</span>
+									<span class="text-sm tabular-nums text-cream">
+										{match.kills}<span class="text-faint"> / </span>{match.deaths}<span class="text-faint"> / </span>{match.assists}
+									</span>
+									<span class="text-[11px] text-faint">{ratio.toFixed(2)} KDA</span>
+									{
+										match.imp !== null && (
+											<span
+												class:list={[
+													'text-[11px] tabular-nums',
+													tone === 'good' ? 'text-gold' : tone === 'bad' ? 'text-muted' : 'text-faint',
+												]}
+												title="个人比赛表现（IMP）"
+											>
+												IMP {match.imp > 0 ? `+${match.imp}` : match.imp}
+											</span>
+										)
+									}
+								</div>
+								<div class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-faint">
+									<span>净经济 {thousands(match.networth)}</span>
+									<span>{match.gpm} GPM</span>
+									<span>{match.xpm} XPM</span>
+									<span>补刀 {match.lastHits}/{match.denies}</span>
+									<span>等级 {match.level}</span>
+								</div>
+							</div>
+
+							<!-- 装备 -->
+							<div class="col-span-2 flex gap-1 sm:col-span-1">
+								{match.items.length > 0 ? (
+									match.items.map((itemId) => {
+										const item = items.get(itemId);
+										return item?.img ? (
+											<img
+												src={item.img}
+												alt={item.name}
+												title={item.name}
+												loading="lazy"
+												referrerpolicy="no-referrer"
+												class="h-7 w-9 rounded-sm border border-line object-cover"
+											/>
+										) : (
+											<span class="h-7 w-9 rounded-sm border border-line bg-surface-2" title={`装备 ${itemId}`} />
+										);
+									})
+								) : (
+									<span class="text-[11px] text-faint">—</span>
+								)}
+							</div>
+
+							<!-- 时间 -->
+							<div class="text-right text-[11px] text-faint">
+								<div class="tabular-nums text-muted">{formatDuration(match.durationSeconds)}</div>
+								<div>{formatMatchTime(match.startTime, nowSec)}</div>
+							</div>
+						</a>
+					</li>
+				);
+			})}
+		</ul>
+	)
+}

@@ -1,0 +1,175 @@
+---
+import BreakdownBars from '../../components/player/BreakdownBars.astro';
+import Panel from '../../components/player/Panel.astro';
+import PlayerNotice from '../../components/player/PlayerNotice.astro';
+import PlayerLayout from '../../layouts/PlayerLayout.astro';
+import { gameModeLabel, laneLabel, lobbyLabel, positionLabel, regionLabel } from '../../lib/dotaLabels';
+import { loadPlayer, noticeProps, thousands, type BreakdownRow } from '../../lib/playerContext';
+import { readSession } from '../../lib/session';
+import { loadPlayerBreakdown, loadRegionNames, type GroupRow } from '../../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+const loaded = await loadPlayer(session.accountId);
+
+const [breakdown, regionNames] = loaded.ok
+	? await Promise.all([
+			loadPlayerBreakdown(session.accountId, loaded.profile.matchCount).catch(() => null),
+			// 地区名只是装饰，取不到就退化成「地区 N」，不该让整页失败。
+			loadRegionNames().catch(() => new Map<number, string>()),
+		])
+	: [null, new Map<number, string>()];
+
+const toRows = (rows: GroupRow[], label: (key: string) => string): BreakdownRow[] =>
+	rows.map((row) => ({ label: label(row.key), matches: row.matches, wins: row.wins, imp: row.imp }));
+
+const ROLE_LABEL: Record<string, string> = {
+	CORE: '核心',
+	LIGHT_SUPPORT: '半辅助',
+	HARD_SUPPORT: '纯辅助',
+	SUPPORT: '辅助',
+};
+
+/**
+ * 时长按 10 分钟分桶。
+ *
+ * 接口给的是逐分钟的 90 来个分组，直接铺出来是一长条没人看得完的列表；
+ * 分桶后才回答得了「我打后期局是不是更容易输」这种问题。
+ */
+const DURATION_BUCKETS: { label: string; from: number; to: number }[] = [
+	{ label: '< 20 分钟', from: 0, to: 19 },
+	{ label: '20–30 分钟', from: 20, to: 29 },
+	{ label: '30–40 分钟', from: 30, to: 39 },
+	{ label: '40–50 分钟', from: 40, to: 49 },
+	{ label: '50–60 分钟', from: 50, to: 59 },
+	{ label: '≥ 60 分钟', from: 60, to: Number.MAX_SAFE_INTEGER },
+];
+
+/**
+ * 位置 / 分路 / 定位这三个维度会被 STRATZ 的「无记录」桶污染（详见 stratzPlayer 的
+ * `splitUnclassified`）。数字已经摘干净，但必须把摘掉了多少写出来，
+ * 否则用户会发现三个维度的合计比总场次少了一截却不知道少在哪。
+ */
+const unclassifiedNote =
+	breakdown && breakdown.unclassifiedMatches > 0
+		? `另有 ${thousands(breakdown.unclassifiedMatches)} 场没有位置记录（多为远古局或未解析的比赛），未计入上述各档。`
+		: undefined;
+
+/**
+ * 时段：STRATZ 的 `hour` 是 **UTC**，不是本地时间。
+ *
+ * 实测口径：把最近 100 场的 `startDateTime` 按 UTC 分桶，与 `groupBy(HOUR)` 的分布形状
+ * 吻合（总偏差 42）；按 UTC+8 分桶则差得很远（偏差 166）。所以不能直接用，也不能标成
+ * 「本地时区」。站点面向中文玩家、`format.ts` 也固定用 Asia/Shanghai，这里统一挪到
+ * 北京时间显示，并且**挪完再排序**，否则列表会从 08:00 开始绕一圈。
+ */
+const BEIJING_OFFSET_HOURS = 8;
+
+const hourRows = (breakdown?.hour ?? [])
+	.map((row) => ({ ...row, key: String((Number(row.key) + BEIJING_OFFSET_HOURS) % 24) }))
+	.sort((a, b) => Number(a.key) - Number(b.key));
+
+const durationRows: BreakdownRow[] = breakdown
+	? DURATION_BUCKETS.map((bucket) => {
+			const inBucket = breakdown.duration.filter((row) => {
+				const minutes = Number(row.key);
+				return minutes >= bucket.from && minutes <= bucket.to;
+			});
+			const sum = inBucket.reduce((acc, row) => acc + row.matches, 0);
+			return {
+				label: bucket.label,
+				matches: sum,
+				wins: inBucket.reduce((acc, row) => acc + row.wins, 0),
+				// 加权平均：直接取各组 imp 的算术平均会让 1 场的极值主导结果。
+				imp: sum > 0 ? Math.round(inBucket.reduce((acc, row) => acc + (row.imp ?? 0) * row.matches, 0) / sum) : null,
+			};
+		}).filter((row) => row.matches > 0)
+	: [];
+
+/**
+ * 显式标注类型：数组里有的项带 `showImp`、有的不带，靠推断会得到一个联合类型，
+ * 后面读 `panel.showImp` 就报错。
+ */
+interface PanelSpec {
+	title: string;
+	rows: BreakdownRow[];
+	total: boolean;
+	showImp?: boolean;
+	/** 卡片底部的补充说明，比如「另有 N 场没有记录」。 */
+	note?: string;
+}
+
+const panels: PanelSpec[] = breakdown
+	? [
+			{ title: '位置', rows: toRows(breakdown.position, (key) => positionLabel(key)), total: true, note: unclassifiedNote },
+			{ title: '分路', rows: toRows(breakdown.lane, laneLabel), total: true, note: unclassifiedNote },
+			{ title: '定位', rows: toRows(breakdown.role, (key) => ROLE_LABEL[key] ?? key), total: false, note: unclassifiedNote },
+			{
+				title: '游戏模式',
+				rows: toRows(breakdown.gameMode, (key) => gameModeLabel(Number(key))),
+				total: true,
+			},
+			{
+				title: '房间类型',
+				rows: toRows(breakdown.lobbyType, (key) => lobbyLabel(Number(key))),
+				total: true,
+			},
+			{
+				title: '阵营',
+				rows: toRows(breakdown.faction, (key) => (key === 'true' ? '天辉' : '夜魇')),
+				total: true,
+			},
+			{
+				title: '组队情况',
+				rows: toRows(breakdown.party, (key) => (key === 'true' ? '组排' : '单排')),
+				total: true,
+			},
+			{ title: '比赛时长', rows: durationRows, total: true, showImp: false },
+			{
+				title: '时段（北京时间）',
+				rows: toRows(hourRows, (key) => `${String(key).padStart(2, '0')}:00`),
+				total: false,
+				showImp: false,
+			},
+			{
+				title: '地区',
+				rows: toRows(breakdown.region, (key) => {
+					const name = regionNames.get(Number(key));
+					return name ? regionLabel(name) : `地区 ${key}`;
+				}),
+				total: false,
+			},
+		]
+	: [];
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : !breakdown ? (
+		<PlayerNotice title="分析数据暂时不可用" message="重聚合请求没有成功，请稍后重试。" retryable />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me/breakdown" title="分析">
+			<p class="mb-5 text-xs leading-relaxed text-faint">
+				以下统计覆盖<span class="text-muted">全部 {thousands(loaded.profile.matchCount)} 场比赛</span>（上限 1 万场）。逐场的平均 IMP 会取整，时段一栏已换算成北京时间。
+			</p>
+
+			{/*
+				用多列瀑布流而不是 grid：各维度的行数差得很远（时段 24 行、阵营 2 行），
+				grid 会把同一行拉到最高那张卡的高度，短卡下面留一大片空白。
+				`break-inside-avoid` 保证单张卡不被拆到两列。
+			*/}
+			<div class="columns-1 gap-5 lg:columns-2">
+				{panels.map((panel) => (
+					<Panel title={panel.title} class="mb-5 break-inside-avoid">
+						<BreakdownBars rows={panel.rows} showTotal={panel.total} showImp={panel.showImp} />
+						{panel.note && <p class="mt-3 text-[11px] leading-relaxed text-faint">{panel.note}</p>}
+					</Panel>
+				))}
+			</div>
+		</PlayerLayout>
+	)
+}

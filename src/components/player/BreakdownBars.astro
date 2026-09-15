@@ -1,0 +1,66 @@
+---
+import type { BreakdownRow } from '../../lib/playerContext';
+import { winRate } from '../../lib/playerContext';
+
+/**
+ * 单维度的横向条形列表。
+ *
+ * 接收的是**已经翻好标签**的行，组件本身不认识 Dota 的枚举——各维度的中文映射分散在
+ * `dotaLabels.ts` 与页面里，塞进组件会让它变成又一个需要同步维护的映射表。
+ *
+ * 条形长度按该维度**最大场次**归一，而不是按总场次：否则像「地区」这种长尾维度
+ * 每一根都短得看不见，反而分不出差异。
+ */
+interface Props {
+	rows: BreakdownRow[];
+	/** 是否显示合计行。合计是各维度自己的总数，可用于核对窗口是否取全。 */
+	showTotal?: boolean;
+	/**
+	 * 是否显示平均 IMP 列。默认按「有没有这个数据」自动决定。
+	 *
+	 * 时长、时段这两个维度 STRATZ 一律回 0（不是「平均为 0」，是没算），
+	 * 铺一列 0 出来只会让人以为是真实结论，所以由调用方显式关掉。
+	 */
+	showImp?: boolean;
+}
+
+const { rows, showTotal = false, showImp } = Astro.props;
+const max = Math.max(1, ...rows.map((row) => row.matches));
+const total = rows.reduce((acc, row) => acc + row.matches, 0);
+const hasImp = showImp ?? rows.some((row) => row.imp !== undefined);
+---
+
+{
+	rows.length === 0 ? (
+		<p class="text-sm text-muted">没有数据。</p>
+	) : (
+		<ul class="space-y-2.5">
+			{rows.map((row) => {
+				const rate = (row.wins / Math.max(1, row.matches)) * 100;
+				return (
+					<li class="flex items-center gap-3 text-xs">
+						<span class="w-24 shrink-0 truncate text-muted" title={row.label}>
+							{row.label}
+						</span>
+						{/* 胜场用主色、负场用冷灰铺满，一眼能看出这段里的胜负比重 */}
+						<span class="h-5 flex-1 overflow-hidden rounded bg-surface-3/60">
+							<span class="flex h-full" style={`width: ${(row.matches / max) * 100}%`}>
+								<span class="h-full bg-dota" style={`width: ${rate}%`} />
+								<span class="h-full flex-1 bg-[#4a5568]" />
+							</span>
+						</span>
+						<span class="w-12 shrink-0 text-right tabular-nums text-faint">{row.matches} 场</span>
+						<span class="w-14 shrink-0 text-right tabular-nums text-cream">{winRate(row.wins, row.matches)}</span>
+						{hasImp && (
+							<span class="w-12 shrink-0 text-right tabular-nums text-faint">
+								{row.imp === undefined || row.imp === null ? '—' : row.imp > 0 ? `+${row.imp}` : row.imp}
+							</span>
+						)}
+					</li>
+				);
+			})}
+		</ul>
+	)
+}
+
+{showTotal && rows.length > 0 && <p class="mt-3 text-right text-[11px] text-faint">合计 {total} 场</p>}
