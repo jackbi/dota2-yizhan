@@ -10,9 +10,11 @@ interface Props {
 	live?: LiveStatus;
 	/** 站内头像路径（`/avatars/xxx.jpg`）。拿不到时不传，退回首字母占位。 */
 	avatar?: string;
+	/** `BV 号 → /covers/xxx.jpg`（见 `src/lib/covers.ts`）。拿不到的不在里面，退回热链原图。 */
+	covers?: Map<string, string>;
 }
 
-const { member: m, live, avatar } = Astro.props;
+const { member: m, live, avatar, covers } = Astro.props;
 const meta = PLATFORM_META[m.platform];
 const url = roomUrl(m.platform, m.roomId);
 const state = live?.state ?? 'unknown';
@@ -123,7 +125,7 @@ const ringClass =
 				</div>
 				<div class="mt-2.5 space-y-2">
 					{videos.map((v) => (
-						<BiliVideoCard video={v} />
+						<BiliVideoCard video={v} cover={covers?.get(v.bv)} />
 					))}
 				</div>
 			</div>

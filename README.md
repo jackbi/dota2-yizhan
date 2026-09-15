@@ -71,6 +71,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
 | `.cache/avatars/` | 主播头像的字节（构建结束拷进 `dist/avatars/`） | 永久，30 天没用到就清理 |
+| `.cache/covers/` | B站视频封面的字节（构建结束拷进 `dist/covers/`） | 永久，30 天没用到就清理 |
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
@@ -142,7 +143,7 @@ SSR 侧代码刻意只用 Web 标准 API：
 - 密钥统一从 `astro:env` 读，Workers 下会自动接到运行时绑定上。
 
 **注意 Cloudflare**：`astro dev` 在 CF adapter 下会跑 workerd，而 `astro.config.mjs` 里
-`avatarsInDev` 那段 dev 中间件用了 `node:fs`（头像字节），到时候需要一起改。
+`imagesInDev` 那段 dev 中间件用了 `node:fs`（图片字节），到时候需要一起改。
 
 ### 会话与登录安全
 
@@ -423,10 +424,42 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 
 取不到就不做，也不拿别的站的内容顶替——这两家只有拿到可用凭证（cookie / 开放平台 key）才谈得上接入。
 
-### 主播头像：取回来自已发
+### 头像与封面：取回来自已发
 
-`src/lib/avatars.ts`。OB 页与分屏页的头像都由它落地，**没有额外请求元数据**——
-头像地址本来就跟着房间数据一起取回来了：
+`src/lib/localImages.ts` 是公共流程，`src/lib/avatars.ts` 与 `src/lib/covers.ts` 只描述各自的
+频道（目录、尺寸、体积上限、并发）。页面里引用的永远是 `/avatars/xxx.jpg`、`/covers/xxx.jpg`。
+
+**为什么不直接热链**，按重要性排：
+
+1. **本机到这些 CDN 的连接会被重置。** `curl https://i0.hdslb.com/...` 连 TLS 握手都过不去——
+   ClientHello 发出去就是 `Connection reset by peer`（同一个 IP 换个 SNI 却能拿到正常的 TLS
+   `handshake failure` 告警，说明是认名字的拦截，不是 IP 不可达）。斗鱼的 `douyucdn`、虎牙的
+   `huyaimg` 也一样。直链交出去，图出不出得来就取决于访客走的那条线路。B站封面正是这么翻车的：
+   同一批 30 张，连着三次加载分别挂 20、7、16 张，访客看到的就是「刚打开一排破图，刷几次又慢慢出来」。
+2. 虎牙给的是 `http://huyaimg.msstatic.com/...`，站点一旦走 HTTPS 就是混合内容；
+3. 允不允许外链由平台随时决定，判不判 Referer 我们控制不了，失败就是一排破图；
+4. 热链等于把访客的 IP 送给平台 CDN。
+
+所以构建期把字节取回来。**两条腿走路**：直连优先，被重置时退回 `wsrv.nl` 图片代理，顺便裁成
+需要的尺寸——两家头像原图一个 200×200、一个 140×140，封面原图实测 4KB ~ 187KB 不等，
+统一到 800×450 反而更省。`LIVE_PROXY` 同样管这里：`off` 只直连，`jina` 只走代理——
+jina 只能转文本，对图片来说就是纯代理。
+
+落盘与发布：
+
+- 文件名是 `键-地址哈希.jpg`。头像的键是 `平台-房间号`，封面是 BV 号；地址一变就换文件，
+  不会串图，调用方也不用跟着改查询方式。
+- 字节进 `.cache/<dir>/`，构建结束由 `astro.config.mjs` 把**本轮用到过**的拷进 `dist/<dir>/`
+  （用到的文件会刷新 mtime，拷贝时以此判断），30 天没用到的从缓存里删掉。
+- **拿不到就降级，不出现破图**：房间头像不进返回值、页面不渲染 `<img>`，显示品牌渐变底 + 首字母
+  （头像是用背景图画的）；封面不进返回值，卡片退回热链原图——和改造前一样，不会更差。
+- **dev 也要能看到**：`astro dev` 不跑构建，`dist/<dir>/` 根本不存在，页面里引用的
+  `/avatars/xxx.jpg`、`/covers/xxx.jpg` 会整片 404——一度被当成「头像没抓到」。所以
+  `astro.config.mjs` 里另有一段 `images-in-dev` 中间件，dev 下直接从 `.cache/<dir>/` 读
+  （只认自己生成的文件名，`path.basename` 挡掉路径穿越）。改完 `astro.config.mjs` 要重启
+  dev server 才生效，不过 Astro 检测到配置变化一般会自己重启。
+
+**头像没有额外请求元数据**——地址本来就跟着房间数据一起取回来了：
 
 | 用途 | 来源字段 |
 | --- | --- |
@@ -435,24 +468,9 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 | 热门榜（斗鱼） | 分区页内嵌 JSON 的 `av` |
 | 热门榜（虎牙） | 榜单接口的 `avatar180` |
 
-**不直接热链的原因**：虎牙给的是 `http://huyaimg.msstatic.com/...`，站点一旦走 HTTPS 就是
-混合内容；允不允许外链由平台说了算（判不判 Referer 我们控制不了），失败就是一排破图；
-而且热链等于把访客的 IP 送给平台 CDN。所以构建期把字节取回来，页面只引用 `/avatars/xxx.jpg`。
-
-- 直连优先，被重置时退回 `wsrv.nl` 图片代理，顺便裁成正方并缩到 128px
-  （两家原图一个是 200×200、一个是 140×140，体积也不一样）。`LIVE_PROXY` 同样管这里：
-  `off` 只直连，`jina` 只走代理——jina 只能转文本，对图片来说就是纯代理。
-- 文件名是 `平台-房间号-地址哈希.jpg`，地址一变就换文件，不会串图；字节进 `.cache/avatars/`，
-  构建结束由 `astro.config.mjs` 把**本轮用到过**的拷进 `dist/avatars/`（用到的文件会刷新 mtime，
-  拷贝时以此判断），30 天没用到的从缓存里删掉。
 - 斗鱼 `isDefaultAvatar=1` 时**不取**：那是平台的系统默认图，不如页面自己的首字母占位。
-- 拿不到头像的房间不渲染 `<img>`，页面显示品牌渐变底 + 首字母。头像是用**背景图**而不是
-  `<img>` 画的，所以即使文件没发布也不会出现破图图标。
-- **dev 也要能看到**：`astro dev` 不跑构建，`dist/avatars/` 根本不存在，页面里引用的
-  `/avatars/xxx.jpg` 会整片 404——一度被当成"头像没抓到"。所以 `astro.config.mjs` 里另有一段
-  `avatars-in-dev` 中间件，dev 下直接从 `.cache/avatars/` 读（只认自己生成的文件名，
-  `path.basename` 挡掉路径穿越）。改完 `astro.config.mjs` 要重启 dev server 才生效，
-  不过 Astro 检测到配置变化一般会自己重启。
+- 封面尺寸取 800×450：专题墙在 1280px 容器里三列，一格约 397px，2x 屏就是 794。
+  成员卡里的缩略图只有 112px、会多下一点字节，但它们本来热链的就是原图，算下来仍然更省。
 
 > 给 `RoomRef` 加字段必须同时把 `roomList.ts` 里的 `CACHE_VERSION` 加一。缓存存的是**解析后**的
 > 对象，老缓存不会自己长出字段：加头像那次就没加版本，结果 64 个热门房间一个头像都没有，
@@ -487,8 +505,11 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 - `api.bilibili.com/x/space/arc/search`（按 UP 主列投稿）会返回 `-412` / `-799`：非登录态的
   数据中心 IP 基本被风控挡死。所以**没法按 UP 主拉全量列表**，只能靠关键词搜；「OB 人物志」
   这个系列就是这么找出来的。
-- 封面热链自 `i*.hdslb.com`，必须带 `referrerpolicy="no-referrer"`——带站外 Referer 会被拒。
-  卡片底下垫了 `bg-surface-3` 纯色，图挂了也不会塌成破图。本站不托管、不转码任何视频，只做外链。
+- 封面地址同样取自 view 接口，但**不热链**：`i*.hdslb.com` 的连接会被间歇性重置（见
+  「头像与封面：取回来自已发」），所以构建期由 `src/lib/covers.ts` 取回本地，页面引用
+  `/covers/<BV号>-<哈希>.jpg`。只有拿不到字节的那几张才退回热链原图，那时仍带
+  `referrerpolicy="no-referrer"`。卡片底下垫了 `bg-surface-3` 纯色，图挂了也不会塌成破图。
+  本站不托管、不转码任何视频，只做外链。
 
 **搬运 ≠ 原作者。** 这些经典老视频在 B站 大多是粉丝二次上传的（剑雪封喉 7 支里只有 1 支是他自己
 频道发的），所以每张卡都必须把**实际投稿人**写出来，喉哥那一段还额外打了「喉哥本人 / 粉丝搬运」
@@ -513,7 +534,7 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
-| `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与主播头像的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
+| `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与图片本地化（头像、B站封面）的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
 
 ## 赛事数据来自 Liquipedia

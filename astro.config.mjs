@@ -40,6 +40,7 @@ const STATE_LABEL = { fresh: '联网抓取', cache: '使用缓存', empty: '没�
  */
 const IMAGE_CHANNELS = [
 	{ dir: 'avatars', label: '主播头像', empty: '没有取到任何头像，页面退回首字母占位' },
+	{ dir: 'covers', label: 'B站视频封面', empty: '没有取到任何封面，页面退回热链 B站 CDN' },
 ];
 /** 缓存里放太久没被用到的图直接删掉——房间号换人、房间下榜都会留下孤儿文件。 */
 const IMAGE_KEEP_DAYS = 30;

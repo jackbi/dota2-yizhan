@@ -55,7 +55,10 @@ export interface BiliVideo {
 	/** 时长（秒），由接口的 duration 字段直接给出 */
 	duration: number;
 	views: number;
-	/** 封面地址，B站 CDN，页面以 no-referrer 热链 */
+	/**
+	 * 封面地址，B站 CDN。页面渲染前会用 `localizeCovers()` 换成本站的
+	 * `/covers/xxx.jpg`；只有构建期没取到字节时才退回这个外链。
+	 */
 	cover: string;
 	/** 收录这支的理由，显示在卡片上，避免让人以为只是随便选的 */
 	why: string;

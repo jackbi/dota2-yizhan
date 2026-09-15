@@ -6,6 +6,7 @@ import { OB_MEMBERS } from '../data/ob';
 import { JIANXUE_FENGHOU, JIANXUE_VIDEOS, OB_MEMBER_VIDEOS } from '../data/obVideos';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { localizeAvatars } from '../lib/avatars';
+import { localizeCovers } from '../lib/covers';
 import { formatIso } from '../lib/format';
 
 const snapshot = await fetchLiveSnapshot();
@@ -15,6 +16,14 @@ const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platfo
 // key 用 `平台:房间号`，和分屏页保持一致——否则同一个人会被当成两张图各下一遍。
 const roomKey = (m: (typeof OB_MEMBERS)[number]) => `${m.platform}:${m.roomId}`;
 const avatars = await localizeAvatars(OB_MEMBERS.map((m) => ({ key: roomKey(m), avatar: liveOf(m)?.avatar })));
+
+// 封面同理：本机到 `i*.hdslb.com` 的 TLS 握手会被间歇性重置，热链出去的图
+// 出不出得来全看访客那条线路——表现就是「首次打开一排破图、刷几次又慢慢出来」。
+// 拿不到字节的那几张不会进 covers，卡片退回热链原图。
+const covers = await localizeCovers([
+	...JIANXUE_VIDEOS,
+	...OB_MEMBERS.flatMap((m) => OB_MEMBER_VIDEOS[m.id] ?? []),
+]);
 
 const liveCount = OB_MEMBERS.filter((m) => liveOf(m)?.state === 'live').length;
 const unrecognized = OB_MEMBERS.filter((m) => liveOf(m)?.ownerUnrecognized);
@@ -169,6 +178,7 @@ const stats: { label: string; value: string; accent?: boolean }[] = [
 						<BiliVideoCard
 							video={v}
 							variant="tile"
+							cover={covers.get(v.bv)}
 							owner={v.uploaderUid === JIANXUE_FENGHOU.uid ? '喉哥本人' : '粉丝搬运'}
 						/>
 					))
@@ -195,7 +205,7 @@ const stats: { label: string; value: string; accent?: boolean }[] = [
 		</div>
 
 		<div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
-			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} avatar={avatars.get(roomKey(m))} />)}
+			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} avatar={avatars.get(roomKey(m))} covers={covers} />)}
 		</div>
 
 		<section class="mt-12 rounded-2xl border border-line bg-surface p-6">

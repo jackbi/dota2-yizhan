@@ -10,9 +10,14 @@ interface Props {
 	owner?: string;
 	/** 是否显示「为什么收录这支」 */
 	showWhy?: boolean;
+	/**
+	 * 站内封面路径（`/covers/xxx.jpg`，见 `src/lib/covers.ts`）。
+	 * 构建期没取到字节时调用方不传，退回 `video.cover` 热链 B站 CDN。
+	 */
+	cover?: string;
 }
 
-const { video: v, variant = 'row', owner, showWhy = true } = Astro.props;
+const { video: v, variant = 'row', owner, showWhy = true, cover } = Astro.props;
 const url = biliUrl(v.bv);
 const isTile = variant === 'tile';
 const shortDate = v.pubdate.slice(0, 7).replace('-', '.');
@@ -35,7 +40,7 @@ const shortDate = v.pubdate.slice(0, 7).replace('-', '.');
 		]}
 	>
 		<img
-			src={v.cover}
+			src={cover ?? v.cover}
 			alt=""
 			width="480"
 			height="270"
