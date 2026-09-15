@@ -28,8 +28,16 @@ const nowSec = Math.floor(Date.now() / 1000);
 				const ratio = kda(match.kills, match.deaths, match.assists);
 				return (
 					<li>
+						{/*
+							这场比赛的详情页在 STRATZ，不在本站：`/matches/[id]` 是赛事日历那条线，
+							id 形如 `lp-<开赛时间>-<主队>-<客队>`（见 `src/lib/tournamentIndex.ts`），
+							而这里的 `matchId` 是 Valve 的对局号。链到 `/matches/${matchId}` 只会 404。
+						*/}
 						<a
-							href={`/matches/${match.matchId}`}
+							href={`https://stratz.com/matches/${match.matchId}`}
+							target="_blank"
+							rel="noopener noreferrer"
+							title="在 STRATZ 查看这场比赛的详情"
 							class:list={[
 								'grid grid-cols-[auto_1fr_auto] items-center gap-x-4 gap-y-2 rounded-lg border-l-4 border-y border-r border-line bg-surface px-3 py-3 transition hover:bg-surface-2 sm:grid-cols-[auto_1fr_auto_auto] sm:gap-x-5',
 								match.win ? 'border-l-dota' : 'border-l-[#5b6b8a]',
@@ -120,7 +128,10 @@ const nowSec = Math.floor(Date.now() / 1000);
 							<!-- 时间 -->
 							<div class="text-right text-[11px] text-faint">
 								<div class="tabular-nums text-muted">{formatDuration(match.durationSeconds)}</div>
-								<div>{formatMatchTime(match.startTime, nowSec)}</div>
+								<div class="whitespace-nowrap">
+									{formatMatchTime(match.startTime, nowSec)}
+									<span class="ml-1" aria-hidden="true">↗</span>
+								</div>
 							</div>
 						</a>
 					</li>
