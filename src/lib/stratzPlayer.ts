@@ -162,6 +162,52 @@ export interface PlayerMatch {
 	averageRank: number | null;
 }
 
+/** 记分板里的一行：一场比赛里的一个选手。 */
+export interface MatchDetailPlayer {
+	accountId: number | null;
+	name: string;
+	avatar: string;
+	isRadiant: boolean;
+	heroId: number;
+	kills: number;
+	deaths: number;
+	assists: number;
+	networth: number;
+	gpm: number;
+	xpm: number;
+	lastHits: number;
+	denies: number;
+	level: number;
+	imp: number | null;
+	/** `MVP` / `TOP_CORE` / `TOP_SUPPORT`；没有奖项时为 null（上游给的是 `NONE`）。 */
+	award: string | null;
+	position: string | null;
+	lane: string | null;
+	/**
+	 * **保留槽位**的六个物品格，空格是 null——不像列表页那样把空的过滤掉。
+	 * 记分板上「这个格子是空的」本身是信息（没打完的装备、卖掉的装备一眼能看出来）。
+	 */
+	items: (number | null)[];
+}
+
+/**
+ * 单场对局。
+ *
+ * 不查 `pickBans`：个人对局绝大多数是加速/普通匹配，本来就没有 BP——实测这场
+ * Turbo 返回的就是 `null`。为它多写一套 UI 不划算，等真的要看队长模式的场次再说。
+ */
+export interface MatchDetail {
+	matchId: number;
+	startTime: number;
+	durationSeconds: number;
+	/** 天辉是否获胜。为 null 表示上游没给（未解析完的比赛）。 */
+	radiantWin: boolean | null;
+	gameMode: string | null;
+	lobbyType: string | null;
+	averageRank: number | null;
+	players: MatchDetailPlayer[];
+}
+
 export interface PeerRow {
 	accountId: number;
 	name: string;
@@ -298,8 +344,50 @@ const MATCHES_DOCUMENT = `query PlayerMatches($id: Long!, $request: PlayerMatche
   }
 }`;
 
-/** 队友 / 对手：按对手账号分组，`playerList` 决定是「同队」还是「对面」。 */
-const PEERS_DOCUMENT = `query PlayerPeers($id: Long!, $request: PlayerMatchesGroupByRequestType!) {
+/**
+ * 单场对局详情。这里**不加** `playerList: SINGLE`——记分板要的就是全部十个人。
+ *
+ * 字段全部用真实响应核对过（比赛 7720294433）：`award` / `lane` / `position` 是枚举字符串，
+ * 空物品格上游直接不给字段，所以取的时候要按 `null` 处理。
+ */
+const MATCH_DETAIL_DOCUMENT = `query MatchDetail($id: Long!) {
+  match(id: $id) {
+    id
+    startDateTime
+    durationSeconds
+    didRadiantWin
+    gameMode
+    lobbyType
+    averageRank
+    players {
+      steamAccountId
+      isRadiant
+      heroId
+      kills
+      deaths
+      assists
+      networth
+      goldPerMinute
+      experiencePerMinute
+      numLastHits
+      numDenies
+      level
+      imp
+      award
+      position
+      lane
+      item0Id
+      item1Id
+      item2Id
+      item3Id
+      item4Id
+      item5Id
+      steamAccount { name avatar }
+    }
+  }
+}`;
+
+/** 队友 / 对手：按对手账号分组，`playerList` 决定是「同队」还是「对面」。 */const PEERS_DOCUMENT = `query PlayerPeers($id: Long!, $request: PlayerMatchesGroupByRequestType!) {
   player(steamAccountId: $id) {
     matchesGroupBy(request: $request) {
       ... on MatchGroupBySteamAccountIdType {
@@ -409,6 +497,8 @@ interface RawPlayer {
 }
 
 interface RawMatchPlayer {
+	steamAccountId?: number | null;
+	steamAccount?: { name?: string | null; avatar?: string | null } | null;
 	isRadiant?: boolean | null;
 	heroId?: number | null;
 	kills?: number | null;
@@ -422,6 +512,9 @@ interface RawMatchPlayer {
 	level?: number | null;
 	imp?: number | null;
 	position?: string | null;
+	lane?: string | null;
+	/** `MVP` / `TOP_CORE` / `TOP_SUPPORT` / `NONE`。 */
+	award?: string | null;
 	item0Id?: number | null;
 	item1Id?: number | null;
 	item2Id?: number | null;
@@ -595,6 +688,67 @@ export async function loadPlayerMatches(accountId: number, query: MatchQuery): P
 		return (data.player?.matches ?? [])
 			.map(toMatch)
 			.filter((match): match is PlayerMatch => match !== null);
+	});
+}
+
+function toMatchDetailPlayer(raw: RawMatchPlayer): MatchDetailPlayer | null {
+	if (typeof raw.heroId !== 'number') return null;
+	const slots = [raw.item0Id, raw.item1Id, raw.item2Id, raw.item3Id, raw.item4Id, raw.item5Id];
+	const award = (raw.award ?? '').trim();
+	return {
+		accountId: numOrNull(raw.steamAccountId),
+		name: raw.steamAccount?.name?.trim() || '匿名选手',
+		avatar: raw.steamAccount?.avatar ?? '',
+		isRadiant: Boolean(raw.isRadiant),
+		heroId: raw.heroId,
+		kills: num(raw.kills),
+		deaths: num(raw.deaths),
+		assists: num(raw.assists),
+		networth: num(raw.networth),
+		gpm: num(raw.goldPerMinute),
+		xpm: num(raw.experiencePerMinute),
+		lastHits: num(raw.numLastHits),
+		denies: num(raw.numDenies),
+		level: num(raw.level),
+		imp: numOrNull(raw.imp),
+		// 上游用一个真实的枚举值 `NONE` 表示「没拿奖」，别把它当成奖项画出来。
+		award: award && award !== 'NONE' ? award : null,
+		position: raw.position ?? null,
+		lane: raw.lane ?? null,
+		items: slots.map((id) => (typeof id === 'number' && id > 0 ? id : null)),
+	};
+}
+
+function toMatchDetail(raw: RawMatch): MatchDetail | null {
+	if (typeof raw.id !== 'number') return null;
+	const players = (raw.players ?? [])
+		.map(toMatchDetailPlayer)
+		.filter((player): player is MatchDetailPlayer => player !== null);
+	// 一个选手都没有说明这场还没解析，当作「拿不到」而不是「一场空比赛」。
+	if (players.length === 0) return null;
+
+	return {
+		matchId: raw.id,
+		startTime: num(raw.startDateTime),
+		durationSeconds: num(raw.durationSeconds),
+		radiantWin: typeof raw.didRadiantWin === 'boolean' ? raw.didRadiantWin : null,
+		gameMode: raw.gameMode ?? null,
+		lobbyType: raw.lobbyType ?? null,
+		averageRank: numOrNull(raw.averageRank),
+		players,
+	};
+}
+
+/**
+ * 单场对局。缓存给得比列表长：已解析的比赛内容不会再变，会变的只有「还没解析完」的那批，
+ * 而这种比赛通常几小时内有结果，30 分钟足够把重复点击挡掉。
+ */
+const MATCH_DETAIL_TTL_MS = 30 * 60 * 1000;
+
+export async function loadMatchDetail(matchId: number): Promise<MatchDetail | null> {
+	return cached(`player:match:${matchId}`, MATCH_DETAIL_TTL_MS, async () => {
+		const data = await gql<{ match: RawMatch | null }>(MATCH_DETAIL_DOCUMENT, { id: matchId });
+		return data.match ? toMatchDetail(data.match) : null;
 	});
 }
 

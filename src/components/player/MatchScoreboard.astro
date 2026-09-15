@@ -1,0 +1,181 @@
+---
+import { impTone, laneLabel, positionLabel } from '../../lib/dotaLabels';
+import type { HeroRef, ItemRef } from '../../lib/gameRefs';
+import { kda, thousands } from '../../lib/playerContext';
+import type { MatchDetailPlayer } from '../../lib/stratzPlayer';
+
+/**
+ * 单场对局的记分板：天辉 / 夜魇两栏，每栏五张选手卡。
+ *
+ * 用卡片而不是表格：手机上十列横向表格必然要横滚，而选手卡自然堆叠。
+ * 每张卡按「谁 → 打成什么样 → 出了什么」三段排，一行一件事。
+ */
+interface Props {
+	players: MatchDetailPlayer[];
+	heroes: Map<number, HeroRef>;
+	items: Map<number, ItemRef>;
+	/** 天辉是否获胜；null 表示上游还没给结果。 */
+	radiantWin: boolean | null;
+	/** 当前登录的账号，用于高亮「你」那一行。不在本场时传 undefined。 */
+	highlight?: number | null;
+}
+
+const { players, heroes, items, radiantWin, highlight } = Astro.props;
+
+const AWARD_META: Record<string, { label: string; class: string }> = {
+	MVP: { label: 'MVP', class: 'bg-gold/20 text-gold' },
+	TOP_CORE: { label: '最佳核心', class: 'bg-dota/20 text-dota-light' },
+	TOP_SUPPORT: { label: '最佳辅助', class: 'bg-[#4ade80]/15 text-[#4ade80]' },
+};
+
+const teams = [
+	{ radiant: true, name: '天辉', accent: 'text-[#4ade80]', dot: 'bg-[#22c55e]' },
+	{ radiant: false, name: '夜魇', accent: 'text-[#f87171]', dot: 'bg-[#ef4444]' },
+].map((team) => ({
+	...team,
+	win: radiantWin === null ? null : radiantWin === team.radiant,
+	rows: players.filter((player) => player.isRadiant === team.radiant),
+}));
+---
+
+<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+	{
+		teams.map((team) => (
+			<section class="rounded-2xl border border-line bg-surface p-4">
+				<header class="mb-3 flex flex-wrap items-center gap-2">
+					<span class:list={['h-2 w-2 rounded-full', team.dot]} aria-hidden="true" />
+					<h3 class:list={['font-display text-base', team.accent]}>{team.name}</h3>
+					{team.win !== null && (
+						<span
+							class:list={[
+								'rounded px-1.5 py-0.5 text-[11px] font-bold',
+								team.win ? 'bg-dota/20 text-dota-light' : 'bg-surface-3 text-muted',
+							]}
+						>
+							{team.win ? '获胜' : '失败'}
+						</span>
+					)}
+					{team.rows.length > 0 && (
+						<span class="ml-auto text-[11px] text-faint">
+							{thousands(team.rows.reduce((sum, row) => sum + row.networth, 0))} 总经济
+						</span>
+					)}
+				</header>
+
+				<ul class="space-y-2">
+					{team.rows.map((row) => {
+						const hero = heroes.get(row.heroId);
+						const tone = impTone(row.imp);
+						const award = row.award ? AWARD_META[row.award] : undefined;
+						const isYou = highlight != null && row.accountId === highlight;
+						return (
+							<li
+								class:list={[
+									'rounded-xl border bg-surface-2/50 p-3',
+									isYou ? 'border-dota/60 ring-1 ring-dota/30' : 'border-line',
+								]}
+							>
+								<div class="flex items-start gap-3">
+									{hero?.img ? (
+										<img
+											src={hero.img}
+											alt=""
+											loading="lazy"
+											referrerpolicy="no-referrer"
+											class="h-10 w-[71px] shrink-0 rounded object-cover"
+										/>
+									) : (
+										<span class="h-10 w-[71px] shrink-0 rounded bg-surface-3" />
+									)}
+									<div class="min-w-0 flex-1">
+										<div class="flex items-center gap-2">
+											<span class="truncate text-sm font-medium text-cream">
+												{hero?.name ?? `英雄 ${row.heroId}`}
+											</span>
+											{award && (
+												<span class:list={['shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold', award.class]}>
+													{award.label}
+												</span>
+											)}
+										</div>
+										<div class="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-faint">
+											<span class:list={['truncate', isYou && 'font-semibold text-dota-light']} title={row.name}>
+												{row.name}
+												{isYou && ' · 你'}
+											</span>
+											<span aria-hidden="true">·</span>
+											<span>{positionLabel(row.position)}</span>
+											{row.lane && (
+												<>
+													<span aria-hidden="true">·</span>
+													<span>{laneLabel(row.lane)}</span>
+												</>
+											)}
+										</div>
+									</div>
+								</div>
+
+								<div class="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+									<span class="text-sm tabular-nums text-cream">
+										{row.kills}
+										<span class="text-faint"> / </span>
+										{row.deaths}
+										<span class="text-faint"> / </span>
+										{row.assists}
+									</span>
+									<span class="text-[11px] text-faint">{kda(row.kills, row.deaths, row.assists).toFixed(2)} KDA</span>
+									{row.imp !== null && (
+										<span
+											class:list={[
+												'text-[11px] tabular-nums',
+												tone === 'good' ? 'text-gold' : tone === 'bad' ? 'text-muted' : 'text-faint',
+											]}
+											title="个人比赛表现（IMP）"
+										>
+											IMP {row.imp > 0 ? `+${row.imp}` : row.imp}
+										</span>
+									)}
+									<span class="ml-auto text-[11px] text-faint tabular-nums">等级 {row.level}</span>
+								</div>
+
+								<div class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-faint">
+									<span class="tabular-nums">净经济 {thousands(row.networth)}</span>
+									<span class="tabular-nums">{row.gpm} GPM</span>
+									<span class="tabular-nums">{row.xpm} XPM</span>
+									<span class="tabular-nums">补刀 {row.lastHits}/{row.denies}</span>
+								</div>
+
+								<div class="mt-2 flex gap-1">
+									{row.items.map((itemId) => {
+										const item = itemId ? items.get(itemId) : undefined;
+										if (itemId && item?.img) {
+											return (
+												<img
+													src={item.img}
+													alt={item.name}
+													title={item.name}
+													loading="lazy"
+													referrerpolicy="no-referrer"
+													class="h-7 w-9 rounded-sm border border-line object-cover"
+												/>
+											);
+										}
+										return (
+											<span
+												class:list={[
+													'h-7 w-9 rounded-sm border',
+													itemId ? 'border-line bg-surface-3' : 'border-dashed border-line/70',
+												]}
+												title={itemId ? `装备 ${itemId}` : '空格子'}
+											/>
+										);
+									})}
+								</div>
+							</li>
+						);
+					})}
+				</ul>
+			</section>
+		))
+	}
+</div>

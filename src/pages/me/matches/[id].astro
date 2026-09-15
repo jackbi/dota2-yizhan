@@ -1,0 +1,153 @@
+---
+import MatchScoreboard from '../../../components/player/MatchScoreboard.astro';
+import Panel from '../../../components/player/Panel.astro';
+import PlayerNotice from '../../../components/player/PlayerNotice.astro';
+import PlayerLayout from '../../../layouts/PlayerLayout.astro';
+import { gameModeLabel, lobbyLabel, rankInfo } from '../../../lib/dotaLabels';
+import { formatClock, formatDayWithWeekday } from '../../../lib/format';
+import { loadPlayer, loadRefs, noticeProps, thousands } from '../../../lib/playerContext';
+import { readSession } from '../../../lib/session';
+import { loadMatchDetail, StratzError, stratzPlayerConfigured, type MatchDetail } from '../../../lib/stratzPlayer';
+
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+if (!session) return Astro.redirect('/login');
+
+/** 只接受正整数：`/me/matches/abc` 之类直接回列表，不去上游浪费一次请求。 */
+const matchId = Number(Astro.params.id);
+if (!Number.isSafeInteger(matchId) || matchId <= 0) return Astro.redirect('/me/matches');
+
+/**
+ * 与 `loadPlayer()` 一样把失败分成三种，但对局多一种「查到了但还没解析」——
+ * STRATZ 对未解析的比赛返回的是空 players，映射层已经把它归成 null，
+ * 这里按「查不到」处理，因为对用户来说都是「现在没有内容可看」。
+ */
+type MatchLoad =
+	| { ok: true; match: MatchDetail }
+	| { ok: false; reason: 'not-configured' | 'not-found' | 'upstream-error'; message: string };
+
+async function loadMatch(id: number): Promise<MatchLoad> {
+	if (!stratzPlayerConfigured()) {
+		return { ok: false, reason: 'not-configured', message: '站点未配置 STRATZ_TOKEN，对局详情暂时不可用。' };
+	}
+	try {
+		const match = await loadMatchDetail(id);
+		if (!match) {
+			return {
+				ok: false,
+				reason: 'not-found',
+				message: 'STRATZ 上查不到这场比赛，或者它还没解析出数据。未解析的对局过一段时间再来看。',
+			};
+		}
+		return { ok: true, match };
+	} catch (error) {
+		return {
+			ok: false,
+			reason: 'upstream-error',
+			message:
+				error instanceof StratzError
+					? `数据源暂时不可用：${error.message}`
+					: '数据源暂时不可用，请稍后重试。',
+		};
+	}
+}
+
+const [loaded, matchLoad, refs] = await Promise.all([loadPlayer(session.accountId), loadMatch(matchId), loadRefs()]);
+
+const match = matchLoad.ok ? matchLoad.match : null;
+/** 当前登录账号在这一场里的那一行；不在本场时为 null。 */
+const me = match?.players.find((player) => player.accountId === session.accountId) ?? null;
+const youWon = me && match?.radiantWin !== null ? match?.radiantWin === me.isRadiant : null;
+
+const averageRank = match?.averageRank ? rankInfo(match.averageRank).label : null;
+
+const summary: { label: string; value: string; tone?: 'win' | 'loss' | 'muted' }[] = match
+	? [
+			{
+				label: me ? '你的结果' : '结果',
+				value:
+					youWon !== null
+						? youWon
+							? '胜'
+							: '负'
+						: match.radiantWin === null
+							? '未解析'
+							: match.radiantWin
+								? '天辉获胜'
+								: '夜魇获胜',
+				tone: youWon !== null ? (youWon ? 'win' : 'loss') : 'muted',
+			},
+			{ label: '时长', value: `${Math.floor(match.durationSeconds / 60)}:${String(match.durationSeconds % 60).padStart(2, '0')}` },
+			{ label: '开始时间', value: `${formatDayWithWeekday(match.startTime)} ${formatClock(match.startTime)}` },
+			{ label: '游戏模式', value: gameModeLabel(match.gameMode) },
+			{ label: '房间类型', value: lobbyLabel(match.lobbyType) },
+			{ label: '平均段位', value: averageRank ?? '未知' },
+		]
+	: [];
+---
+
+{
+	!loaded.ok ? (
+		<PlayerNotice {...noticeProps(loaded)} />
+	) : !matchLoad.ok ? (
+		<PlayerNotice {...noticeProps(matchLoad)} />
+	) : (
+		<PlayerLayout profile={loaded.profile} active="/me/matches" title="对局详情">
+			<a
+				href="/me/matches"
+				class="mb-4 inline-flex items-center gap-1 text-xs text-faint transition hover:text-cream"
+			>
+				← 比赛记录
+			</a>
+
+			<Panel
+				title={me ? `你在这场比赛里的表现` : `对局 ${match.matchId}`}
+				hint={`共 ${thousands(match.players.length)} 名选手`}
+				class="mb-4"
+			>
+				<dl class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+					{summary.map((item) => (
+						<div class="rounded-lg border border-line bg-surface-2/50 px-3 py-2">
+							<dt class="text-[11px] text-faint">{item.label}</dt>
+							<dd
+								class:list={[
+									'mt-0.5 text-sm tabular-nums',
+									item.tone === 'win'
+										? 'font-semibold text-dota-light'
+										: item.tone === 'loss'
+											? 'text-muted'
+											: 'text-cream',
+								]}
+							>
+								{item.value}
+							</dd>
+						</div>
+					))}
+				</dl>
+
+				{
+					!me && (
+						<p class="mt-3 text-xs leading-relaxed text-faint">
+							这场比赛里没有你的比赛记录——如果你是照着别人的对局号打开这一页，看到的是那一场的十个人。
+						</p>
+					)
+				}
+
+				<div class="mt-4 flex flex-wrap items-baseline justify-between gap-2 border-t border-line pt-3">
+					<span class="text-xs text-faint">对局 {match.matchId}</span>
+					<a
+						href={`https://stratz.com/matches/${match.matchId}`}
+						target="_blank"
+						rel="noopener noreferrer"
+						class="text-xs text-faint transition hover:text-gold"
+					>
+						在 STRATZ 查看这场比赛 ↗
+					</a>
+				</div>
+			</Panel>
+
+			<MatchScoreboard players={match.players} heroes={refs.heroes} items={refs.items} radiantWin={match.radiantWin} highlight={session.accountId} />
+		</PlayerLayout>
+	)
+}
