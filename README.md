@@ -8,9 +8,11 @@
 ```sh
 pnpm install
 pnpm dev        # http://localhost:4321
-pnpm build      # 产物在 dist/
-pnpm preview    # 预览 dist/
+pnpm build      # 产物在 dist/client（静态）+ dist/server（SSR）
+pnpm preview    # 预览构建产物（会起服务端，不是纯静态预览）
 ```
+
+线上运行见「[Steam 登录与个人战绩](#steam-登录与个人战绩)」——多了一步 `node dist/server/entry.mjs`。
 
 ## 主题色板
 
@@ -48,8 +50,11 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 
 ## 数据都是构建期抓取的
 
-站点是 `output: static`，页面里没有任何运行时请求：所有数据在构建时（dev 下是渲染
+站点是 `output: static`，内容页没有任何运行时请求：所有数据在构建时（dev 下是渲染
 页面时）由 Node 抓取，再渲染成静态 HTML。抓取结果落在 `.cache/`：
+
+**唯一的例外**是「Steam 登录 + 个人战绩」（见下一节）：那几条路由是 `prerender = false`，
+按请求在服务端向 STRATZ 取数。它们不参与 `.cache/`，理由与做法写在同一节里。
 
 | 目录 | 内容 | 缓存时长 |
 | --- | --- | --- |
@@ -91,6 +96,92 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 ```
 
 没有数据的源排在最前面。原始记录在 `.cache/health/`，dev 下不会自动汇总，可以直接翻。
+
+## Steam 登录与个人战绩
+
+用 Steam 账号登录后可以看自己的战绩：`/me` 是概况，下面还有比赛、英雄、队友与对手、
+进展、分析五个子页。数据来自 STRATZ 的 GraphQL 接口（公开比赛数据），**不需要 Steam Web
+API Key**——登录只用到 OpenID，昵称和头像由 STRATZ 一并返回。
+
+### 这几条路由是 SSR，其余仍是纯静态
+
+页面本身还是构建期生成的静态 HTML，只有下面几条走服务端：
+
+| 路径 | 作用 |
+| --- | --- |
+| `/api/auth/steam/login` | 302 跳去 Steam OpenID |
+| `/api/auth/steam/callback` | 校验断言、发会话、回 `/me` |
+| `/api/auth/logout` | POST 清会话 |
+| `/api/me` | 页头脚本查登录态用的 JSON |
+| `/login`、`/me`、`/me/*` | 登录页与六个战绩页 |
+
+`astro.config.mjs` 里挂了 `@astrojs/node`，构建产物因此从「一个 `dist/`」变成
+`dist/client/`（静态资源）+ `dist/server/`（SSR）。**部署方式随之改变**：
+
+```sh
+pnpm build
+node --env-file=.env dist/server/entry.mjs   # 监听 PORT / HOST，默认 4321
+```
+
+`--env-file=.env` 不能省：`astro:env` 的密钥是**运行时**从 `process.env` 读的，
+不会内联进产物，所以直接 `node dist/server/entry.mjs` 会读不到 `SESSION_SECRET`
+而拒绝登录。用 Docker / systemd 部署时，把变量配进进程环境即可，不必带这个参数。
+`astro preview` 走的也是同一个服务端入口。
+
+### 换 adapter 只动三行
+
+Node 只是为了「本地能跑、能自托管」。要上 Vercel / Netlify / Cloudflare，装对应 adapter
+再改 `astro.config.mjs` 里的 `adapter: node(...)` 那一行即可，**路由与页面不用动**——
+SSR 侧代码刻意只用 Web 标准 API：
+
+- `src/lib/session.ts` 用 `crypto.subtle` 签 Cookie，不碰 `node:crypto`；
+- `src/lib/stratzPlayer.ts` 与 `src/lib/ssrCache.ts` 只用 `fetch` + 内存 Map，不碰 `node:fs`；
+- 密钥统一从 `astro:env` 读，Workers 下会自动接到运行时绑定上。
+
+**注意 Cloudflare**：`astro dev` 在 CF adapter 下会跑 workerd，而 `astro.config.mjs` 里
+`avatarsInDev` 那段 dev 中间件用了 `node:fs`（头像字节），到时候需要一起改。
+
+### 会话与登录安全
+
+会话是**无状态签名 Cookie**（HMAC-SHA256），服务端不存 session，所以不需要数据库，
+在 Serverless / Workers 上行为一致。有效期 30 天。
+
+- `SESSION_SECRET` 没配置时一律拒绝签发与校验，**不会退回默认密钥**；
+- 登录跳转带一次性 `state`（存 `d2s_login_state` Cookie），挡登录 CSRF；
+- 回调必须回 Steam 反查 `check_authentication`，并校验 `op_endpoint`、`return_to`、
+  `claimed_id` 形状——只看回调参数就发会话等于谁都能伪造登录；
+- 昵称是用户可控输入，页头那段水合脚本用 `createElement` + `textContent` 拼 DOM，不用 `innerHTML`。
+
+### 四个上游的坑
+
+**`matches` 的 `take` 上限是 100。** 超过不是截断而是直接报错
+（`You have surpassed the maximum take value of : 100`），`/me/matches` 因此每页取 25。
+聚合接口 `matchesGroupBy` 的 `take` 含义完全不同——它限的是**参与聚合的比赛数**，
+默认值只有 20 左右，不放大就只统计得到最近几场，「全部时间」的胜率会假得离谱。
+
+**STRATZ 的 token 绑定 IP。** 换出口 IP 会直接返回
+`You cannot use different IP Addresses when using the API`（HTTP 403）。本地挂着代理时
+它可能随机失效，生产环境要保证调用方出口 IP 稳定。取数层把这种情况按「上游故障」处理，
+页面会给出可重试的提示，而不是当成「这个玩家没有数据」。
+
+**位置/分路/定位里藏着一批「无记录」的比赛。** STRATZ 不返回「未知」，而是把远古局、
+未解析局塞进各维度的默认枚举值（位置记成 `POSITION_1`、分路记成 `ROAMING`、定位记成
+`CORE`），`avgImp` 一律为 0。实测某个 1338 场的账号，这三处是同一批 1071 场。直接渲染
+会同时出现「两个 1 号位」和「1071 场 1 号位」这种失真结果。`stratzPlayer.ts` 的
+`splitUnclassified()` 按「三个维度里 (场次, 胜场) 完全相同」把它认出来摘掉，页面上单独
+注明「另有 N 场没有位置记录」。
+
+**时段是 UTC，不是本地时间。** 讲的是 `groupBy(HOUR)`：把最近 100 场的 `startDateTime`
+按 UTC 分桶，与接口返回的分布吻合（总偏差 42），按 UTC+8 分桶则差得很远（偏差 166）。
+`/me/breakdown` 因此统一换算成北京时间再显示——换算后峰值落在 20:00–21:00，
+与国内玩家的作息对得上。
+
+### 头像为什么必须带 `referrerpolicy="no-referrer"`
+
+Steam 的头像 CDN（`avatars.steamstatic.com`）会拒掉带 Referer 的请求，不带这个属性页面上
+就是一张破图。站内主播头像、比赛页的队标一直是这么处理的，个人战绩页的头像统一走
+`src/components/player/Avatar.astro`：带 `no-referrer`，加载失败时摘掉 `<img>` 露出首字母，
+不会出现破图图标。
 
 ## OB 名单与开播状态
 
@@ -347,11 +438,15 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 
 ## 环境变量
 
-放在项目根目录的 `.env`（已 gitignore），dev 与 build 都会读取：
+放在项目根目录的 `.env`（已 gitignore），dev 与 build 都会读取。
+带 ★ 的两个是 Steam 登录新增的，**构建期用不到、只在服务端运行时读**，所以用 `node` 直接
+起线上服务时必须把变量带进进程环境（本地最简单的做法是 `node --env-file=.env`）：
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
-| `STRATZ_TOKEN` | 否 | [stratz.com/api](https://stratz.com/api) 生成。用于取 BP/选手明细与近一周英雄数据；缺失时自动回落到 OpenDota（更慢）或整块不展示 |
+| `SESSION_SECRET` ★ | 登录必需 | 会话 Cookie 的签名密钥，随便一串足够长的随机值即可（`openssl rand -hex 32`）。**不配置时登录直接报错，不会退回默认密钥** |
+| `SITE_URL` ★ | 建议 | 站点对外地址（如 `https://example.com`），用于拼 Steam OpenID 的 `realm` / `return_to`。不配时按请求的 Host 推断，本地开发无需配置；生产挂在反向代理后面时建议显式配上 |
+| `STRATZ_TOKEN` | 否 | [stratz.com/api](https://stratz.com/api) 生成。构建期用于取 BP/选手明细与近一周英雄数据；运行时用于个人战绩。**该 token 绑定调用方 IP**，换 IP 会 403。缺失时构建期回落到 OpenDota（更慢）或整块不展示，个人战绩页提示「未启用」 |
 | `YOUDAO_COOKIE` | 否 | 覆盖有道翻译的默认访客 cookie |
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
