@@ -67,6 +67,13 @@ const LOBBY_STALE_MS = 45_000;
 const HOST_SILENCE_MS = 10_000;
 /** 房主掉线后等他回来的窗口：刷新只要一两秒，真的走了就等这么久。 */
 const HOST_RETURN_MS = 20_000;
+/**
+ * 「先验证密码」的等待上限。
+ *
+ * 密码是对的、房主也在，连上并收到第一份快照通常在一两秒内；12 秒还没动静，
+ * 基本就是密码/房间码错了或房主不在，没必要让人一直盯着禁用的按钮。
+ */
+const JOIN_VERIFY_MS = 12_000;
 
 const NICK_KEY = 'dota2-party/nickname';
 /**
@@ -104,6 +111,12 @@ type Cmd =
 
 /** 刷新页面时用来重新进房（房主要用它把房间按原样重建）。 */
 type RoomSession = { code: string; password: string; asHost: boolean; name?: string };
+
+/** 进房结果。`defer` 模式下要等房主确认收到我们了才有结论。 */
+type EnterResult = { ok: true } | { ok: false; error: string };
+
+/** 正在「先验证密码再进房」时挂着的那个 Promise（见 enterRoom 末尾）。 */
+let pendingJoin: { resolve: (result: EnterResult) => void; timer: number } | null = null;
 
 // ---------------------------------------------------------------- DOM
 
@@ -152,6 +165,8 @@ const dom = {
 	autoAssign: $<HTMLInputElement>('#auto-assign'),
 	teamStage: $('#team-stage'),
 	teamFullscreen: $<HTMLButtonElement>('#team-fullscreen'),
+	pageFullscreen: $<HTMLButtonElement>('#page-fullscreen'),
+	joinSubmit: $<HTMLButtonElement>('#join-submit'),
 	teamGrid: $('#team-grid'),
 	freePool: $('#free-pool'),
 	rollList: $<HTMLOListElement>('#roll-list'),
@@ -519,8 +534,8 @@ function writeSession(session: RoomSession | null): void {
 }
 
 function showSetup(): void {
-	// 离房时如果还全屏着，先退出来：否则全屏的会是那个已经被藏起来的区域，屏幕上只剩一片空。
-	if (stageIsFullscreen()) setStageFullscreen(false);
+	// 离房时把队伍区全屏退掉：那块在房间界面里，界面一藏就只剩一片空。
+	exitStageFullscreen();
 	setVisible(dom.setup, true);
 	setVisible(dom.room, false);
 	document.body.dataset.partyView = 'setup';
@@ -533,7 +548,15 @@ function showRoom(): void {
 	document.body.dataset.partyView = 'room';
 }
 
-async function enterRoom(options: { code: string; password: string; asHost: boolean; name?: string }): Promise<void> {
+async function enterRoom(options: {
+	code: string;
+	password: string;
+	asHost: boolean;
+	name?: string;
+	/** 加入别人的房间时用：先留在设置页验证密码，连上之后才切到房间界面。 */
+	defer?: boolean;
+}): Promise<EnterResult> {
+	if (pendingJoin) settleJoin({ ok: false, error: '上一次加入还没结束，请重试。' });
 	if (roomCode) await leaveRoom({ silent: true });
 
 	roomCode = options.code;
@@ -542,10 +565,12 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 	chat = [];
 	sawHostData = false;
 	setNotice(null);
-	showRoom();
+	// defer 模式先不切界面：密码就是信令密钥，连不上就说明密码不对或房主不在，
+	// 这时候把人丢进一个空房间没有意义（见文件末尾那个 Promise）。
+	if (!options.defer) showRoom();
 	renderRoom();
 	setNotice(isHost ? '正在建房…' : '正在连接房间…', 'info', true);
-	if (!isHost) startHostSilenceTimer();
+	if (!isHost && !options.defer) startHostSilenceTimer();
 
 	const handle = joinRoom(
 		{ appId: APP_ID, password: options.password, relayConfig: relayConfig() },
@@ -618,6 +643,38 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 
 	writeSession({ code: options.code, password: options.password, asHost: options.asHost, name: options.name });
 	if (codeFromHash() !== options.code) history.replaceState(null, '', `${location.pathname}${HASH_PREFIX}${options.code}`);
+
+	if (!options.defer) return { ok: true };
+	/*
+	 * 「先验证密码，再进房间」。
+	 *
+	 * 密码就是信令的加密密钥，Trystero 没有「只验一下密码」的接口——唯一可靠的验证方式就是
+	 * 真去连一次。所以这里不改验证方式，只把**界面切换时机**往后挪：密码对了、房主把房间快照
+	 * 发过来了，才切到房间界面（见 applySnapshot）。在此之前一直留在加入房间那张卡上，
+	 * 错了就把原因写在卡片里，而不是让人先进一个空房间再被踢出来。
+	 */
+	return new Promise<EnterResult>((resolve) => {
+		pendingJoin = {
+			resolve,
+			timer: window.setTimeout(() => {
+				settleJoin({
+					ok: false,
+					error:
+						'一直没收到房主的回应。按可能性排查：① 房间码或密码抄错了——写错时房主那边完全看不到你的请求，不会有人来告诉你；② 房主已经不在这个房间了；③ 双方网络不允许直连。',
+				});
+				void leaveRoom({ silent: true });
+			}, JOIN_VERIFY_MS),
+		};
+	});
+}
+
+/** 给挂起的进房一个结论。只认第一次，避免超时与错误两边都来抢。 */
+function settleJoin(result: EnterResult): void {
+	const pending = pendingJoin;
+	if (!pending) return;
+	pendingJoin = null;
+	window.clearTimeout(pending.timer);
+	pending.resolve(result);
 }
 
 async function leaveRoom(options: { silent?: boolean } = {}): Promise<void> {
@@ -633,7 +690,15 @@ async function leaveRoom(options: { silent?: boolean } = {}): Promise<void> {
 	}
 	window.clearTimeout(hostSilenceTimer);
 	window.clearTimeout(hostReturnTimer);
-	roomHandle?.leave();
+	if (roomHandle) {
+		try {
+			// **必须等它落定**：Trystero 的 leave() 是异步的（先发告别消息、再删内部登记），
+			// 不等就重进同一个 roomId 会拿回正在退出的旧实例。密码输错后重试正好走这条路。
+			await roomHandle.leave();
+		} catch {
+			// 退不掉也要把本地状态清干净，否则界面会卡在房间里。
+		}
+	}
 	roomHandle = null;
 	roomActions = null;
 	roomCode = '';
@@ -692,6 +757,18 @@ function onJoinError(error: string): void {
 	// Trystero 的密码失败文案都带 password：解密 SDP 失败与握手 challenge 失败。
 	const passwordProblem = /password/i.test(error);
 
+	// 还在「先验证密码」阶段：把结论交回那张加入卡片，不要切界面、也不要留个空房间。
+	if (pendingJoin) {
+		settleJoin({
+			ok: false,
+			error: passwordProblem
+				? '密码不对：这个房间的密码和房主设的不一样。房间里的人收不到你的加入请求，所以不会有人来提醒你——回去问一下房主，顺便确认房间码没念错。'
+				: `连不上房主（${error}）。这是网络限制，不是密码问题：同一个 WiFi 下的两个人通常能连上，否则换个网络（比如手机热点）再试。`,
+		});
+		void leaveRoom({ silent: true });
+		return;
+	}
+
 	// 房主看到这条，说明是**别人**没进来（他自己的连接是好的）。
 	if (isHost) {
 		setNotice(
@@ -737,6 +814,12 @@ function applySnapshot(payload: SnapshotPayload, isSync: boolean): void {
 	if (first) chat = L.appendChat(chat, systemMessage('已连上房主，房间信息同步完成'));
 	renderRoom();
 	renderChat();
+
+	// 收到房主的快照 = 密码是对的、房主也在：这时候才把人放进房间界面。
+	if (pendingJoin) {
+		settleJoin({ ok: true });
+		showRoom();
+	}
 }
 
 // ---------------------------------------------------------------- 房主侧
@@ -1123,47 +1206,83 @@ function renderChat(): void {
 	dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
 }
 
-// ---------------------------------------------------------------- 全屏展示
+// ---------------------------------------------------------------- 全屏
 
 /**
- * 队伍分配区全屏。
+ * 全屏。两个目标，逻辑完全一样，只是节点不同：
+ *
+ * - **网页全屏**：整个 `<html>`，看直播式的沉浸浏览；
+ * - **队伍分配区**：只放大队伍那一块，排完队投屏或摆第二块屏时用。
  *
  * 用 Fullscreen API 而不是「另开一个页面」：房间状态在房主的 `room` 里、成员各自在浏览器里，
- * 另开一个页面就得再同步一份状态，还要处理哪个窗口说了算。全屏只是把这一个区域放大，
- * 零同步成本，Esc 就能退出——排完队要投屏或者摆第二块屏，这就够了。
+ * 另开一个页面就得再同步一份状态，还要处理哪个窗口说了算。全屏只是把节点放大，零同步成本。
  *
- * 不支持元素级全屏的浏览器（典型是 iPad 上的 Safari）退回到固定定位的「伪全屏」，
- * 按钮照样可用，退出键由上面绑的 keydown 接住。
+ * 队伍区在不支持元素级全屏的浏览器上（典型是 iPad Safari）退回固定定位的「伪全屏」，
+ * 那个模式浏览器不管 Esc，由下面绑的 keydown 接住。网页全屏不需要退化方案——页面本来
+ * 就占满视口，没有 API 时按钮直接不出现。
  */
-function stageIsFullscreen(): boolean {
-	return document.fullscreenElement === dom.teamStage || dom.teamStage.classList.contains('is-faux-fullscreen');
+type FullscreenSpec = {
+	node: HTMLElement;
+	button: HTMLButtonElement;
+	enterLabel: string;
+	exitLabel: string;
+	/** 退化模式用的类名；不给就表示这个目标没有退化方案。 */
+	fauxClass?: string;
+};
+
+let FULLSCREEN: FullscreenSpec[] = [];
+
+function fullscreenActive(spec: FullscreenSpec): boolean {
+	if (document.fullscreenElement === spec.node) return true;
+	return spec.fauxClass !== undefined && spec.node.classList.contains(spec.fauxClass);
 }
 
-function syncStageFullscreenLabel(): void {
-	const active = stageIsFullscreen();
-	dom.teamFullscreen.textContent = active ? '退出全屏' : '全屏展示';
-	dom.teamFullscreen.setAttribute('aria-pressed', String(active));
+function syncFullscreenLabels(): void {
+	for (const spec of FULLSCREEN) {
+		const active = fullscreenActive(spec);
+		spec.button.textContent = active ? spec.exitLabel : spec.enterLabel;
+		spec.button.setAttribute('aria-pressed', String(active));
+	}
 }
 
-function setStageFullscreen(on: boolean): void {
-	if (typeof dom.teamStage.requestFullscreen !== 'function') {
-		dom.teamStage.classList.toggle('is-faux-fullscreen', on);
-		syncStageFullscreenLabel();
+function setFullscreen(spec: FullscreenSpec, on: boolean): void {
+	const supported = typeof spec.node.requestFullscreen === 'function';
+	if (!supported) {
+		if (spec.fauxClass === undefined) return;
+		spec.node.classList.toggle(spec.fauxClass, on);
+		syncFullscreenLabels();
 		return;
 	}
 	if (on) {
-		// 浏览器可能拒绝（比如不是用户手势触发的），那就退回固定定位，别让按钮点了没反应。
-		const pending = dom.teamStage.requestFullscreen() as Promise<void> | undefined;
-		void pending?.catch(() => dom.teamStage.classList.add('is-faux-fullscreen')).finally(syncStageFullscreenLabel);
+		// 浏览器可能拒绝（比如不是用户手势触发的），有退化方案就退回去，别让按钮点了没反应。
+		const pending = spec.node.requestFullscreen() as Promise<void> | undefined;
+		void pending
+			?.catch(() => {
+				if (spec.fauxClass !== undefined) spec.node.classList.add(spec.fauxClass);
+			})
+			.finally(syncFullscreenLabels);
 		return;
 	}
-	if (document.fullscreenElement === dom.teamStage) void document.exitFullscreen();
-	dom.teamStage.classList.remove('is-faux-fullscreen');
-	syncStageFullscreenLabel();
+	if (document.fullscreenElement === spec.node) void document.exitFullscreen();
+	if (spec.fauxClass !== undefined) spec.node.classList.remove(spec.fauxClass);
+	syncFullscreenLabels();
 }
 
-function toggleStageFullscreen(): void {
-	setStageFullscreen(!stageIsFullscreen());
+/** 退出所有全屏（Esc 用）。 */
+function exitAllFullscreen(): void {
+	for (const spec of FULLSCREEN) if (fullscreenActive(spec)) setFullscreen(spec, false);
+}
+
+/**
+ * 只退出「有退化方案」的那些目标——也就是队伍区。
+ *
+ * 离房时要调：队伍区在房间界面里，界面一藏，全屏的就会是一片空的区域。网页全屏不在此列，
+ * 它跟房间界面的显隐无关，人退出房间后继续全屏着是合理的。
+ */
+function exitStageFullscreen(): void {
+	for (const spec of FULLSCREEN) {
+		if (spec.fauxClass !== undefined && fullscreenActive(spec)) setFullscreen(spec, false);
+	}
 }
 
 // ---------------------------------------------------------------- 事件
@@ -1271,14 +1390,30 @@ function bindEvents(): void {
 		dom.joinForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	});
 
-	dom.teamFullscreen.addEventListener('click', () => void toggleStageFullscreen());
+	// 两个全屏目标在这里登记，按钮文案由 syncFullscreenLabels 统一维护。
+	FULLSCREEN = [
+		{ node: document.documentElement, button: dom.pageFullscreen, enterLabel: '网页全屏', exitLabel: '退出全屏' },
+		{
+			node: dom.teamStage,
+			button: dom.teamFullscreen,
+			enterLabel: '全屏展示',
+			exitLabel: '退出全屏',
+			fauxClass: 'is-faux-fullscreen',
+		},
+	];
+	for (const spec of FULLSCREEN) {
+		// 网页全屏没有退化方案：浏览器不支持就别摆一个点了没反应的按钮。
+		if (spec.fauxClass === undefined && typeof spec.node.requestFullscreen !== 'function') {
+			spec.button.hidden = true;
+			continue;
+		}
+		spec.button.addEventListener('click', () => setFullscreen(spec, !fullscreenActive(spec)));
+	}
 	// Esc 退出全屏由浏览器负责；固定定位那个退化模式得自己接。
 	document.addEventListener('keydown', (event) => {
-		if (event.key === 'Escape' && dom.teamStage.classList.contains('is-faux-fullscreen')) {
-			setStageFullscreen(false);
-		}
+		if (event.key === 'Escape') exitAllFullscreen();
 	});
-	document.addEventListener('fullscreenchange', () => syncStageFullscreenLabel());
+	document.addEventListener('fullscreenchange', syncFullscreenLabels);
 
 	dom.roomCopy.addEventListener('click', () => {
 		const url = `${location.origin}${location.pathname}${HASH_PREFIX}${roomCode}`;
@@ -1321,9 +1456,32 @@ async function submitJoin(): Promise<void> {
 		setFormError(dom.joinForm, issue);
 		return;
 	}
-	const name = await resolveName(dom.joinForm);
+	const name = resolveName(dom.joinForm);
 	if (!name) return;
-	await enterRoom({ code, password, asHost: false });
+
+	// 先在这一页把密码验证掉：验证期间按钮禁用，失败了错误就写在这张卡片下面。
+	setJoinPending(true);
+	const result = await enterRoom({ code, password, asHost: false, defer: true });
+	setJoinPending(false);
+	if (!result.ok) setFormError(dom.joinForm, result.error);
+}
+
+let joinHintTimer = 0;
+
+/**
+ * 「先验证密码」期间的按钮状态。
+ *
+ * 4 秒还没结果就把文案换成「还在等房主回应…」：密码对、房主在的话通常一两秒就结束了，
+ * 超过几秒多半是在等一个不会来的回应，得让人知道不是卡死了。
+ */
+function setJoinPending(on: boolean): void {
+	window.clearTimeout(joinHintTimer);
+	dom.joinSubmit.disabled = on;
+	dom.joinSubmit.textContent = on ? '正在验证密码…' : '加入房间';
+	if (!on) return;
+	joinHintTimer = window.setTimeout(() => {
+		if (pendingJoin) dom.joinSubmit.textContent = '还在等房主回应…';
+	}, 4000);
 }
 
 async function submitCreate(): Promise<void> {

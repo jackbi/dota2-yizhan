@@ -204,8 +204,9 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 							/>
 						</label>
 						<button
+							id="join-submit"
 							type="submit"
-							class="w-full rounded-lg bg-dota px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-dota-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							class="w-full rounded-lg bg-dota px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-dota-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold disabled:opacity-70"
 						>
 							加入房间
 						</button>
@@ -279,6 +280,15 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 						<span id="room-role" class="ml-2 rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-gold"></span>
 					</p>
 				</div>
+				<button
+					id="page-fullscreen"
+					type="button"
+					aria-pressed="false"
+					title="整个页面进入全屏（Esc 退出）"
+					class="rounded-lg border border-line px-3 py-2 text-xs text-muted transition hover:border-dota hover:text-cream"
+				>
+					网页全屏
+				</button>
 				<button
 					id="room-copy"
 					type="button"
