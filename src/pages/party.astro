@@ -16,8 +16,9 @@ import { readSession } from '../lib/session';
  * 换成 Steam 身份——脚本一挂（比如 Vite 预构建 504）或者网慢一点，已登录的人就会看到
  * 一个「用 Steam 登录」按钮。现在服务端直接渲染对的那一版，顺带省掉一次请求。
  *
- * 这里的标记分成两块，靠 `style.display` 切换（不用 `hidden` 属性：带 `flex` 这类
- * display 工具类的元素会把它盖掉）：
+ * 这里的标记分成两块，显隐一律走脚本里的 `setVisible()`——它同时摘 `hidden` 属性和写内联
+ * `display`。**标记里不要用 `hidden` 属性或 `hidden` 类来隐藏这些块**：Tailwind 的 preflight
+ * 是 `[hidden] { display: none !important }`，`style.display` 清成空也露不出来（踩过）。
  * - `#party-setup`：身份 + 建房/加入 + 大厅列表；
  * - `#party-room`：房间内（队伍、roll、聊天）。
  * 队伍与成员卡由脚本生成（昵称是用户输入，必须走 textContent，不拼 HTML）。
@@ -127,7 +128,7 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 					}
 					{
 						!me && (
-						<details id="steamid-box" style="display:none" class="mt-3 rounded-xl border border-line bg-ink-2/60 px-3 py-2.5">
+						<details id="steamid-box" class="mt-3 rounded-xl border border-line bg-ink-2/60 px-3 py-2.5">
 							<summary class="cursor-pointer text-xs text-muted transition hover:text-cream">
 								不想登录？也可以填自己的 Steam ID，用你 Steam 的头像和昵称进来
 							</summary>
@@ -209,7 +210,7 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 							加入房间
 						</button>
 					</div>
-					<p data-form-error class="mt-3 hidden text-xs text-[#f0a08a]"></p>
+					<p data-form-error style="display:none" class="mt-3 text-xs text-[#f0a08a]"></p>
 				</form>
 
 				<form id="create-form" class="rounded-2xl border border-line bg-surface p-5" novalidate>
@@ -249,7 +250,7 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 							创建房间
 						</button>
 					</div>
-					<p data-form-error class="mt-3 hidden text-xs text-[#f0a08a]"></p>
+					<p data-form-error style="display:none" class="mt-3 text-xs text-[#f0a08a]"></p>
 				</form>
 			</div>
 
@@ -266,7 +267,8 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 		</div>
 
 		<!-- ==================================================== 房间区 -->
-		<div id="party-room" hidden class="space-y-5">
+		{/* 初值用 style 而不是 hidden 属性：见 partyRoom.ts 里 setVisible 的说明。 */}
+		<div id="party-room" style="display:none" class="space-y-5">
 			<div class="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
 				<div class="min-w-0 flex-1">
 					<h2 id="room-title" class="truncate font-display text-xl"></h2>
@@ -293,7 +295,7 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 				</button>
 			</div>
 
-			<p id="room-notice" hidden class="rounded-xl border px-4 py-2.5 text-sm" role="status" aria-live="polite"></p>
+			<p id="room-notice" style="display:none" class="rounded-xl border px-4 py-2.5 text-sm" role="status" aria-live="polite"></p>
 
 			<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
 				<div class="min-w-0 space-y-4">

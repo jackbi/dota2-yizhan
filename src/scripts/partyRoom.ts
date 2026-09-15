@@ -162,8 +162,16 @@ const dom = {
 	chatInput: $<HTMLInputElement>('#chat-input'),
 };
 
-/** 隐藏用 style 而不是 `hidden` 属性：带 `flex` 这类 display 工具类的元素会盖掉 `[hidden]`。 */
+/**
+ * 全站这一页的显隐都走这里，**属性和内联样式一起动**。
+ *
+ * Tailwind 的 preflight 是 `[hidden]:where(...) { display: none !important }`（v4 带
+ * `!important`）。所以只要元素还挂着 `hidden` 属性，把 `style.display` 清成空是**露不出来的**——
+ * 这里踩过一次：房间区和提示条在标记里带着 `hidden`，`showRoom()` 之后仍然不可见，
+ * 于是整个房间界面和所有报错都看不到，页面上什么反应都没有。
+ */
 function setVisible(node: HTMLElement, visible: boolean): void {
+	node.hidden = !visible;
 	node.style.display = visible ? '' : 'none';
 }
 

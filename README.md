@@ -256,6 +256,14 @@ P2P 房间不受重启影响，代价写在下文「[连不上的几种情况](#
 | `src/lib/partyLogic.ts` | 成员/队伍/roll 的**纯状态变换**，不碰 DOM 也不碰 WebRTC |
 | `scripts/partyLogic.check.ts` | 上面那一层的自检（队伍重排是最容易写错的部分） |
 | `scripts/steamId.check.ts` | 手填 Steam ID 的解析自检（错一位就查到别人头上） |
+| `scripts/lobbyRoom.check.ts` | 大厅房间进出时序的自检（见下面「大厅只加入一次」） |
+| `scripts/partyVisibility.check.ts` | 静态可见性自检：标记里不许有脚本摘不掉的隐藏手法 |
+
+**显隐一律走 `setVisible()`**（同时摘 `hidden` 属性、写内联 `display`）。标记里
+**不要**用 `hidden` 属性或独立的 `hidden` 类来藏要切换的元素：Tailwind v4 的 preflight 是
+`[hidden] { display: none !important }`，`hidden` 类也在 utility 层，两者都会让元素
+**永远露不出来**——房间区、提示条、Steam ID 折叠块都这么栽过一次，症状是「页面上什么都没有，
+也不报错」。最后那条自检就是为了挡住这一类。
 
 纯逻辑单独抽出来的理由很实际：分队规则里有几个必须收敛的分支（每队上限调小时超员的人
 去哪、房主手动加的队会不会被自动分队顺手删掉、最后一个队能不能删），脱离浏览器才验得动：

@@ -10,7 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "rebuild": "sh scripts/rebuild.sh",
-    "check": "node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/lobbyRoom.check.ts",
+    "check": "node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/lobbyRoom.check.ts && node --experimental-strip-types scripts/partyVisibility.check.ts",
     "astro": "astro"
   },
   "dependencies": {
