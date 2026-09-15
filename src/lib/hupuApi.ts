@@ -5,13 +5,18 @@ import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
 
 /**
- * 虎扑 DOTA2 区（`bbs.hupu.com/dota2`）的社区帖层。
+ * 虎扑 DOTA2 区（`bbs.hupu.com/dota2`）的社区帖层：列表 + 详情。
  *
  * **为什么是虎扑**：微博与贴吧都试过，不是解析难度的问题，是根本取不到数据——
  * 微博的内容接口全部要登录态（`m.weibo.cn` 的 container 接口回 302 到 "Sina Visitor System"，
  * `weibo.com/ajax/side/hotSearch` 直接 403），贴吧直连 403、走读取代理拿到的是「百度安全验证」。
- * 虎扑的版块列表直连就是服务端渲染好的 HTML，列表自带「回复/浏览」、作者与最后回复时间，
- * 是少数能稳定抓的中文社区。
+ * 虎扑的版块列表与帖子页直连就是服务端渲染好的 HTML，是少数能稳定抓的中文社区。
+ *
+ * **详情走 `__NEXT_DATA__`，不抠渲染后的 DOM。** 帖子页是 Next.js，`<script id="__NEXT_DATA__">`
+ * 里有一份完整的 JSON：主楼正文（HTML）、亮数、推荐数、浏览数、创建时间，以及
+ * `lights`（亮评，50 条）与 `replies`（分页回复，每页 20 条）。比在 HTML 上做正则稳得多，
+ * 也不受 class 名带哈希后缀的影响（页面上是 `post-content_bbs-post-content__cy7vN` 这种）。
+ * 所以详情页只用这一次请求就能出正文 + 亮评 + 第一页回复，**没有额外请求**。
  *
  * **与 NGA 的口径差异**（页面上有说明）：NGA 的 `replies` 是**时间窗内**的回复数，
  * 虎扑给的是**帖子总回复数**，两者不可直接比较。这里不做归一化、不编数据，
@@ -27,7 +32,7 @@ const CACHE_DIR = path.join(process.cwd(), '.cache', 'community');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
 const LIST_TTL_SECONDS = 30 * 60;
-/** 摘要只跟主楼，重新抓的代价是每个帖子一次请求，所以按小时级刷新。 */
+/** 详情（正文 + 亮评 + 第一页回复）一次抓齐，按小时级刷新。 */
 const DETAIL_TTL_SECONDS = 2 * 3600;
 /** 列表页有 49 条，按回复数取前若干条，与 NGA 那套「每窗 15 条」对齐。 */
 const THREADS_PER_BOARD = 20;
@@ -55,7 +60,45 @@ export interface HupuThread {
 	summary: string;
 }
 
-/** 帖子在虎扑的地址，用于署名跳转（本站不做虎扑的站内详情页）。 */
+/** 一层回复。虎扑不返回楼层号，所以站内只按时间顺序展示，不编号。 */
+export interface HupuReply {
+	pid: string;
+	author: string;
+	/** 亮数（虎扑的「赞」） */
+	lights: number;
+	/** 这条下面的二级回复数 */
+	replyNum: number;
+	/** 是不是楼主自己回的 */
+	isStarter: boolean;
+	createdAt: number;
+	/** 已经清洗过的正文 HTML */
+	content: string;
+}
+
+export interface HupuThreadDetail {
+	summary: string;
+	/** 主楼正文 HTML（已清洗） */
+	content: string;
+	/** 亮数 */
+	lights: number;
+	/** 推荐数 */
+	recommend: number;
+	/** 浏览数 */
+	read: number;
+	/** 总回复数，详情页的数字比列表页权威 */
+	replies: number;
+	/** 发帖时间，Unix 秒 */
+	createdAt: number;
+	repliedAt: number;
+	/** 亮评，按键（亮数）降序 */
+	hotReplies: HupuReply[];
+	/** 详情页第一页回复，按时间正序 */
+	floors: HupuReply[];
+	location: string;
+	topic: string;
+}
+
+/** 帖子在虎扑的地址，用于署名跳转。 */
 export function hupuThreadUrl(pid: string): string {
 	return `${ORIGIN}/${pid}.html`;
 }
@@ -192,10 +235,123 @@ async function loadBoard(): Promise<HupuThread[]> {
 	return value;
 }
 
-// ---------------------------------------------------------------- 主楼摘要
+// ---------------------------------------------------------------- 详情解析
 
-/** 主楼正文容器；列表页没有摘要，只能点进详情页取第一段。 */
+type Json = Record<string, unknown>;
+
+const asObject = (value: unknown): Json | null =>
+	value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : null;
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
+const asCount = (value: unknown, fallback = 0): number =>
+	typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+/** 虎扑的时间是毫秒 */
+const msToSec = (value: unknown): number => Math.floor(asCount(value) / 1000);
+
+/** 帖子页的关键数据都在这段 JSON 里；取不到就退回渲染后的 HTML（只剩正文）。 */
+const NEXT_DATA_RE = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/;
+/** 兜底路径：主楼正文容器（注意 class 名带哈希后缀，只能匹配前缀）。 */
 const MAIN_POST_RE = /<div class="thread-content-detail">/;
+
+/**
+ * 清洗虎扑正文。
+ *
+ * 拿到的就是 HTML（不是 BBCode），标签只有 `p / img / br / a / div / span`，
+ * 实测没有内联 style 与 class，所以只要去掉脚本、事件属性，并把相对地址补成绝对地址即可。
+ * 相对地址按 **bbs.hupu.com** 补，不能复用官方新闻那套（那是按 dota2.com.cn 补的）。
+ */
+function sanitizeHupuHtml(html: string): string {
+	return html
+		.replace(/<script[\s\S]*?<\/script>/gi, '')
+		.replace(/<style[\s\S]*?<\/style>/gi, '')
+		.replace(/<!--[\s\S]*?-->/g, '')
+		.replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
+		.replace(/\s(?:contenteditable|tabindex|draggable|data-imgid)\s*=\s*"[^"]*"/gi, '')
+		.replace(/(\s(?:src|href)\s*=\s*")([^"]*)"/gi, (_whole, prefix: string, url: string) => `${prefix}${resolveHupuUrl(url)}"`)
+		.replace(/<img\b(?![^>]*\bloading=)/gi, '<img loading="lazy"');
+}
+
+function resolveHupuUrl(url: string): string {
+	if (!url || /^(?:data:|mailto:|javascript:|#)/i.test(url)) return url;
+	if (url.startsWith('//')) return `https:${url}`;
+	if (url.startsWith('/')) return `${ORIGIN}${url}`;
+	return url;
+}
+
+function toReply(raw: unknown): HupuReply | null {
+	const row = asObject(raw);
+	if (!row) return null;
+	const content = sanitizeHupuHtml(asString(row.content));
+	if (!content) return null;
+	return {
+		pid: asString(row.pid),
+		author: asString(asObject(row.author)?.puname) || '虎扑用户',
+		lights: asCount(row.count),
+		replyNum: asCount(row.replyNum),
+		isStarter: row.isStarter === true,
+		createdAt: msToSec(row.createdAt),
+		content,
+	};
+}
+
+function parseDetail(html: string): HupuThreadDetail | null {
+	const raw = NEXT_DATA_RE.exec(html)?.[1];
+	if (!raw) return parseDetailFallback(html);
+	let root: Json | null = null;
+	try {
+		root = asObject(JSON.parse(raw));
+	} catch {
+		return parseDetailFallback(html);
+	}
+	const detail = asObject(asObject(asObject(root?.props)?.pageProps)?.detail);
+	const thread = asObject(detail?.thread);
+	if (!thread) return parseDetailFallback(html);
+
+	const content = sanitizeHupuHtml(asString(thread.content));
+	/** 亮评在接口里不是按键排序的（实测 1047 / 468 / 523…），这里自己排。 */
+	const hotReplies = asArray(detail?.lights)
+		.map(toReply)
+		.filter((reply): reply is HupuReply => reply !== null)
+		.sort((a, b) => b.lights - a.lights || a.createdAt - b.createdAt);
+	const floors = asArray(asObject(detail?.replies)?.list)
+		.map(toReply)
+		.filter((reply): reply is HupuReply => reply !== null);
+
+	return {
+		summary: summarizeArticle(content),
+		content,
+		lights: asCount(thread.lights),
+		recommend: asCount(thread.recommend),
+		read: asCount(thread.read),
+		replies: asCount(thread.replies),
+		createdAt: msToSec(thread.createdAt),
+		repliedAt: msToSec(thread.repliedAt),
+		hotReplies,
+		floors,
+		location: asString(thread.location),
+		topic: asString(asObject(thread.topic)?.name),
+	};
+}
+
+/** 结构变了（或接口没了）时的兜底：从渲染后的 DOM 里只救回主楼正文。 */
+function parseDetailFallback(html: string): HupuThreadDetail | null {
+	const content = sanitizeHupuHtml(extractMainPost(html));
+	if (!content) return null;
+	return {
+		summary: summarizeArticle(content),
+		content,
+		lights: 0,
+		recommend: 0,
+		read: 0,
+		replies: 0,
+		createdAt: 0,
+		repliedAt: 0,
+		hotReplies: [],
+		floors: [],
+		location: '',
+		topic: '',
+	};
+}
 
 /** 按 div 嵌套深度配对闭合标签，取出主楼正文 HTML。 */
 function extractMainPost(html: string): string {
@@ -216,17 +372,32 @@ function extractMainPost(html: string): string {
 	return html.slice(bodyStart);
 }
 
-async function loadSummary(pid: string): Promise<string | null> {
-	const key = `hupu-thread-v1-${pid}`;
-	const cached = await readCache<{ summary: string }>(key);
-	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return cached.value.summary;
-	if (OFFLINE) return cached?.value.summary ?? null;
+const detailCache = new Map<string, Promise<HupuThreadDetail | null>>();
+
+/** 帖子详情，按 pid 记忆：列表页的摘要与详情页共用同一次请求。 */
+export function fetchHupuThreadDetail(pid: string): Promise<HupuThreadDetail | null> {
+	let pending = detailCache.get(pid);
+	if (!pending) {
+		pending = loadDetail(pid);
+		detailCache.set(pid, pending);
+	}
+	return pending;
+}
+
+async function loadDetail(pid: string): Promise<HupuThreadDetail | null> {
+	// 键里的版本号跟解析格式绑定：清洗规则一变就得换，否则旧结果会一直吃到过期。
+	const key = `hupu-thread-v2-${pid}`;
+	const cached = await readCache<HupuThreadDetail>(key);
+	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return cached.value;
+	if (OFFLINE) return cached?.value ?? null;
 
 	const html = await fetchHtml(hupuThreadUrl(pid));
-	if (html === null) return cached?.value.summary ?? null;
-	const summary = summarizeArticle(extractMainPost(html));
-	await writeCache(key, { summary });
-	return summary;
+	if (html === null) return cached?.value ?? null;
+	const detail = parseDetail(html);
+	if (detail === null) return cached?.value ?? null;
+
+	await writeCache(key, detail);
+	return detail;
 }
 
 // ---------------------------------------------------------------- 对外接口
@@ -244,9 +415,15 @@ async function loadBoardWithSummaries(): Promise<HupuThread[]> {
 	/** 摘要"抓失败"（网络不通、页面结构变了）与"主楼本来就没文字"是两回事，汇总里分开报。 */
 	let failed = 0;
 	await mapLimit(threads, FETCH_CONCURRENCY, async (thread) => {
-		const summary = await loadSummary(thread.pid);
-		if (summary === null) failed += 1;
-		thread.summary = summary ?? '';
+		const detail = await fetchHupuThreadDetail(thread.pid);
+		if (detail === null) {
+			failed += 1;
+			return;
+		}
+		thread.summary = detail.summary;
+		// 详情页的数字比列表页权威（列表页只给它在榜上那一条的计数），顺手对齐。
+		if (detail.replies > 0) thread.replies = detail.replies;
+		if (detail.read > 0) thread.views = detail.read;
 	});
 
 	const withSummary = threads.filter((thread) => thread.summary).length;
@@ -255,7 +432,7 @@ async function loadBoardWithSummaries(): Promise<HupuThread[]> {
 		'hupu',
 		'虎扑 DOTA2 区',
 		state,
-		`${threads.length} 个帖子，摘要抓取失败 ${failed} 个，${withSummary} 个有文字摘要，联网抓取 ${networkFetches} 次`,
+		`${threads.length} 个帖子，详情抓取失败 ${failed} 个，${withSummary} 个有文字摘要，联网抓取 ${networkFetches} 次`,
 	);
 	return threads;
 }

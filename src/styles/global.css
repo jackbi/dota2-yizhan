@@ -161,32 +161,38 @@ body {
 	max-width: 100%;
 }
 
-/* NGA 帖子正文，同样由 set:html 注入，规则必须放在全局样式里。 */
-.nga-post {
+/* 帖子正文（NGA 的 BBCode 渲染结果与虎扑的 HTML 共用一套），由 set:html 注入，规则必须放在全局样式里。 */
+.nga-post,
+.hupu-post {
 	color: var(--color-cream);
 	line-height: 1.85;
 	overflow-wrap: break-word;
 }
-.nga-post strong {
+.nga-post,
+.hupu-post strong {
 	color: var(--color-cream);
 	font-weight: 600;
 }
-.nga-post del {
+.nga-post,
+.hupu-post del {
 	color: var(--color-faint);
 }
-.nga-post a {
+.nga-post,
+.hupu-post a {
 	color: var(--color-dota-light);
 	text-decoration: underline;
 	text-underline-offset: 2px;
 }
-.nga-post img {
+.nga-post,
+.hupu-post img {
 	max-width: 100%;
 	height: auto;
 	border-radius: 0.75rem;
 	border: 1px solid var(--color-line);
 	margin: 0.5rem 0;
 }
-.nga-post blockquote {
+.nga-post,
+.hupu-post blockquote {
 	background: var(--color-surface-2);
 	border-left: 3px solid var(--color-line);
 	border-radius: 0 0.5rem 0.5rem 0;

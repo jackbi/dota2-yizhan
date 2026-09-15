@@ -54,7 +54,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | 目录 | 内容 | 缓存时长 |
 | --- | --- | --- |
 | `.cache/news/` | dota2.com.cn 官方新闻列表与正文 | 列表 30 分钟，正文永久 |
-| `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与主楼摘要 | 列表 30 分钟，帖子 2 小时 – 7 天 |
+| `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与帖子详情 | 列表 30 分钟，帖子 2 小时 – 7 天 |
 | `.cache/reddit/` | r/DotA2 热帖 | 1 小时 |
 | `.cache/opendota/` | 队伍索引、职业比赛、阵容名单 | 6 小时 – 7 天 |
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
@@ -248,11 +248,17 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
   列表给的是 `回复 / 浏览`（`post-datum`）、作者、`MM-DD HH:mm`。
 - **时间没有年份**，按 **UTC+8** 显式解析：虎扑是北京时间，构建机时区不定，用本地时区解会让
   `lastReplyAt` 随构建设备漂移；解出来比"现在"晚，就退回上一年。
-- 摘要要另抓详情页（列表没有摘要），主楼在 `<div class="thread-content-detail">`，
-  按 div 嵌套深度配对后交给 `summarizeArticle` 取首段；抓不到就只显示标题，不编内容。
-  列表缓存 30 分钟、摘要 2 小时，一轮构建约 21 次请求。
-- 虎扑**不做站内详情页**，卡片直接跳原帖（`target="_blank"` + `rel="noopener noreferrer"`）；
-  NGA 仍然是站内 `/community/nga/[tid]`。
+- 摘要与详情走**同一次请求**：帖子页是 Next.js，`<script id="__NEXT_DATA__">` 里有一份完整的
+  JSON（主楼正文 HTML、亮数、推荐数、浏览数、创建时间、50 条亮评、第一页 20 条回复）。
+  比抠渲染后的 DOM 稳得多——页面上的 class 名带哈希后缀（`post-content_bbs-post-content__cy7vN`），
+  正则随时会失效；结构真变了还有一条兜底：从 `<div class="thread-content-detail">` 里救回主楼正文。
+  列表缓存 30 分钟、详情 2 小时（键带版本号 `hupu-thread-v2-`，解析规则一变就要换），一轮构建约 21 次请求。
+- **两个来源都有站内详情页**：虎扑走 `/community/hupu/[pid]`（`src/pages/community/hupu/[pid].astro`），
+  镜像主楼正文、亮评（前 10）与第一页回复（10 条，和亮评去重），其余留给原帖外链。
+  正文是 HTML 不是 BBCode，所以走 `sanitizeHupuHtml`（去脚本与事件属性、相对地址按 `bbs.hupu.com` 补全），
+  样式与 NGA 的 `.nga-post` 共用（`.hupu-post`）。
+- 亮评在接口里**不是按键排序的**（实测 1047 / 468 / 523…），站内自己按亮数重排。
+- 虎扑**没有楼层号**（接口不返回），所以站内只按时间顺序展示，不编 `#N 楼`。
 
 **微博与贴吧为什么不在**（都试过，不是解析问题，是取不到数据）：
 

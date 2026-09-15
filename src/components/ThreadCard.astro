@@ -10,14 +10,10 @@ interface Props {
 }
 
 const { post, nowSec } = Astro.props;
-
-/** 虎扑没有站内详情页，直接跳原帖；外链开新标签，并给读屏补一句说明。 */
-const linkAttrs = post.external ? { target: '_blank', rel: 'noopener noreferrer' } : {};
 ---
 
 <a
 	href={post.href}
-	{...linkAttrs}
 	class="group flex h-full flex-col rounded-2xl border border-line bg-surface p-4 transition hover:border-dota/40 hover:bg-surface-2"
 >
 	<div class="flex items-start gap-3">
@@ -42,7 +38,6 @@ const linkAttrs = post.external ? { target: '_blank', rel: 'noopener noreferrer'
 				</>
 			) : null
 		}
-		{post.external ? <span class="sr-only">（在新标签页打开虎扑原帖）</span> : null}
 		<svg class="ml-auto h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-gold" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 			<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 		</svg>

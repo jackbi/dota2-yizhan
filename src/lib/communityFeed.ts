@@ -1,6 +1,6 @@
 import type { CommunityThread, HotWindowDays } from './ngaApi';
 import { HOT_WINDOWS, fetchCommunityThreads } from './ngaApi';
-import { fetchHupuThreads, hupuThreadUrl } from './hupuApi';
+import { fetchHupuThreads } from './hupuApi';
 
 /**
  * 社区版块的多来源聚合层。
@@ -35,9 +35,8 @@ export interface CommunityPost {
 	summary: string;
 	/** 该帖归属哪些时间窗 */
 	windows: HotWindowDays[];
-	/** NGA 走站内详情页，虎扑直接跳原帖 */
+	/** 站内详情页地址：两个来源都镜像到 `/community/...`，原帖外链在详情页里给 */
 	href: string;
-	external: boolean;
 }
 
 /**
@@ -72,7 +71,6 @@ export async function fetchCommunityFeed(): Promise<CommunityPost[]> {
 				summary: thread.summary,
 				windows: thread.windows,
 				href: `/community/nga/${thread.tid}`,
-				external: false,
 			}),
 		),
 		...hupu
@@ -86,8 +84,7 @@ export async function fetchCommunityFeed(): Promise<CommunityPost[]> {
 				lastReplyAt: thread.lastReplyAt,
 				summary: thread.summary,
 				windows: windowsOf(thread.lastReplyAt, nowSec),
-				href: hupuThreadUrl(thread.pid),
-				external: true,
+				href: `/community/hupu/${thread.pid}`,
 			}))
 			// 超过最长的窗口（30 天）没人回，就不算热帖了。
 			.filter((post) => post.windows.length > 0),
