@@ -60,7 +60,7 @@ async function gql<T>(document: string, variables: Record<string, unknown>): Pro
 				},
 				body: JSON.stringify({ query: document, variables }),
 			});
-			// 429 与 5xx 值得重试；Cloudflare 挑战页同样是 403 + text/html（随机出现）。
+			// 429 与 5xx 值得重试；403 要读完 body 才能分辨原因（见下）。
 			if (res.status === 429 || res.status >= 500) {
 				lastError = `HTTP ${res.status}`;
 				continue;
@@ -73,11 +73,11 @@ async function gql<T>(document: string, variables: Record<string, unknown>): Pro
 				if (body.includes('different IP Addresses')) {
 					throw new StratzError('STRATZ 拒绝了这个出口 IP：同一个 token 只能从固定 IP 调用，过一会儿重试可能恢复');
 				}
-				// Cloudflare 挑战页同样是 403，但它返回 HTML 且随机出现，值得重试。
-				if ((res.headers.get('content-type') ?? '').includes('text/html')) {
-					lastError = 'Cloudflare 挑战页';
-					continue;
-				}
+				// 其余 403 一律按「可能短暂」重试：挑战页换着花样返回 HTML 与纯文本，只认
+				// content-type 会把一部分挑战页当成硬失败。但重试耗尽的文案要保留原始状态码，
+				// 不能统一说成挑战页——否则 token 失效这类硬失败会被描述成「稍后再试」。
+				lastError = (res.headers.get('content-type') ?? '').includes('text/html') ? 'Cloudflare 挑战页' : `HTTP ${res.status}`;
+				continue;
 			}
 			if (!res.ok) throw new StratzError(`STRATZ 返回 HTTP ${res.status}`);
 			const body = (await res.json()) as GraphQLBody<T>;
