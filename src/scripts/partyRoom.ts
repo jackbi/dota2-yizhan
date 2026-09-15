@@ -654,7 +654,7 @@ function startHostSilenceTimer(): void {
 	hostSilenceTimer = window.setTimeout(() => {
 		if (sawHostData || !roomCode) return;
 		setNotice(
-			'还没收到房主的响应。检查房间码和密码是否对，也可能是双方网络都不允许直连——换网络（比如手机热点）再试一次。',
+			'一直没收到房主的响应。按可能性排查：① 密码或房间码抄错了——写错时房主那边完全看不到你的请求，所以不会有人来告诉你；② 双方网络不允许直连。先核一遍密码和房间码，再换个网络（比如手机热点）试。',
 			'warn',
 			true,
 		);
@@ -680,14 +680,23 @@ function waitForHost(): void {
 }
 
 function onJoinError(error: string): void {
-	// Trystero 的两种密码失败文案：信令解密失败与握手 challenge 失败。
+	/*
+	 * 已经有确切诊断了，就别再让「等不到房主」那条超时提示把它盖掉。
+	 *
+	 * 这里踩过：密码输错时 joiner 一两秒内就会收到
+	 * `incorrect room password when decrypting offer`，页面先显示「密码不对」，
+	 * 但 10 秒后 silence 定时器照样触发，把这条精确提示覆盖成「也可能是网络……换网络再试」，
+	 * 于是「密码错」被读成了「网络错」。
+	 */
+	window.clearTimeout(hostSilenceTimer);
+	// Trystero 的密码失败文案都带 password：解密 SDP 失败与握手 challenge 失败。
 	const passwordProblem = /password/i.test(error);
 
 	// 房主看到这条，说明是**别人**没进来（他自己的连接是好的）。
 	if (isHost) {
 		setNotice(
 			passwordProblem
-				? '有人想加入但密码不对，没能进来。把房间码和密码再对一遍。'
+				? '有人想加入，但密码不对，被挡在门外了。把房间码和密码再对一遍给他。'
 				: `有人想加入，但你们之间建不起直连（${error}）。多人房间里这通常是对面网络受限。`,
 			'warn',
 		);
@@ -703,8 +712,8 @@ function onJoinError(error: string): void {
 
 	setNotice(
 		passwordProblem
-			? '进不去：房间密码不对。问一下房主，或者确认房间码没报错。'
-			: `进不去：和房间里的人建立不了直连（${error}）。多半是网络限制，换网络再试；同一个 WiFi 下的两个人通常没问题。`,
+			? '密码不对：这个房间的密码和房主设的不一样。房间里的人收不到你的加入请求，所以不会有人来提醒你——回去问一下房主，顺便确认房间码没念错。'
+			: `和房间里的人建立不了直连（${error}）。这是网络限制，不是密码问题：同一个 WiFi 下的两个人通常能连上，否则换个网络（比如手机热点）再试。`,
 		'error',
 		true,
 	);
