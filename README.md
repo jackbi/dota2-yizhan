@@ -193,6 +193,23 @@ iframe 里的文档请求直接被拒（同样是 `net::ERR_BLOCKED_BY_RESPONSE`
 iframe 只带 `allow="… fullscreen …"`，不再叠 `allowfullscreen`：Chrome 会为两者并存报一条
 "Allow attribute will take precedence" 警告。
 
+### 分屏页的格子尺寸
+
+墙面默认等分（原来就是这样），列宽行高可以拖格子之间的**分隔条**改：`liveWall.ts` 的 `applyTracks()`
+把比例写成内联的 `grid-template-*`，`drawSplitters()` 在 gap 里放浮层按钮。几条踩过的坑：
+
+- **排列必须从 Tailwind 类名搬进 JS。** 内联样式盖掉媒体查询，继续用 `sm:grid-cols-2`
+  会出现"窄屏还是三列"。现在断点判断在 `arrangement()` 里，取值与原来那套类名一一对应。
+- **列宽用 fr，行高看情况。** 非全屏时墙面高度是内容撑出来的，`grid-template-rows` 写 fr 会被当成
+  auto——实测行高塌成 56px，所以按「等分行高 × 行数」折成 px；比例都是 1 时与原来的 `aspect-video`
+  完全一致（16:9）。全屏时面板 fixed 铺满视口，高度确定，才用 fr 跟着视口长。
+- **分隔条元素要复用，不能每次重建。** `setPointerCapture` 打在元素上，元素一被换掉捕获就没了，
+  拖到一半会断。拖动必须用指针捕获：横穿 iframe 时父页面收不到 `pointermove`。
+- **`#wall` 外面包了一层 `#wall-box`**（浮层要有定位祖先），全屏撑高的 flex 项因此变成了那一层，
+  `.wall-immersive #wall { flex: 1 }` 得改成给 `#wall-box`，否则全屏后行高只剩几十像素。
+- 比例按格数分别存（`ratios: { "4": { c, r } }`），换了断点列数对不上就按比例重采样；
+  「均分」按钮删掉当前格数那一份。方向键与拖动等价，分隔条是 `role="separator"`。
+
 **房间列表**由 `src/lib/roomList.ts` 在构建期抓，两个来源都是平台给分区页用的那份数据：
 
 - 斗鱼 `https://www.douyu.com/g_DOTA2`：房间列表以 JSON 内嵌在 HTML 里

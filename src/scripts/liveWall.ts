@@ -14,6 +14,8 @@ import type { Platform, RoomRef } from '../data/types';
  * - **拖拽必须有等价操作。** 每行都有「加入」按钮（键盘/触屏），拖拽只是快捷方式。
  * - **iframe 只在用户明确要播时才创建。** 一个斗鱼房间页是很重的页面，9 路同时加载
  *   足以拖垮浏览器，所以恢复历史时只还原排布、不自动播放。
+ * - **格子尺寸可调。** 列宽行高不再是写死的等分，拖动格子之间的分隔条即可改（见 applyTracks），
+ *   按格数分别记住；不动它就是等分，也就是原来的样子。
  */
 
 interface Payload {
@@ -36,6 +38,14 @@ interface State {
 	 * 给每格一组上下按钮自己对齐。
 	 */
 	cropOffsets: Record<string, number>;
+	/**
+	 * 列宽 / 行高比例，**按格数分别存**（key 是格数）。
+	 *
+	 * 存的是比例而不是像素：同一套比例在网页全屏、浏览器全屏、拉窗口后都要能跟着变，
+	 * 存 px 一换视口就错位。数组长度是写入时的列数 / 行数——断点变了（比如 9 格从两列变三列）
+	 * 长度就对不上，那时按比例重采样（见 resample），形状大致保留。
+	 */
+	ratios: Record<string, { c: number[]; r: number[] }>;
 }
 
 const LAYOUTS = [1, 2, 4, 6, 9];
@@ -112,26 +122,40 @@ function scheduleAnchor(frame: HTMLIFrameElement, base: string, anchor: string):
 	}, 6000);
 }
 
-/** Tailwind 只认完整字面量，所以这里必须写全，不能拼字符串。 */
-const GRID_CLASS: Record<number, string> = {
-	1: 'grid-cols-1',
-	2: 'grid-cols-1 sm:grid-cols-2',
-	4: 'grid-cols-1 sm:grid-cols-2',
-	6: 'grid-cols-2 xl:grid-cols-3',
-	9: 'grid-cols-2 lg:grid-cols-3',
-};
+/** 拖动分隔条时单条轨道的下限：比这更窄 / 更矮的格子放直播没意义。 */
+const MIN_COL_PX = 120;
+const MIN_ROW_PX = 110;
+/** 分隔条的命中宽度（px）与方向键每次的调整量（px）。 */
+const SPLIT_HIT_PX = 14;
+const KEY_STEP_PX = 20;
+
+/** 比例数组归一化到和 1，顺手把脏数据（0、NaN、负数）当 1 处理。 */
+function normalize(list: number[]): number[] {
+	const clean = list.map((v) => (Number.isFinite(v) && v > 0 ? v : 1));
+	const sum = clean.reduce((a, b) => a + b, 0) || clean.length || 1;
+	return clean.map((v) => v / sum);
+}
 
 /**
- * 沉浸模式（网页全屏 / 浏览器全屏）下的网格：行列数写死并各自平分高度，
- * 格子跟着视口长，不再按 16:9 留黑边。手机上窄，6/9 格退回两列多行。
+ * 把存下来的比例重采样到新的轨道数。
+ *
+ * 断点一变列数就会变（9 格在两列断点是 2×5、三列断点是 3×3），存的比例长度对不上。
+ * 直接丢弃会让用户拉过的窗口在旋转屏幕后白费，所以按比例分桶取平均，形状大致留住。
  */
-const IMMERSIVE_GRID_CLASS: Record<number, string> = {
-	1: 'grid-cols-1 grid-rows-1',
-	2: 'grid-cols-2 grid-rows-1',
-	4: 'grid-cols-2 grid-rows-2',
-	6: 'grid-cols-2 grid-rows-3 sm:grid-cols-3 sm:grid-rows-2',
-	9: 'grid-cols-2 grid-rows-5 sm:grid-cols-3 sm:grid-rows-3',
-};
+function resample(src: number[] | undefined, len: number): number[] {
+	if (!src || src.length === 0) return Array(len).fill(1 / Math.max(1, len));
+	if (src.length === len) return normalize(src.slice());
+	const out: number[] = [];
+	for (let i = 0; i < len; i++) {
+		const from = Math.floor((i * src.length) / len);
+		const to = Math.max(from + 1, Math.ceil(((i + 1) * src.length) / len));
+		const end = Math.min(to, src.length);
+		let sum = 0;
+		for (let j = from; j < end; j++) sum += src[j];
+		out.push(sum / Math.max(1, end - from));
+	}
+	return normalize(out);
+}
 
 const STATE_LABEL: Record<string, string> = {
 	live: '直播中',
@@ -155,6 +179,9 @@ const browserFullBtn = document.getElementById('wall-browser-full') as HTMLButto
 if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	const rooms = new Map<string, RoomRef>();
 	for (const r of [...(payload.ob ?? []), ...(payload.popular ?? [])]) rooms.set(r.key, r);
+
+	/** 分隔条按 `c:1`（第 1 列右侧）/ `r:2`（第 2 行下方）建一次就复用，拖动中被删掉会掉指针捕获。 */
+	const splitters = new Map<string, HTMLElement>();
 
 	let query = '';
 	let filter = 'all';
@@ -226,6 +253,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			manual: [],
 			crop: false,
 			cropOffsets: {},
+			ratios: {},
 		};
 		try {
 			const raw = localStorage.getItem(STORAGE_KEY);
@@ -242,10 +270,32 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				const n = Number(value);
 				if (Number.isFinite(n) && n !== 0) cropOffsets[key] = Math.max(-600, Math.min(600, n));
 			}
-			return { layout, slots, manual, crop: parsed.crop === true, cropOffsets };
+			return { layout, slots, manual, crop: parsed.crop === true, cropOffsets, ratios: sanitizeRatios(parsed.ratios) };
 		} catch {
 			return fallback;
 		}
+	}
+
+	/**
+	 * 只认格数作 key、正数作比例，长度按最多格数截断。
+	 * 长度和当前列数 / 行数不一致是正常的——存的时候是一种断点，读的时候可能是另一种。
+	 */
+	function sanitizeRatios(raw: unknown): Record<string, { c: number[]; r: number[] }> {
+		const out: Record<string, { c: number[]; r: number[] }> = {};
+		if (!raw || typeof raw !== 'object') return out;
+		const clean = (list: unknown): number[] => {
+			if (!Array.isArray(list)) return [];
+			const nums = list.filter((v): v is number => typeof v === 'number' && Number.isFinite(v) && v > 0);
+			return nums.length > 0 ? normalize(nums.slice(0, MAX_SLOTS)) : [];
+		};
+		for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+			if (!LAYOUTS.includes(Number(key))) continue;
+			const entry = value as { c?: unknown; r?: unknown } | null;
+			const c = clean(entry?.c);
+			const r = clean(entry?.r);
+			if (c.length > 0 || r.length > 0) out[key] = { c, r };
+		}
+		return out;
 	}
 
 	function save(): void {
@@ -380,15 +430,263 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 
 	function renderWall(): void {
 		const n = state.layout;
-		wallEl!.className = `grid gap-3 ${gridClass(n)}`;
+		// 列宽行高全部走内联的 grid-template-*（见 applyTracks），类名只留布局骨架。
+		wallEl!.className = 'grid gap-3';
 		wallEl!.innerHTML = Array.from({ length: n }, (_, i) => tileHtml(i)).join('');
 		layoutEl!.querySelectorAll<HTMLButtonElement>('button').forEach((b) => {
 			b.setAttribute('aria-pressed', String(Number(b.dataset.layout) === n));
 		});
 		syncCropControls();
+		applyTracks();
 		const used = state.slots.slice(0, n).filter(Boolean).length;
 		const status = document.getElementById('wall-status');
 		if (status) status.textContent = `墙上 ${used} / ${n} 格`;
+	}
+
+	// ------------------------------------------------------------ 格子尺寸
+
+	/**
+	 * 墙面排成几列几行。
+	 *
+	 * 列宽行高改由 JS 写成内联的 `grid-template-*`（见 applyTracks），排列就不能再交给 Tailwind 的
+	 * `sm:grid-cols-2` 这类类名——内联样式会盖掉媒体查询，窄屏再也不会换列。所以排列一并搬到这里，
+	 * 断点值保持原样（sm 640 / lg 1024 / xl 1280），只是从类名换成表达式。
+	 *
+	 * 沉浸模式（网页全屏 / 浏览器全屏）下格子跟着视口长，不再按 16:9 留黑边；
+	 * 手机上窄，6/9 格退回两列多行。
+	 */
+	function arrangement(n: number): { cols: number; rows: number } {
+		const w = window.innerWidth;
+		const sm = w >= 640;
+		const lg = w >= 1024;
+		const xl = w >= 1280;
+		let cols: number;
+		if (immersive()) {
+			cols = n === 1 ? 1 : n === 2 || n === 4 ? 2 : sm ? 3 : 2;
+		} else if (n === 1) {
+			cols = 1;
+		} else if (n === 2 || n === 4) {
+			cols = sm ? 2 : 1;
+		} else if (n === 6) {
+			cols = xl ? 3 : 2;
+		} else {
+			cols = lg ? 3 : 2;
+		}
+		return { cols, rows: Math.ceil(n / cols) };
+	}
+
+	function gridGap(): number {
+		return parseFloat(getComputedStyle(wallEl!).columnGap) || 0;
+	}
+
+	/** 当前列数下每格的宽度；单列时就是墙面的宽度。 */
+	function cellWidth(cols: number): number {
+		return Math.max(80, (wallEl!.clientWidth - gridGap() * (cols - 1)) / cols);
+	}
+
+	/** 等分时每行的高度：格子是 16:9，所以等于该行列宽 × 9/16（下限免得窄屏上塌成一条）。 */
+	function rowBasePx(cols: number): number {
+		return Math.max(120, (cellWidth(cols) * 9) / 16);
+	}
+
+	/** 取第 n 套格数的比例；列数 / 行数对不上（换过断点）就重采样。 */
+	function ratiosOf(n: number, cols: number, rows: number): { c: number[]; r: number[] } {
+		const stored = state.ratios[String(n)];
+		return { c: resample(stored?.c, cols), r: resample(stored?.r, rows) };
+	}
+
+	/**
+	 * 一个「比例单位」折算成多少 px——比例和总是 1，所以它就是整条可用轨道空间。
+	 *
+	 * 行高分两种：沉浸模式下面板 fixed 铺满视口，墙面高度确定，直接用墙面高度；
+	 * 非沉浸模式下墙面高度是内容撑出来的，得回到「等分时每行多高 × 行数」这个总量（见 rowBasePx）。
+	 */
+	function unitPx(kind: 'c' | 'r', cols: number, rows: number): number {
+		const gap = gridGap();
+		if (kind === 'c') return Math.max(1, wallEl!.clientWidth - gap * (cols - 1));
+		if (immersive()) return Math.max(1, wallEl!.clientHeight - gap * (rows - 1));
+		return Math.max(1, rowBasePx(cols) * rows);
+	}
+
+	/**
+	 * 把比例写成 `grid-template-columns` / `grid-template-rows`。
+	 *
+	 * 列宽用 fr：容器宽度确定，fr 按比例分且把 gap 算在里面（用百分比会连 gap 一起超出去）。
+	 * 行高在全屏时同样用 fr 跟着视口长；非全屏时容器高度不确定，fr 会被当成 auto
+	 * （实测行高塌成标题条那么高），所以按等分高度折成 px——比例都是 1 时与原来的 16:9 一模一样。
+	 */
+	function applyTracks(): void {
+		const { cols, rows } = arrangement(state.layout);
+		const ratio = ratiosOf(state.layout, cols, rows);
+		wallEl!.style.gridTemplateColumns = ratio.c.map((v) => `${v}fr`).join(' ');
+		if (immersive()) {
+			wallEl!.style.gridTemplateRows = ratio.r.map((v) => `${v}fr`).join(' ');
+		} else {
+			const total = rowBasePx(cols) * rows;
+			wallEl!.style.gridTemplateRows = ratio.r.map((v) => `${(v * total).toFixed(1)}px`).join(' ');
+		}
+		drawSplitters(cols, rows);
+		// 格子尺寸变了，取景的比例也得跟着重算，否则已经在播的画面会错位。
+		refitCrops();
+	}
+
+	/** `c:1` 是第 1 列与第 2 列之间的竖条，`r:2` 是第 2 行与第 3 行之间的横条。 */
+	function splitParts(key: string): { kind: 'c' | 'r'; index: number } {
+		return { kind: key[0] === 'r' ? 'r' : 'c', index: Number(key.slice(2)) };
+	}
+
+	/** 分隔条两侧的格子：竖条取右侧那一列的第一格，横条取下方那一行的第一格。 */
+	function splitAnchor(key: string, cols: number): HTMLElement | null {
+		const { kind, index } = splitParts(key);
+		const slot = kind === 'c' ? index : index * cols;
+		return wallEl!.querySelector<HTMLElement>(`[data-slot="${slot}"]`);
+	}
+
+	/**
+	 * 画 / 挪分隔条。
+	 *
+	 * 元素按 key 复用，拖动中**绝不能重建**：`setPointerCapture` 捕获在元素上，元素一被换掉捕获
+	 * 就没了，拖到一半直接断。所以这里只补齐缺的、删掉多的，位置每次重算。
+	 */
+	function drawSplitters(cols: number, rows: number): void {
+		const box = document.getElementById('wall-splitters');
+		if (!box) return;
+		const wanted = new Set<string>();
+		for (let i = 1; i < cols; i++) wanted.add(`c:${i}`);
+		for (let j = 1; j < rows; j++) wanted.add(`r:${j}`);
+		for (const [key, el] of splitters) {
+			if (!wanted.has(key)) {
+				el.remove();
+				splitters.delete(key);
+			}
+		}
+		for (const key of wanted) {
+			let el = splitters.get(key);
+			if (!el) {
+				const { kind, index } = splitParts(key);
+				const vertical = kind === 'c';
+				el = document.createElement('button');
+				el.type = 'button';
+				el.className = `wall-splitter wall-splitter-${vertical ? 'c' : 'r'}`;
+				el.dataset.split = key;
+				el.setAttribute('role', 'separator');
+				el.setAttribute('aria-orientation', vertical ? 'vertical' : 'horizontal');
+				el.setAttribute('aria-valuemin', '0');
+				el.setAttribute('aria-valuemax', '100');
+				el.setAttribute(
+					'aria-label',
+					vertical ? `调整第 ${index} 列与第 ${index + 1} 列的宽度` : `调整第 ${index} 行与第 ${index + 1} 行的高度`,
+				);
+				el.addEventListener('pointerdown', (e) => startDrag(e, el!));
+				el.addEventListener('keydown', onSplitterKey);
+				box.append(el);
+				splitters.set(key, el);
+			}
+			positionSplitter(el, key, cols, rows);
+		}
+	}
+
+	function positionSplitter(el: HTMLElement, key: string, cols: number, rows: number): void {
+		const { kind, index } = splitParts(key);
+		const tile = splitAnchor(key, cols);
+		if (!tile) return;
+		const offset = gridGap() / 2 + SPLIT_HIT_PX / 2;
+		const wallRect = wallEl!.getBoundingClientRect();
+		const rect = tile.getBoundingClientRect();
+		if (kind === 'c') {
+			el.style.left = `${rect.left - wallRect.left - offset}px`;
+			el.style.width = `${SPLIT_HIT_PX}px`;
+			el.style.top = '0px';
+			el.style.height = `${wallEl!.clientHeight}px`;
+		} else {
+			el.style.top = `${rect.top - wallRect.top - offset}px`;
+			el.style.height = `${SPLIT_HIT_PX}px`;
+			el.style.left = '0px';
+			el.style.width = `${wallEl!.clientWidth}px`;
+		}
+		const ratio = ratiosOf(state.layout, cols, rows);
+		const list = kind === 'c' ? ratio.c : ratio.r;
+		const share = list[index - 1] + list[index];
+		el.setAttribute('aria-valuenow', String(Math.round((list[index - 1] / (share || 1)) * 100)));
+	}
+
+	/**
+	 * 挪一条分隔条：两侧轨道一个涨一个跌，总尺寸不变（等于"重新分"而不是"整体放大"）。
+	 *
+	 * 下限取 `MIN_*_PX`，空间实在不够时退到该对的四分之一——手机上两列本来就只有 150px 宽，
+	 * 按固定的 120px 卡死会一点都拖不动。
+	 */
+	function adjust(kind: 'c' | 'r', index: number, deltaPx: number): void {
+		const { cols, rows } = arrangement(state.layout);
+		const ratio = ratiosOf(state.layout, cols, rows);
+		const list = kind === 'c' ? ratio.c : ratio.r;
+		const unit = unitPx(kind, cols, rows);
+		const pair = list[index - 1] + list[index];
+		const min = Math.min((kind === 'c' ? MIN_COL_PX : MIN_ROW_PX) / unit, pair / 4);
+		const lo = min - list[index - 1];
+		const hi = list[index] - min;
+		const d = lo > hi ? pair / 2 - list[index - 1] : Math.min(hi, Math.max(lo, deltaPx / unit));
+		list[index - 1] += d;
+		list[index] -= d;
+		state.ratios[String(state.layout)] = ratio;
+		applyTracks();
+	}
+
+	function startDrag(e: PointerEvent, el: HTMLElement): void {
+		const key = el.dataset.split;
+		if (!key || e.button !== 0) return;
+		e.preventDefault();
+		const { kind, index } = splitParts(key);
+		// 指针捕获必须打在这个元素上：拖动会横穿 iframe，父页面收不到 pointermove，
+		// 捕获之后事件才会一直回投给它。
+		el.setPointerCapture(e.pointerId);
+		el.dataset.active = '1';
+		document.documentElement.style.cursor = kind === 'c' ? 'col-resize' : 'row-resize';
+		document.documentElement.style.userSelect = 'none';
+		let last = kind === 'c' ? e.clientX : e.clientY;
+		const move = (ev: PointerEvent) => {
+			const now = kind === 'c' ? ev.clientX : ev.clientY;
+			if (now === last) return;
+			adjust(kind, index, now - last);
+			last = now;
+		};
+		const end = () => {
+			document.removeEventListener('pointermove', move);
+			document.removeEventListener('pointerup', end);
+			document.removeEventListener('pointercancel', end);
+			delete el.dataset.active;
+			document.documentElement.style.cursor = '';
+			document.documentElement.style.userSelect = '';
+			save();
+		};
+		document.addEventListener('pointermove', move);
+		document.addEventListener('pointerup', end);
+		document.addEventListener('pointercancel', end);
+	}
+
+	/** 拖拽的等价操作：焦点落在分隔条上时用方向键挪。 */
+	function onSplitterKey(e: KeyboardEvent): void {
+		const el = e.currentTarget as HTMLElement;
+		const key = el.dataset.split;
+		if (!key) return;
+		const { kind, index } = splitParts(key);
+		const step = e.shiftKey ? KEY_STEP_PX * 3 : KEY_STEP_PX;
+		const delta =
+			kind === 'c'
+				? e.key === 'ArrowLeft'
+					? -step
+					: e.key === 'ArrowRight'
+						? step
+						: 0
+				: e.key === 'ArrowUp'
+					? -step
+					: e.key === 'ArrowDown'
+						? step
+						: 0;
+		if (!delta) return;
+		e.preventDefault();
+		adjust(kind, index, delta);
+		save();
 	}
 
 	/** 取景开关的状态。每格的位置微调按钮在格子里，由 tileHtml 渲染。 */
@@ -509,12 +807,6 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		return pageFull || browserFull;
 	}
 
-	/** 沉浸模式下格子平分视口高度，网格类得换一套。 */
-	function gridClass(n: number): string {
-		const map = immersive() ? IMMERSIVE_GRID_CLASS : GRID_CLASS;
-		return map[n] ?? GRID_CLASS[n] ?? 'grid-cols-1';
-	}
-
 	function setNote(msg: string): void {
 		const el = document.getElementById('wall-note');
 		if (el) el.textContent = msg;
@@ -536,15 +828,15 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	}
 
 	/**
-	 * 只切类名，**绝不重渲染**：renderWall 会重建 innerHTML，把已经加载的 iframe 全部冲掉，
-	 * 那就成了"一全屏就把画面停了"。格子的高度改由 global.css 里的 .wall-immersive 规则接管，
-	 * 这样已加载的播放器不受影响。
+	 * 只切类名与轨道尺寸，**绝不重渲染**：renderWall 会重建 innerHTML，把已经加载的 iframe 全部冲掉，
+	 * 那就成了"一全屏就把画面停了"。行高由 applyTracks 按当前是否沉浸重算（px ↔ fr），
+	 * 只是改样式，已加载的播放器不受影响。
 	 */
 	function applyImmersive(): void {
 		panelEl?.classList.toggle('wall-immersive', immersive());
 		// 网页全屏时面板盖住了整页，底下的滚动要锁住。
 		document.body.classList.toggle('wall-immersive-lock', pageFull);
-		wallEl!.className = `grid gap-3 ${gridClass(state.layout)}`;
+		applyTracks();
 		syncFullButtons();
 	}
 
@@ -651,9 +943,31 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		);
 	});
 
-	// 格子尺寸变了就要重算取景（换格数、进全屏、拉窗口）。
-	// 只改 transform 不影响布局，不会和观察器形成回环。
-	if (typeof ResizeObserver !== 'undefined') new ResizeObserver(() => refitCrops()).observe(wallEl!);
+	/** 均分：删掉当前格数的自定义比例，回到默认。 */
+	document.getElementById('wall-even')?.addEventListener('click', () => {
+		delete state.ratios[String(state.layout)];
+		save();
+		applyTracks();
+		setNote('已把每列宽度与每行高度恢复成等分。');
+	});
+
+	// 格子尺寸变了就要重算（换格数、进全屏、拉窗口）：列宽变化要重写轨道，行高变化要挪分隔条，
+	// 取景还要跟着重算。宽度没变时不重写轨道——非沉浸模式下行高是我们自己写上去的 px，
+	// 重写会再触发一次观察回调，容易和观察器来回打转。只改 transform 不影响布局，也不会成环。
+	if (typeof ResizeObserver !== 'undefined') {
+		let lastWidth = wallEl!.clientWidth;
+		new ResizeObserver(() => {
+			const width = wallEl!.clientWidth;
+			if (width !== lastWidth) {
+				lastWidth = width;
+				applyTracks();
+			} else {
+				const { cols, rows } = arrangement(state.layout);
+				drawSplitters(cols, rows);
+			}
+			refitCrops();
+		}).observe(wallEl!);
+	}
 
 	// Esc 退出网页全屏。系统全屏时 Esc 归浏览器管（它会自己退出并触发 fullscreenchange），
 	// 这里让开，否则会把两个全屏一起关掉。

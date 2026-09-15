@@ -181,6 +181,14 @@ const STATS = [
 						</div>
 						<div class="flex items-center gap-2">
 							<button
+								id="wall-even"
+								type="button"
+								title="把所有格子恢复成等分（列宽与行高）"
+								class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							>
+								均分
+							</button>
+							<button
 								id="wall-stop"
 								type="button"
 								class="rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
@@ -277,6 +285,7 @@ const STATS = [
 							<span id="wall-status" class="text-cream/70">墙上 0 / 4 格</span> ·
 							<span class="wall-hint-long">
 								每个格子都是一个完整的直播间页面，开太多会卡，建议 4 格以内；切换格数会重新排布并停掉已加载的画面。
+								想给某一路更大的画面，拖格子之间的分隔条改列宽 / 行高（分隔条可用方向键微调），尺寸按格数分别记住，点「均分」还原。
 							</span>
 						</p>
 						<p
@@ -288,7 +297,11 @@ const STATS = [
 						</p>
 					</div>
 
-					<div id="wall" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+					<div id="wall-box" class="relative">
+						<div id="wall" class="grid grid-cols-1 gap-3 sm:grid-cols-2"></div>
+						{/* 分隔条浮在网格上：位置由 JS 按格子的实测坐标算（见 liveWall.ts 的 drawSplitters）。 */}
+						<div id="wall-splitters" class="pointer-events-none absolute inset-0 z-20"></div>
+					</div>
 				</div>
 
 				<noscript>
