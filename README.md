@@ -9,10 +9,13 @@
 pnpm install
 pnpm dev        # http://localhost:4321
 pnpm build      # 产物在 dist/client（静态）+ dist/server（SSR）
+pnpm rebuild    # 构建到暂存目录、成功后切换，供定时任务用（见「部署与重建频率」）
 pnpm preview    # 预览构建产物（会起服务端，不是纯静态预览）
 ```
 
 线上运行见「[Steam 登录与个人战绩](#steam-登录与个人战绩)」——多了一步 `node dist/server/entry.mjs`。
+**定时重建别用 `pnpm build`，用 `pnpm rebuild`**：就地重建会把正在服务的资源挖空，原因见
+「[部署与重建频率](#部署与重建频率)」。
 
 ## 主题色板
 
@@ -182,6 +185,65 @@ Steam 的头像 CDN（`avatars.steamstatic.com`）会拒掉带 Referer 的请求
 就是一张破图。站内主播头像、比赛页的队标一直是这么处理的，个人战绩页的头像统一走
 `src/components/player/Avatar.astro`：带 `no-referrer`，加载失败时摘掉 `<img>` 露出首字母，
 不会出现破图图标。
+
+## 部署与重建频率
+
+内容页都是构建期抓取 + 预渲染，所以**内容的新鲜度 = 你多久重建一次**。`.cache/` 的 TTL
+表（直播状态 5 分钟、新闻/社区/赛程 30 分钟、Reddit 1 小时…）决定的是「这一轮要重新抓
+哪些」，它需要一个触发者——而仓库里**没有任何 CI 或定时配置**，这件事得自己接上。
+
+没有触发者的后果很具体：直播状态标称 5 分钟，实际是「上次构建那一刻」，可能已经过去几天。
+
+实测同一个 `.cache/` 上连续构建：
+
+| | 耗时 | 联网抓取 |
+| --- | --- | --- |
+| 冷构建（`.cache/` 为空） | ~1 分钟 | 全部来源 |
+| 热构建（TTL 内） | **4.4 秒** | 0 次 |
+
+建议 **5 分钟一次**，正好对齐最短的那个 TTL。每轮只有到期的源会重抓：直播状态每轮都过期
+（11 个房间），新闻/社区/赛程每 6 轮一次，其余按自己的 TTL 轮流——单轮 5～20 秒。
+
+### 不能就地重建
+
+这是加了 `@astrojs/node` 之后**才出现**的新约束，实测过两件事：
+
+1. 服务进程是**按请求从磁盘读** `dist/client` 的。就地重建会让旧的哈希资源
+   （`_astro/Layout.BQUakPPC.css`）立刻消失，而页面 HTML 仍引用着它——实测取该资源当场
+   变 404，页面直接掉样式。
+2. 进程启动时就把 `dist/server` 的模块 import 进内存了。就地重建后**服务端跑的还是旧代码**，
+   客户端却换成了新资源。「旧服务端 + 新客户端」比单纯 404 更难查。
+
+所以必须**构建到暂存目录、成功后再切换、最后重启进程**。`scripts/rebuild.sh` 就是干这个的：
+
+```sh
+# 构建 + 切换，之后自己重启
+pnpm rebuild
+
+# 或者让脚本代劳重启
+RESTART_CMD='systemctl restart dota2-news' pnpm rebuild
+```
+
+脚本只在**构建成功且产物完整**时才切换（`server/entry.mjs` 与 `client/` 都在），构建失败
+则线上原样不动——这两条都实测验证过。上一版留在 `dist-prev/`，回滚就是
+`mv dist-prev dist && 重启`。
+
+### 接定时任务
+
+```cron
+# 每 5 分钟重建一次
+*/5 * * * * cd /srv/dota2-news && RESTART_CMD='systemctl restart dota2-news' pnpm rebuild >> /var/log/dota2-news-rebuild.log 2>&1
+```
+
+用 systemd timer 的话，配一个每 5 分钟跑 `pnpm rebuild` 的 oneshot service 即可
+（`RESTART_CMD` 直接写在自己的 restart 命令上）。
+
+两点注意：
+
+- **切换后必须重启**，否则新产物不会生效（服务进程持有旧代码）。重启有几秒中断；要零停机
+  得跑两个实例、前面挂个反代逐个切。
+- **前面挂了 CDN 的话，重建后要刷 HTML 的缓存**。带内容哈希的 `_astro/*` 不用管，
+  但页面 HTML 是拿去就缓存的，不刷的话用户还是看到旧页面——也就还是旧状态。
 
 ## OB 名单与开播状态
 
