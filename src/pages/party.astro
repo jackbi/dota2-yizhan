@@ -98,6 +98,50 @@ import Layout from '../layouts/Layout.astro';
 						</div>
 						<a href="/me" class="ml-auto shrink-0 text-xs text-dota-light transition hover:text-gold">我的战绩 →</a>
 					</div>
+
+					{/*
+						不登录也想用自己的头像：填 Steam ID 去 STRATZ 换昵称和头像。
+						默认折叠——它是「登录」之外的次要选项，而且必须先说清它不是身份证明。
+					*/}
+					<details id="steamid-box" style="display:none" class="mt-3 rounded-xl border border-line bg-ink-2/60 px-3 py-2.5">
+						<summary class="cursor-pointer text-xs text-muted transition hover:text-cream">
+							不想登录？也可以填自己的 Steam ID，用你 Steam 的头像和昵称进来
+						</summary>
+						<div class="mt-3 space-y-2.5">
+							<div class="flex flex-col gap-2 sm:flex-row">
+								<label class="min-w-0 flex-1" for="steamid-input">
+									<span class="sr-only">Steam ID</span>
+									<input
+										id="steamid-input"
+										name="steamid"
+										type="text"
+										autocomplete="off"
+										spellcheck="false"
+										placeholder="17 位 SteamID64、好友码，或个人资料链接"
+										class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+									/>
+								</label>
+								<button
+									id="steamid-load"
+									type="button"
+									class="shrink-0 rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:text-cream disabled:opacity-60"
+								>
+									读取资料
+								</button>
+							</div>
+							<div id="steamid-preview" style="display:none" class="flex items-center gap-2.5">
+								<span id="steamid-avatar" class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-2 text-xs text-faint"></span>
+								<p id="steamid-result" class="min-w-0 text-xs leading-relaxed text-muted"></p>
+							</div>
+							<p id="steamid-status" style="display:none" class="text-xs leading-relaxed"></p>
+							<p id="steamid-note" class="text-xs leading-relaxed text-faint">
+								ID 在 Steam 个人资料页的地址栏里（<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">/profiles/</code>
+								后面那串 17 位数字），好友码也能用。这只用来取头像和昵称，<strong class="text-muted"
+									>不能证明这个账号是你的</strong
+								>，要表明身份请用上面的 Steam 登录。
+							</p>
+						</div>
+					</details>
 				</div>
 			</section>
 

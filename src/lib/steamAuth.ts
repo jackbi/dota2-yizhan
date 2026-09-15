@@ -93,6 +93,71 @@ export function accountIdToSteamId64(accountId: number): string {
 	return (BigInt(accountId) + STEAM_ID64_BASE).toString();
 }
 
+// ---------------------------------------------------------------- 用户手填的 ID
+
+/**
+ * 用户手填的 Steam 标识解析。
+ *
+ * 开黑房间允许「不登录、只填自己的 Steam ID」来换取昵称和头像。用户手上那串东西
+ * 形式很杂，这里统一收口成 accountId：
+ *
+ * - **SteamID64**：17 位、以 7656119 开头（个人资料页地址栏里 `/profiles/` 后面那串）；
+ * - **账号 id**：32 位整数，也是 Steam 新版好友码（8～10 位数字）本身；
+ * - **`STEAM_X:Y:Z`**：老格式，accountId = `Z × 2 + Y`；
+ * - **`[U:1:Z]`**：SteamID3，Z 就是 accountId。
+ *
+ * **不支持 `/id/<自定义短名>`**：把短名换算成 SteamID64 要走 Steam Web API 的
+ * `ResolveVanityURL`，那需要一个 API Key——本站登录只用 OpenID，刻意没有引入这个密钥，
+ * 为了一个头像再加一个密钥不划算。所以那种链接直接告诉用户去哪儿复制。
+ */
+export type SteamIdParse = { ok: true; accountId: number; steamId: string } | { ok: false; error: string };
+
+const STEAMID64_RE = /^7656119\d{10}$/;
+/** accountId 是 32 位无符号整数，SteamID64 的第 33 位起才是账号创建序号。 */
+const ACCOUNT_ID_MAX = 0xffff_ffff;
+
+function fromAccountId(accountId: number): SteamIdParse {
+	if (!Number.isSafeInteger(accountId) || accountId <= 0 || accountId > ACCOUNT_ID_MAX) {
+		return { ok: false, error: '这个账号 ID 超出范围了（应该是 32 位以内的整数）' };
+	}
+	return { ok: true, accountId, steamId: accountIdToSteamId64(accountId) };
+}
+
+function fromSteamId64(steamId: string): SteamIdParse {
+	try {
+		const parsed = fromAccountId(steamId64ToAccountId(steamId));
+		return parsed.ok ? { ...parsed, steamId } : parsed;
+	} catch {
+		return { ok: false, error: '这串 SteamID64 不合法' };
+	}
+}
+
+export function parseSteamIdInput(raw: string): SteamIdParse {
+	const input = raw.trim();
+	if (!input) return { ok: false, error: '请填写 Steam ID 或个人资料链接' };
+
+	const profileUrl = /steamcommunity\.com\/profiles\/(\d{17})/i.exec(input);
+	if (profileUrl) return fromSteamId64(profileUrl[1]);
+	if (/steamcommunity\.com\/id\//i.test(input)) {
+		return {
+			ok: false,
+			error: '自定义短名链接换算不出 Steam ID：打开个人资料页，复制地址栏里 /profiles/ 后面那串 17 位数字',
+		};
+	}
+
+	const legacy = /^STEAM_[0-5]:([01]):(\d+)$/i.exec(input);
+	if (legacy) return fromAccountId(Number(legacy[2]) * 2 + Number(legacy[1]));
+
+	const steamId3 = /^\[U:1:(\d+)\]$/.exec(input);
+	if (steamId3) return fromAccountId(Number(steamId3[1]));
+
+	if (!/^\d+$/.test(input)) {
+		return { ok: false, error: '认不出这个格式：可以填 17 位 SteamID64、账号 ID（好友码），或 /profiles/ 链接' };
+	}
+	// 17 位且形状对得上才是 SteamID64；否则一律当账号 id——好友码和账号 id 就是同一个数。
+	return STEAMID64_RE.test(input) ? fromSteamId64(input) : fromAccountId(Number(input));
+}
+
 /**
  * 登录跳转期间暂存 state 的 Cookie。
  *

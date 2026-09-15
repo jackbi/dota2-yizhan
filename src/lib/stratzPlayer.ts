@@ -136,6 +136,13 @@ export interface PlayerProfile {
 	guild: PlayerGuild | null;
 }
 
+/** 「只要一个头像」的轻量结果，见 `loadPlayerAvatar`。 */
+export interface PlayerAvatar {
+	accountId: number;
+	name: string;
+	avatar: string;
+}
+
 export interface HeroPerformance {
 	heroId: number;
 	matches: number;
@@ -671,6 +678,40 @@ async function loadPlayerBundle(accountId: number, heroTake: number): Promise<Pl
 
 export async function loadPlayerProfile(accountId: number, heroTake = 60): Promise<PlayerProfile | null> {
 	return (await loadPlayerBundle(accountId, heroTake))?.profile ?? null;
+}
+
+/**
+ * 昵称与头像，别的都不要。
+ *
+ * 开黑房间允许「不登录、只填 Steam ID」来认脸，但**不能**复用 `loadPlayerProfile`：
+ * 那条查询会顺带把 60 个英雄的统计一起拉回来，为了一个头像付这个代价太贵了
+ * （STRATZ 的额度按次算，而这条路径任何人都能触发）。这里只取两个字段。
+ */
+const AVATAR_DOCUMENT = `query PlayerAvatar($id: Long!) {
+  player(steamAccountId: $id) {
+    steamAccountId
+    steamAccount { name avatar isAnonymous }
+  }
+}`;
+
+/** 昵称头像几乎不变，而这条路径对公网开放，缓存给长一点省额度。 */
+const AVATAR_TTL_MS = 6 * 3600 * 1000;
+
+/**
+ * 按账号 id 取昵称与头像。账号不存在返回 null（调用方据此说「查不到这个账号」）；
+ * 上游故障仍然抛 `StratzError`，两者不能混为一谈。
+ */
+export async function loadPlayerAvatar(accountId: number): Promise<PlayerAvatar | null> {
+	return cached(`player:avatar:${accountId}`, AVATAR_TTL_MS, async () => {
+		const data = await gql<{ player: RawPlayer | null }>(AVATAR_DOCUMENT, { id: accountId });
+		const player = data.player;
+		if (!player || typeof player.steamAccountId !== 'number') return null;
+		return {
+			accountId: player.steamAccountId,
+			name: player.steamAccount?.name?.trim() ?? '',
+			avatar: player.steamAccount?.avatar ?? '',
+		};
+	});
 }
 
 export async function loadPlayerHeroes(accountId: number, heroTake = 60): Promise<HeroPerformance[]> {

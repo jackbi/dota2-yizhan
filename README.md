@@ -252,13 +252,31 @@ P2P 房间不受重启影响，代价写在下文「[连不上的几种情况](#
 | `src/scripts/partyRoom.ts` | 大厅与房间的传输、渲染、事件 |
 | `src/lib/partyLogic.ts` | 成员/队伍/roll 的**纯状态变换**，不碰 DOM 也不碰 WebRTC |
 | `scripts/partyLogic.check.ts` | 上面那一层的自检（队伍重排是最容易写错的部分） |
+| `scripts/steamId.check.ts` | 手填 Steam ID 的解析自检（错一位就查到别人头上） |
 
 纯逻辑单独抽出来的理由很实际：分队规则里有几个必须收敛的分支（每队上限调小时超员的人
 去哪、房主手动加的队会不会被自动分队顺手删掉、最后一个队能不能删），脱离浏览器才验得动：
 
 ```sh
-node --experimental-strip-types scripts/partyLogic.check.ts   # 或 pnpm check:party
+pnpm check   # 队伍逻辑 + Steam ID 解析，纯 node，不需要浏览器
 ```
+
+### 「我是谁」的三种来源
+
+| 来源 | 拿到什么 | 能不能证明身份 |
+| --- | --- | --- |
+| Steam 登录（OpenID） | 昵称 + 头像，由服务端回 Steam 反查后写进签名 Cookie | **能**，这是唯一可信的来源 |
+| 手填 Steam ID | 昵称 + 头像，`/api/steam/profile` 转成 accountId 后向 STRATZ 查 | **不能**，谁都能查任意账号 |
+| 什么都不填 | 自己打的昵称 + 首字母头像 | 不能 |
+
+手填那条路由是**公网可调用**的：每次未命中都会消耗一次 STRATZ 额度，所以只取了
+`steamAccount { name avatar }` 两个字段（不去拉 `loadPlayerProfile` 那份带 60 个英雄的
+大查询）、结果缓存 6 小时，并且复用了 `gql()` 里的串行限速。没配 `STRATZ_TOKEN` 时
+这条功能返回 503 并提示直接填昵称，不是报错。
+
+解析支持 SteamID64、账号 id（Steam 好友码就是它）、`STEAM_X:Y:Z`、`[U:1:Z]` 与
+`/profiles/<id>` 链接；**`/id/<自定义短名>` 不支持**——换算它要 Steam Web API Key，
+而本站登录只用 OpenID，为一个头像再引入一个密钥不划算。
 
 ### 协议与谁说了算
 
@@ -663,7 +681,7 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 | --- | --- | --- |
 | `SESSION_SECRET` ★ | 登录必需 | 会话 Cookie 的签名密钥，随便一串足够长的随机值即可（`openssl rand -hex 32`）。**不配置时登录直接报错，不会退回默认密钥** |
 | `SITE_URL` ★ | 建议 | 站点对外地址（如 `https://example.com`），用于拼 Steam OpenID 的 `realm` / `return_to`。不配时按请求的 Host 推断，本地开发无需配置；生产挂在反向代理后面时建议显式配上 |
-| `STRATZ_TOKEN` | 否 | [stratz.com/api](https://stratz.com/api) 生成。构建期用于取 BP/选手明细与近一周英雄数据；运行时用于个人战绩。**该 token 绑定调用方 IP**，换 IP 会 403。缺失时构建期回落到 OpenDota（更慢）或整块不展示，个人战绩页提示「未启用」 |
+| `STRATZ_TOKEN` | 否 | [stratz.com/api](https://stratz.com/api) 生成。构建期用于取 BP/选手明细与近一周英雄数据；运行时用于个人战绩，以及开黑房间里按手填 Steam ID 查昵称头像。**该 token 绑定调用方 IP**，换 IP 会 403。缺失时构建期回落到 OpenDota（更慢）或整块不展示，个人战绩页与 Steam ID 查询提示「未启用」 |
 | `YOUDAO_COOKIE` | 否 | 覆盖有道翻译的默认访客 cookie |
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |

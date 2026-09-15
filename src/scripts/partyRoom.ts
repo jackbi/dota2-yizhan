@@ -56,6 +56,11 @@ const HOST_SILENCE_MS = 10_000;
 const HOST_RETURN_MS = 20_000;
 
 const NICK_KEY = 'dota2-party/nickname';
+/**
+ * 手填 Steam ID 换来的头像，单独存一份。
+ * 不存的话刷新页面头像就退回昵称首字母了——人还在房间里，头像却变了，很怪。
+ */
+const AVATAR_KEY = 'dota2-party/avatar';
 const ROOM_KEY = 'dota2-party/room';
 
 // ---------------------------------------------------------------- 消息类型
@@ -104,6 +109,13 @@ const dom = {
 	identityAvatar: $('#identity-avatar'),
 	identityName: $('#identity-name'),
 	nickname: $<HTMLInputElement>('#nickname'),
+	steamIdBox: $('#steamid-box'),
+	steamIdInput: $<HTMLInputElement>('#steamid-input'),
+	steamIdLoad: $<HTMLButtonElement>('#steamid-load'),
+	steamIdPreview: $('#steamid-preview'),
+	steamIdAvatar: $('#steamid-avatar'),
+	steamIdResult: $('#steamid-result'),
+	steamIdStatus: $('#steamid-status'),
 	joinForm: $<HTMLFormElement>('#join-form'),
 	joinCode: $<HTMLInputElement>('#join-code'),
 	joinPassword: $<HTMLInputElement>('#join-password'),
@@ -189,6 +201,8 @@ function cryptoRand(): number {
 // ---------------------------------------------------------------- 身份
 
 function renderIdentity(user: { name: string; avatar: string } | null): void {
+	// 已登录的人不需要「填 Steam ID」这条路：他本来就有真昵称和真头像。
+	setVisible(dom.steamIdBox, !user);
 	if (!user) {
 		steamUser = null;
 		setVisible(dom.identityGuest, true);
@@ -214,7 +228,7 @@ function loadProfile(): Promise<void> {
 		.catch(() => renderIdentity(null));
 }
 
-/** 表单提交时取「我在房间里叫什么」：已登录用 Steam 昵称，否则用输入框并要求填。 */
+/** 表单提交时取「我在房间里叫什么」：Steam 登录 > 手填 Steam ID 取到的资料 > 输入框昵称。 */
 async function resolveName(form: HTMLFormElement): Promise<string | null> {
 	await profileReady;
 	if (steamUser) {
@@ -227,13 +241,74 @@ async function resolveName(form: HTMLFormElement): Promise<string | null> {
 		return null;
 	}
 	const name = L.sanitizeName(dom.nickname.value);
-	identity = { name, avatar: '' };
+	// 头像保留：它可能来自上面那次「填 Steam ID 读资料」，不能因为提交表单就丢掉。
+	identity = { name, avatar: identity.avatar };
 	try {
 		localStorage.setItem(NICK_KEY, name);
 	} catch {
 		// 隐私模式下写不了，不影响进房。
 	}
 	return name;
+}
+
+function setSteamIdStatus(message: string | null, kind: 'info' | 'error' = 'info'): void {
+	setVisible(dom.steamIdStatus, message !== null);
+	if (message === null) return;
+	dom.steamIdStatus.textContent = message;
+	dom.steamIdStatus.className = `text-xs leading-relaxed ${kind === 'error' ? 'text-[#f0a08a]' : 'text-muted'}`;
+}
+
+/**
+ * 「不登录，但也想用自己的头像」：把手填的 Steam ID 换成昵称与头像。
+ *
+ * 走服务端的 `/api/steam/profile` 而不是直接问 STRATZ：token 只在服务端，
+ * 而且那边有 6 小时缓存，不至于有人连点就把额度烧了。
+ *
+ * 拿到之后**填进昵称输入框**而不是锁死：用户可以改，头像跟着走（改昵称不改头像）。
+ */
+async function loadSteamId(): Promise<void> {
+	const id = dom.steamIdInput.value.trim();
+	if (!id) {
+		setSteamIdStatus('先填一个 Steam ID 或资料链接。', 'error');
+		return;
+	}
+	dom.steamIdLoad.disabled = true;
+	dom.steamIdLoad.textContent = '读取中…';
+	setSteamIdStatus('正在查这个账号…');
+	try {
+		const res = await fetch(`/api/steam/profile?id=${encodeURIComponent(id)}`, {
+			headers: { Accept: 'application/json' },
+		});
+		const data = (await res.json()) as { ok: boolean; name?: string; avatar?: string; error?: string };
+		if (!data.ok) {
+			setVisible(dom.steamIdPreview, false);
+			setSteamIdStatus(data.error ?? '读取失败，稍后再试。', 'error');
+			return;
+		}
+		const name = L.sanitizeName(data.name ?? '');
+		const avatar = typeof data.avatar === 'string' && data.avatar.startsWith('https://') ? data.avatar : '';
+		if (name) {
+			dom.nickname.value = name;
+			identity = { name, avatar };
+			try {
+				localStorage.setItem(NICK_KEY, name);
+				localStorage.setItem(AVATAR_KEY, avatar);
+			} catch {
+				// 存不下就只是刷新后要重新读一次。
+			}
+		}
+		dom.steamIdAvatar.replaceChildren(avatarNode(name || '?', avatar, 36));
+		dom.steamIdResult.textContent = name
+			? `已读到：${name}${avatar ? '，头像也带上了' : '（这账号没公开头像，先用昵称首字母）'}。之后改昵称不会改头像。`
+			: '这个账号没有公开昵称，但头像可以用上了。';
+		setVisible(dom.steamIdPreview, true);
+		setSteamIdStatus(null);
+	} catch {
+		setSteamIdStatus('请求没发出去，检查一下网络再试。', 'error');
+	} finally {
+		dom.steamIdLoad.disabled = false;
+		dom.steamIdLoad.textContent = '读取资料';
+	}
 }
 
 function setFormError(form: HTMLFormElement, message: string | null): void {
@@ -1017,6 +1092,15 @@ function bindEvents(): void {
 		dom.joinCode.value = L.normalizeCode(dom.joinCode.value);
 	});
 
+	dom.steamIdLoad.addEventListener('click', () => void loadSteamId());
+	dom.steamIdInput.addEventListener('keydown', (event) => {
+		// 这是个输入框不是表单，回车得自己接。输入框在 <details> 里，回车不会误触提交。
+		if (event.key === 'Enter') {
+			event.preventDefault();
+			void loadSteamId();
+		}
+	});
+
 	dom.chatForm.addEventListener('submit', (event) => {
 		event.preventDefault();
 		const text = L.clampChatText(dom.chatInput.value);
@@ -1195,14 +1279,13 @@ function startTicker(): void {
 
 function restoreNickname(): void {
 	try {
-		const saved = localStorage.getItem(NICK_KEY);
-		if (!saved) return;
-		const name = L.sanitizeName(saved);
+		const name = L.sanitizeName(localStorage.getItem(NICK_KEY) ?? '');
+		const avatar = localStorage.getItem(AVATAR_KEY) ?? '';
 		if (!name) return;
 		dom.nickname.value = name;
 		// 未登录时它就是我的房间昵称。先填上，这样刷新页面能自动回到房间里，
 		// 不用再手打一次；`loadProfile()` 拿到 Steam 身份后会覆盖它。
-		identity = { name, avatar: '' };
+		identity = { name, avatar };
 	} catch {
 		// 隐私模式下读不到，进房时再输一次即可。
 	}
