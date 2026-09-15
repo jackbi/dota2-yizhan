@@ -9,6 +9,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
+    "rebuild": "sh scripts/rebuild.sh",
     "astro": "astro"
   },
   "dependencies": {

@@ -1,5 +1,8 @@
 # build output
 dist/
+# rebuild.sh 的暂存与上一版产物
+dist-next/
+dist-prev/
 
 # build-time fetch cache
 .cache/
