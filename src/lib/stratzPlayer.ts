@@ -65,9 +65,19 @@ async function gql<T>(document: string, variables: Record<string, unknown>): Pro
 				lastError = `HTTP ${res.status}`;
 				continue;
 			}
-			if (res.status === 403 && (res.headers.get('content-type') ?? '').includes('text/html')) {
-				lastError = 'Cloudflare 挑战页';
-				continue;
+			if (res.status === 403) {
+				// 先读 body 再分类。STRATZ 对「换出口 IP」的拒绝是 403 + **纯文本**
+				// （连 content-type 都没有），必须和同为 403 的 Cloudflare 挑战页分开：
+				// 不特判的话页面上只剩一句「HTTP 403」，看不出该去改什么。
+				const body = await res.text().catch(() => '');
+				if (body.includes('different IP Addresses')) {
+					throw new StratzError('STRATZ 拒绝了这个出口 IP：同一个 token 只能从固定 IP 调用，过一会儿重试可能恢复');
+				}
+				// Cloudflare 挑战页同样是 403，但它返回 HTML 且随机出现，值得重试。
+				if ((res.headers.get('content-type') ?? '').includes('text/html')) {
+					lastError = 'Cloudflare 挑战页';
+					continue;
+				}
 			}
 			if (!res.ok) throw new StratzError(`STRATZ 返回 HTTP ${res.status}`);
 			const body = (await res.json()) as GraphQLBody<T>;
