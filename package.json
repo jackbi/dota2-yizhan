@@ -12,6 +12,7 @@
     "astro": "astro"
   },
   "dependencies": {
+    "@astrojs/node": "^11.1.5",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.10",
     "cookie": "^2.0.1",

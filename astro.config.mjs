@@ -1,7 +1,8 @@
 // @ts-check
 import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
-import { defineConfig } from 'astro/config';
+import { defineConfig, envField } from 'astro/config';
+import node from '@astrojs/node';
 import tailwindcss from '@tailwindcss/vite';
 
 /**
@@ -200,4 +201,34 @@ export default defineConfig({
 		plugins: [tailwindcss()],
 	},
 	integrations: [dataSourceReport, avatarsInDev],
+
+	/*
+	 * 站点主体仍是 `output: static`（默认值）——所有内容页在构建期渲染成 HTML，
+	 * 部署与性能跟以前一样。适配器只是为了那几条 `export const prerender = false`
+	 * 的路由：Steam 登录必须在服务端接收 OpenID 回调并向 Steam 反查断言，纯静态做不到。
+	 *
+	 * 换平台只动这一处：装 @astrojs/{vercel,netlify,cloudflare} 并把下面的 node(...) 换掉。
+	 * 前提是 SSR 侧代码只用 Web 标准 API（见 src/lib/session.ts 与 src/lib/stratzPlayer.ts
+	 * 的说明），不碰 node:fs / node:crypto——否则上 Workers 就得重写。
+	 */
+	adapter: node({ mode: 'standalone' }),
+
+	/*
+	 * 用 `astro:env` 而不是直接读 `process.env`：Node 下两者等价，但换到
+	 * Cloudflare 这类运行时，密钥要从 Workers 的绑定里取，只有 astro:env 会替我们接上。
+	 */
+	env: {
+		schema: {
+			/** 与构建期共用：SSR 取个人战绩时也要用它。 */
+			STRATZ_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
+			/** 给会话 Cookie 签名。没配时登录直接报错，不会退化成一个可伪造的默认密钥。 */
+			SESSION_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+			/**
+			 * 对外可访问的站点地址，用于拼 OpenID 的 realm / return_to。
+			 * 不配时按请求的 origin 推断（本地开发无需配置）；生产环境建议显式配上，
+			 * 免得反向代理没透传对 Host 时把 Steam 的回调指错地方。
+			 */
+			SITE_URL: envField.string({ context: 'server', access: 'public', optional: true }),
+		},
+	},
 });
