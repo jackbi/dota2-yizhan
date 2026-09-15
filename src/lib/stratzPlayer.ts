@@ -397,7 +397,8 @@ const MATCH_DETAIL_DOCUMENT = `query MatchDetail($id: Long!) {
   }
 }`;
 
-/** 队友 / 对手：按对手账号分组，`playerList` 决定是「同队」还是「对面」。 */const PEERS_DOCUMENT = `query PlayerPeers($id: Long!, $request: PlayerMatchesGroupByRequestType!) {
+/** 队友 / 对手：按对手账号分组，`playerList` 决定是「同队」还是「对面」。 */
+const PEERS_DOCUMENT = `query PlayerPeers($id: Long!, $request: PlayerMatchesGroupByRequestType!) {
   player(steamAccountId: $id) {
     matchesGroupBy(request: $request) {
       ... on MatchGroupBySteamAccountIdType {
