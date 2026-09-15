@@ -1,8 +1,9 @@
 # build output
 dist/
-# rebuild.sh 的暂存与上一版产物
+# rebuild.sh 的暂存、上一版产物与并发锁
 dist-next/
 dist-prev/
+dist-next.lock/
 
 # build-time fetch cache
 .cache/

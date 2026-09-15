@@ -20,7 +20,10 @@
 #   scripts/rebuild.sh                    # 构建 + 切换，之后自己重启服务
 #   RESTART_CMD='systemctl restart dota2-news' scripts/rebuild.sh
 #
-# 注意 `dist-next` / `dist-prev` 都在 `.gitignore` 里，别提交。
+# 同一时间只允许一次重建（用 `dist-next.lock/` 挡第二次），因为两次并发会共用同一个
+# `dist-next/`，后启动的那次会把前一次清掉、再切一份不完整的产物上去。
+#
+# 注意 `dist-next` / `dist-next.lock` / `dist-prev` 都在 `.gitignore` 里，别提交。
 
 set -eu
 
@@ -28,6 +31,21 @@ cd "$(dirname "$0")/.."
 
 STAGING=dist-next
 PREVIOUS=dist-prev
+LOCK="$STAGING.lock"
+
+# 锁目录里存 pid：上一次被 kill -9 时 trap 不会执行，留下的是死锁，靠 pid 还活着没有来区分。
+if ! mkdir "$LOCK" 2>/dev/null; then
+	holder=$(cat "$LOCK/pid" 2>/dev/null || true)
+	if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+		echo "[rebuild] 上一次重建（pid ${holder}）还在跑，本次退出" >&2
+		exit 1
+	fi
+	echo "[rebuild] 清理上一轮留下的死锁（pid ${holder:-未知} 已不在）" >&2
+	rm -rf "$LOCK"
+	mkdir "$LOCK"
+fi
+echo $$ > "$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT INT TERM
 
 # 上一轮失败可能留下半成品，先清干净，免得把它当成本次产物。
 rm -rf "$STAGING"
@@ -46,11 +64,23 @@ fi
 
 # 两次 rename。严格说这不是一个原子操作，中间有一瞬 $PWD 不存在——但这一刻服务本来就要
 # 重启，且构建全程没碰过它，比「就地重建把资源挖空」安全得多。
+#
+# 第二次 rename 万一失败（磁盘满、权限），必须把上一版放回 dist：set -e 只会让脚本退出，
+# 而那时线上已经没有 dist 可读了。
 rm -rf "$PREVIOUS"
 if [ -d dist ]; then
-	mv dist "$PREVIOUS"
+	if ! mv dist "$PREVIOUS"; then
+		echo "[rebuild] 旧产物改名失败，线上原样不动" >&2
+		exit 1
+	fi
 fi
-mv "$STAGING" dist
+if ! mv "$STAGING" dist; then
+	echo "[rebuild] 切换到 $STAGING 失败，回滚上一版" >&2
+	if [ -d "$PREVIOUS" ]; then
+		mv "$PREVIOUS" dist || echo "[rebuild] 回滚也失败，请手工执行：mv $PREVIOUS dist" >&2
+	fi
+	exit 1
+fi
 
 echo "[rebuild] 已切换到新产物（上一版留在 $PREVIOUS/，可回滚：mv $PREVIOUS dist）"
 
