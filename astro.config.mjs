@@ -28,39 +28,52 @@ if (existsSync(ENV_FILE)) {
  * `.cache/health/<id>.json`，这里在渲染全部结束后读出来汇总——文件交接，
  * 不依赖渲染跑在主进程还是工作线程里。
  */
-const HEALTH_DIR = new URL('.cache/health/', import.meta.url);
+const CACHE_BASE = new URL('.cache/', import.meta.url);
+const HEALTH_DIR = new URL('health/', CACHE_BASE);
 const STATE_LABEL = { fresh: '联网抓取', cache: '使用缓存', empty: '没有数据' };
 
 /**
- * 主播头像的字节存在 `.cache/avatars/`（见 `src/lib/avatars.ts`），
- * 构建结束才拷进 `dist/avatars/`。页面里引用的就是 `/avatars/xxx.jpg`。
+ * 需要在构建末尾发布到 `dist/` 的图片频道（通用逻辑见 `src/lib/localImages.ts`）。
+ *
+ * `dir` 必须和 `src/lib/avatars.ts`、`src/lib/covers.ts` 里的 `channel.dir` 对得上：
+ * 这里是「哪个目录要拷出去」，那边是「拷出去的图长什么样」。
  */
-const AVATAR_DIR = new URL('.cache/avatars/', import.meta.url);
-/** 只有本轮真正用到的头像才发布：`localizeAvatars()` 会把用到的文件 mtime 刷成当前时间。 */
-let buildStartedAt = 0;
-/** 本轮开始前缓存里已有的头像，用来判断这一轮新下了几张。 */
-let avatarsBefore = new Set();
-/** 缓存里放太久没被用到的头像直接删掉——房间号换人、房间下榜都会留下孤儿文件。 */
-const AVATAR_KEEP_DAYS = 30;
+const IMAGE_CHANNELS = [
+	{ dir: 'avatars', label: '主播头像', empty: '没有取到任何头像，页面退回首字母占位' },
+];
+/** 缓存里放太久没被用到的图直接删掉——房间号换人、房间下榜都会留下孤儿文件。 */
+const IMAGE_KEEP_DAYS = 30;
 
-async function listAvatars() {
+/** 只有本轮真正用到的图才发布：`localizeImages()` 会把用到的文件 mtime 刷成当前时间。 */
+let buildStartedAt = 0;
+/** `dir` → 本轮开始前缓存里已有的文件名，用来判断这一轮新下了几张。 */
+const imagesBefore = new Map();
+
+/** @param {string} dir */
+async function listImages(dir) {
 	try {
-		return new Set((await fs.readdir(AVATAR_DIR)).filter((name) => name.endsWith('.jpg')));
+		return new Set(
+			(await fs.readdir(new URL(`${dir}/`, CACHE_BASE))).filter((name) => name.endsWith('.jpg')),
+		);
 	} catch {
 		return new Set();
 	}
 }
 
-/** 删掉长期没被用到的头像，免得缓存和 dist 越攒越大。 */
-/** @param {import('astro').AstroIntegrationLogger} logger */
-async function pruneAvatars(logger) {
-	const names = [...(await listAvatars())];
-	const cutoff = Date.now() - AVATAR_KEEP_DAYS * 24 * 60 * 60 * 1000;
+/**
+ * 删掉长期没被用到的图，免得缓存和 dist 越攒越大。
+ *
+ * @param {{ dir: string, label: string }} channel
+ * @param {import('astro').AstroIntegrationLogger} logger
+ */
+async function pruneImages(channel, logger) {
+	const names = [...(await listImages(channel.dir))];
+	const cutoff = Date.now() - IMAGE_KEEP_DAYS * 24 * 60 * 60 * 1000;
 	let removed = 0;
 	await Promise.all(
 		names.map(async (name) => {
 			try {
-				const file = new URL(name, AVATAR_DIR);
+				const file = new URL(`${channel.dir}/${name}`, CACHE_BASE);
 				if ((await fs.stat(file)).mtimeMs < cutoff) {
 					await fs.rm(file, { force: true });
 					removed += 1;
@@ -70,51 +83,55 @@ async function pruneAvatars(logger) {
 			}
 		}),
 	);
-	if (removed > 0) logger.info(`清理了 ${removed} 个头像缓存（超过 ${AVATAR_KEEP_DAYS} 天没用到）`);
+	if (removed > 0) {
+		logger.info(`清理了 ${removed} 张${channel.label}缓存（超过 ${IMAGE_KEEP_DAYS} 天没用到）`);
+	}
 }
 
 /**
- * 把本轮用到的头像拷进 dist，并写一条数据源记录。
+ * 把本轮用到的图拷进 dist，并写一条数据源记录。
  *
- * 头像的健康记录在这里出、而不是在 `localizeAvatars()` 里：那个函数会被 OB 页和分屏页
+ * 健康记录在这里出、而不是在 `localizeImages()` 里：那个函数会被 OB 页和分屏页
  * 各调一次、每次只看自己要的那一批，谁最后写谁覆盖（第一版就出现过汇总显示「11 / 11 张」
  * 而实际发布了 75 张）。集成只在构建末尾跑一次，看到的是全部。
  *
+ * @param {{ dir: string, label: string, empty: string }} channel
  * @param {URL} dir
  * @param {import('astro').AstroIntegrationLogger} logger
  */
-async function publishAvatars(dir, logger) {
-	const names = [...(await listAvatars())];
-	const target = new URL('avatars/', dir);
+async function publishImages(channel, dir, logger) {
+	const names = [...(await listImages(channel.dir))];
+	const target = new URL(`${channel.dir}/`, dir);
+	const before = imagesBefore.get(channel.dir) ?? new Set();
 	let copied = 0;
 	let fresh = 0;
 	for (const name of names) {
 		try {
-			const file = new URL(name, AVATAR_DIR);
+			const file = new URL(`${channel.dir}/${name}`, CACHE_BASE);
 			// 本轮开始前就写好的说明这次没用到，不带走。
 			if ((await fs.stat(file)).mtimeMs < buildStartedAt - 60_000) continue;
 			await fs.mkdir(target, { recursive: true });
 			await fs.copyFile(file, new URL(name, target));
-			if (!avatarsBefore.has(name)) fresh += 1;
+			if (!before.has(name)) fresh += 1;
 			copied += 1;
 		} catch (error) {
-			logger.warn(`头像 ${name} 没能发布：${error instanceof Error ? error.message : error}`);
+			logger.warn(`${channel.label} ${name} 没能发布：${error instanceof Error ? error.message : error}`);
 		}
 	}
 
 	try {
 		const record = {
-			id: 'avatars',
-			label: '主播头像',
+			id: channel.dir,
+			label: channel.label,
 			state: fresh > 0 ? 'fresh' : copied > 0 ? 'cache' : 'empty',
 			detail:
 				copied > 0
-					? `发布 ${copied} 张到 /avatars/（本轮新下载 ${fresh}，缓存共 ${names.length} 张）`
-					: '没有取到任何头像，页面退回首字母占位',
+					? `发布 ${copied} 张到 /${channel.dir}/（本轮新下载 ${fresh}，缓存共 ${names.length} 张）`
+					: channel.empty,
 			at: new Date().toISOString(),
 		};
 		await fs.mkdir(HEALTH_DIR, { recursive: true });
-		await fs.writeFile(new URL('avatars.json', HEALTH_DIR), JSON.stringify(record), 'utf8');
+		await fs.writeFile(new URL(`${channel.dir}.json`, HEALTH_DIR), JSON.stringify(record), 'utf8');
 	} catch {
 		// 健康记录只是辅助信息。
 	}
@@ -128,11 +145,13 @@ const dataSourceReport = {
 			// 上一轮的结果不能混进本轮汇总。
 			await fs.rm(HEALTH_DIR, { recursive: true, force: true });
 			buildStartedAt = Date.now();
-			await pruneAvatars(logger);
-			avatarsBefore = await listAvatars();
+			for (const channel of IMAGE_CHANNELS) {
+				await pruneImages(channel, logger);
+				imagesBefore.set(channel.dir, await listImages(channel.dir));
+			}
 		},
 		'astro:build:done': async ({ dir, logger }) => {
-			await publishAvatars(dir, logger);
+			for (const channel of IMAGE_CHANNELS) await publishImages(channel, dir, logger);
 
 			let names = [];
 			try {
@@ -164,33 +183,35 @@ const dataSourceReport = {
 };
 
 /**
- * dev 下把 `.cache/avatars/` 挂到 `/avatars/` 上。
+ * dev 下把 `.cache/<dir>/` 挂到 `/<dir>/` 上。
  *
- * 头像是**构建产物**：字节由 `astro:build:done` 拷进 `dist/avatars/`。而 `astro dev` 不跑构建，
- * 页面里引用的 `/avatars/xxx.jpg` 就全是 404——页面上一个头像都出不来，控制台刷屏。
- * 这里给 dev 加一段中间件直接从缓存目录读，省得"想看一眼头像还得先跑一次 build"。
+ * 这些图是**构建产物**：字节由 `astro:build:done` 拷进 `dist/<dir>/`。而 `astro dev` 不跑构建，
+ * 页面里引用的 `/avatars/xxx.jpg`、`/covers/xxx.jpg` 就全是 404——页面上一个图都出不来，
+ * 控制台刷屏。这里给 dev 加一段中间件直接从缓存目录读，省得"想看一眼头像还得先跑一次 build"。
  *
- * 只认自己生成的文件名（`平台-房间号-哈希.jpg`），`path.basename` 顺手挡掉 `../` 这类穿越。
+ * 只认自己生成的文件名（`键-地址哈希.jpg`），`path.basename` 顺手挡掉 `../` 这类穿越。
  */
 /** @type {import('astro').AstroIntegration} */
-const avatarsInDev = {
-	name: 'avatars-in-dev',
+const imagesInDev = {
+	name: 'images-in-dev',
 	hooks: {
 		'astro:server:setup': ({ server }) => {
-			server.middlewares.use('/avatars', async (req, res, next) => {
-				const name = path.basename(decodeURIComponent((req.url ?? '').split('?')[0]));
-				if (!/^[a-z0-9-]+\.jpg$/.test(name)) return next();
-				try {
-					const bytes = await fs.readFile(new URL(name, AVATAR_DIR));
-					res.setHeader('Content-Type', 'image/jpeg');
-					// 缓存里的图可能刚被换掉，dev 下别让浏览器留旧的。
-					res.setHeader('Cache-Control', 'no-cache');
-					res.end(bytes);
-				} catch {
-					// 还没下到这张（或名字不对），交给后面的 404。
-					next();
-				}
-			});
+			for (const channel of IMAGE_CHANNELS) {
+				server.middlewares.use(`/${channel.dir}`, async (req, res, next) => {
+					const name = path.basename(decodeURIComponent((req.url ?? '').split('?')[0]));
+					if (!/^[a-z0-9-]+\.jpg$/.test(name)) return next();
+					try {
+						const bytes = await fs.readFile(new URL(`${channel.dir}/${name}`, CACHE_BASE));
+						res.setHeader('Content-Type', 'image/jpeg');
+						// 缓存里的图可能刚被换掉，dev 下别让浏览器留旧的。
+						res.setHeader('Cache-Control', 'no-cache');
+						res.end(bytes);
+					} catch {
+						// 还没下到这张（或名字不对），交给后面的 404。
+						next();
+					}
+				});
+			}
 		},
 	},
 };
@@ -200,7 +221,7 @@ export default defineConfig({
 	vite: {
 		plugins: [tailwindcss()],
 	},
-	integrations: [dataSourceReport, avatarsInDev],
+	integrations: [dataSourceReport, imagesInDev],
 
 	/*
 	 * 站点主体仍是 `output: static`（默认值）——所有内容页在构建期渲染成 HTML，
