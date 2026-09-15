@@ -46,6 +46,19 @@ const RELAY_REDUNDANCY = 10;
  */
 const CUSTOM_RELAYS: string[] = [];
 
+/**
+ * 信令中继配置。`warnOnRelayFailure: false` 关掉的是 **Trystero 自己**的告警——
+ * 公共中继里总有几个在本地网络打不通，每个都刷一行没意义；真正有用的信息是
+ * 「连上了几个」，那个由页面顶部的状态条负责展示（浏览器自己为失败的 WebSocket
+ * 打的那行 `WebSocket connection to ... failed` 是拦不掉的，那是浏览器在报网络错误）。
+ */
+type RelayConfigPayload = { warnOnRelayFailure: boolean; urls?: string[]; redundancy?: number };
+
+function relayConfig(): RelayConfigPayload {
+	const base: RelayConfigPayload = { warnOnRelayFailure: false };
+	return CUSTOM_RELAYS.length > 0 ? { ...base, urls: [...CUSTOM_RELAYS] } : { ...base, redundancy: RELAY_REDUNDANCY };
+}
+
 /** 房主每隔多久向大厅重播一次自己的房间。 */
 const ANNOUNCE_MS = 15_000;
 /** 超过这么久没重播的房间从大厅列表里剔除：房主关页面是不会有告别消息的。 */
@@ -161,7 +174,7 @@ let identity: { name: string; avatar: string } = { name: '', avatar: '' };
 let steamUser: { name: string; avatar: string } | null = null;
 
 let lobbyRoom: Room | null = null;
-/** 我在大厅里的角色。大厅访客用 `passive` 加入，访客之间因此不会互建连接。 */
+/** 我是不是在大厅里播报自己的房间（房主）。只是开关，不影响大厅连接的形态。 */
 let lobbyAsHost = false;
 let lobbyEntries = new Map<string, LobbyEntry>();
 let lastAnnounceAt = 0;
@@ -352,24 +365,27 @@ function setNotice(message: string | null, kind: NoticeKind = 'info', sticky = f
 // ---------------------------------------------------------------- 大厅
 
 /**
- * 加入/重进大厅。
+ * 大厅房间：**整个页面生命周期只加入一次，所有人都是活跃身份**。
  *
- * 为什么访客要 `passive: true`：大厅是全网状拓扑，N 个访客会互相建 N×(N-1)/2 条连接。
- * passive 的语义是「只听不说」——不主动广播、也不会和同样 passive 的人建连，
- * 于是拓扑变成「访客 → 房主」的星形。房主自己是非 passive 的，负责广播。
+ * 角色（房主 / 访客）只决定「要不要播报自己的房间」，**不是 joinRoom 的配置项**。
+ * 这一点是刻意设计出来的，因为先前的 passive 方案踩了两个坑：
+ *
+ * 1. **被动房间根本不广播。** 休眠的 passive 房间在 `queueAnnounce` 里就直接 return
+ *    （没到活跃状态就不 announce），于是访客只能等房主下一次播报才会被发现并建连——房主每
+ *    15 秒才播一次，打开页面盯着空大厅干等十几秒是不能接受的；
+ * 2. **角色是 joinRoom 的配置，切换就得 leave + 重进同一个 roomId**，正好撞上
+ *    「joinRoom 幂等 + leave 异步」那个坑：`leave()` 第一步是 `await leaveAction.send('')`，
+ *    删内部登记在它之后，期间重进会拿回**正在退出的旧实例**（配置也是旧的）。进房与离房
+ *    两个方向都会踩，症状是房主以为自己在大厅广播、客人却什么都看不到，而且没有任何报错。
+ *    `scripts/lobbyRoom.check.ts` 里对这个行为有断言。
+ *
+ * 配置不再随角色变化，第 2 类问题就不可能发生；加入时的初始播报是连发几次的（Trystero
+ * 的 startup burst），所以新来的人一两秒内就能看到房间，不用等下一个周期。
+ *
+ * 代价是大厅变成全网状：N 个在线的人两两建连，几十人以内没问题，再多就得另想办法
+ * （限制同时在线、或回到被动 + 缩短播报间隔）。README 里记了这一条。
  */
-function joinLobby(asHost: boolean): void {
-	if (lobbyRoom && lobbyAsHost === asHost) return;
-	if (lobbyRoom) {
-		void lobbyRoom.leave();
-		lobbyRoom = null;
-	}
-	lobbyAsHost = asHost;
-
-	const relayConfig = CUSTOM_RELAYS.length > 0 ? { urls: [...CUSTOM_RELAYS] } : { redundancy: RELAY_REDUNDANCY };
-	const handle = joinRoom({ appId: APP_ID, relayConfig, passive: !asHost }, LOBBY_ROOM_ID);
-	lobbyRoom = handle;
-
+function attachLobbyHandlers(handle: Room): void {
 	const announce = handle.makeAction<LobbyAnnounce>('announce');
 	const query = handle.makeAction<null>('query');
 
@@ -394,20 +410,26 @@ function joinLobby(asHost: boolean): void {
 	};
 
 	handle.onPeerJoin = (peerId) => {
-		// 房主刚和大厅里的某个人建连：主动报一次，别等对方来问。
+		// 连上就各自报一次，别只依赖单边：房主主动播，访客也问一句。
+		// 只做单边的话，「那条广播没到」时大厅就是空的，而且没有任何线索能查。
 		if (lobbyAsHost) announceNow(peerId);
+		else void query.send(null, { target: peerId });
 	};
-
-	renderLobby();
-	if (asHost) announceNow();
 }
 
-function leaveLobby(): void {
-	if (!lobbyRoom) return;
-	void lobbyRoom.leave();
-	lobbyRoom = null;
-	lobbyEntries.clear();
+function joinLobby(): void {
+	if (lobbyRoom) return;
+	const handle = joinRoom({ appId: APP_ID, relayConfig: relayConfig() }, LOBBY_ROOM_ID);
+	lobbyRoom = handle;
+	attachLobbyHandlers(handle);
 	renderLobby();
+	renderNet();
+}
+
+/** 房主开播 / 停播。只是这个开关，**不动大厅连接**。 */
+function setLobbyHosting(hosting: boolean): void {
+	lobbyAsHost = hosting;
+	if (hosting) announceNow();
 }
 
 /** 向大厅广播（或单发给某个人）我在开的房间。房间数据变了就要重播一次。 */
@@ -504,8 +526,7 @@ function showRoom(): void {
 }
 
 async function enterRoom(options: { code: string; password: string; asHost: boolean; name?: string }): Promise<void> {
-	if (roomCode) await leaveRoom({ silent: true, keepLobby: true });
-	leaveLobby();
+	if (roomCode) await leaveRoom({ silent: true });
 
 	roomCode = options.code;
 	isHost = options.asHost;
@@ -518,9 +539,8 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 	setNotice(isHost ? '正在建房…' : '正在连接房间…', 'info', true);
 	if (!isHost) startHostSilenceTimer();
 
-	const relayConfig = CUSTOM_RELAYS.length > 0 ? { urls: [...CUSTOM_RELAYS] } : { redundancy: RELAY_REDUNDANCY };
 	const handle = joinRoom(
-		{ appId: APP_ID, password: options.password, relayConfig },
+		{ appId: APP_ID, password: options.password, relayConfig: relayConfig() },
 		`${ROOM_PREFIX}${options.code}`,
 		{ onJoinError: (details) => onJoinError(details.error) },
 	);
@@ -588,9 +608,8 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 		setNotice(null);
 		renderRoom();
 		renderChat();
-		// 房间开起来之后才去大厅广播：大厅卡片上的人数要准。
-		joinLobby(true);
-		announceNow();
+		// 房间开起来之后才开播：大厅卡片上的人数要准。
+		setLobbyHosting(true);
 	} else {
 		renderRoom();
 	}
@@ -599,14 +618,17 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 	if (codeFromHash() !== options.code) history.replaceState(null, '', `${location.pathname}${HASH_PREFIX}${options.code}`);
 }
 
-async function leaveRoom(options: { silent?: boolean; keepLobby?: boolean } = {}): Promise<void> {
+async function leaveRoom(options: { silent?: boolean } = {}): Promise<void> {
 	const wasHost = isHost;
 	const code = roomCode;
 	if (wasHost && !options.silent) {
 		const confirmed = window.confirm('你是房主，离开后房间就解散了，其他人会掉线。确定离开？');
 		if (!confirmed) return;
 	}
-	if (wasHost) announceGone(code);
+	if (wasHost) {
+		announceGone(code);
+		setLobbyHosting(false);
+	}
 	window.clearTimeout(hostSilenceTimer);
 	window.clearTimeout(hostReturnTimer);
 	roomHandle?.leave();
@@ -622,7 +644,6 @@ async function leaveRoom(options: { silent?: boolean; keepLobby?: boolean } = {}
 	writeSession(null);
 	history.replaceState(null, '', location.pathname);
 	showSetup();
-	if (!options.keepLobby) joinLobby(false);
 }
 
 /** 非房主侧：进房一段时间没收到房主的任何数据。 */
@@ -864,9 +885,27 @@ function renderNet(): void {
 	dom.netText.textContent =
 		open > 0 ? `信令中继已连接 ${open} 个` : '正在连接信令中继…（一直连不上就换网络或开代理）';
 
+	/*
+	 * 大厅里**连上了几个人**是这页最重要的自检数字：房间列表、聊天、分队加起来都建立在
+	 * 「P2P 真的连上了」之上，而连不上时页面上什么都不会发生、也不会报错。
+	 * 报出这个数字，就能一眼分清「没人开房」和「我根本没连上」。
+	 */
+	let lobbyPeers = 0;
+	try {
+		lobbyPeers = Object.keys(lobbyRoom?.getPeers() ?? {}).length;
+	} catch {
+		// 取不到就当 0，下面的文案本来就是「还在找」。
+	}
+
 	const parts: string[] = [];
-	if (roomCode && room) parts.push(`房间内 ${room.members.length}/${L.ROOM_MAX_MEMBERS} 人`);
-	if (!roomCode) parts.push(lobbyEntries.size > 0 ? `大厅里 ${lobbyEntries.size} 个房间` : '大厅当前没有房间');
+	if (roomCode && room) {
+		parts.push(`房间内 ${room.members.length}/${L.ROOM_MAX_MEMBERS} 人`);
+		// 房主是否真的在大厅里可见，是「大厅看不到房间」那类问题的唯一线索，这里一并摆出来。
+		if (isHost) parts.push(`大厅可见 · 已连 ${lobbyPeers} 人`);
+	} else {
+		parts.push(lobbyPeers > 0 ? `大厅已连 ${lobbyPeers} 人` : '正在找大厅里的其他人…');
+		parts.push(lobbyEntries.size > 0 ? `${lobbyEntries.size} 个房间在等人` : '当前没有房间');
+	}
 	parts.push('P2P 直连，本站不经手聊天内容');
 	dom.netDetail.textContent = parts.join(' · ');
 }
@@ -1297,6 +1336,8 @@ function boot(): void {
 	restoreNickname();
 	bindEvents();
 	startTicker();
+	// 大厅只在这里加入一次，之后再也不动它（角色切换只是开播 / 停播）。
+	joinLobby();
 
 	const code = codeFromHash();
 	const session = readSession();
@@ -1314,7 +1355,6 @@ function boot(): void {
 		void enterRoom(session);
 	} else {
 		showSetup();
-		joinLobby(false);
 		if (code) dom.joinPassword.focus();
 	}
 
