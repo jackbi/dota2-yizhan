@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import {
-	ROOM_MAX_MEMBERS,
 	addTeam,
 	autoFormTeams,
 	clearRolls,
@@ -141,11 +140,13 @@ assert.equal(s.members.length, 2);
 assert.equal(freeMembers(s).length, 0);
 assert.equal(s.rolls.p1, undefined);
 
-// --- 房间满员 ---
-s = room(ROOM_MAX_MEMBERS, 5);
-const rejected = upsertMember(s, mk('overflow'));
-assert.equal(rejected.full, true);
-assert.equal(rejected.state.members.length, ROOM_MAX_MEMBERS);
+// --- 不设人数上限：来多少收多少，队伍跟着长 ---
+s = room(20, 5);
+const extra = upsertMember(s, mk('p20'));
+assert.equal(extra.added, true);
+assert.equal(extra.state.members.length, 21);
+assert.equal(extra.state.teams.length, 5, '21 人 / 每队 5 人应该是 5 个队');
+checkInvariants(extra.state, '21 人');
 s = room(3, 5);
 const again = upsertMember(s, { ...s.members[0], name: '改名了' });
 assert.equal(again.added, false);

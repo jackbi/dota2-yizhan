@@ -13,8 +13,6 @@
  * - `rev` 单调递增，客户端据此丢弃迟到的旧快照。
  */
 
-/** 房间人数上限。P2P 是全网状，N 个人要开 N×(N-1)/2 条连接，12 人已是能接受的量级。 */
-export const ROOM_MAX_MEMBERS = 12;
 export const TEAM_SIZE_MIN = 1;
 export const TEAM_SIZE_MAX = 10;
 export const DEFAULT_TEAM_SIZE = 5;
@@ -290,24 +288,26 @@ export function autoFormTeams(state: RoomState): RoomState {
 }
 
 /**
- * 增减成员。返回值里 `full` 用来区分「房间满了」和「这个人已经在房里」——
- * 满了要拒绝并告诉对方，静默丢弃会让人以为是网络问题。
+ * 增减成员。返回值里 `added` 用来区分「新来的」和「同一个人重连」——后者不该再记一条
+ * 「加入房间」，但两者都要更新展示字段。
+ *
+ * **不设人数上限**：这是开黑房，队都排到 5v5 往上了，卡一个数字只会挡自己人。
+ * 真正的上限是浏览器与网络（P2P 全网状，N 个人 N×(N-1)/2 条连接），人多了自然会卡。
  */
-export function upsertMember(state: RoomState, member: Member): { state: RoomState; added: boolean; full: boolean } {
+export function upsertMember(state: RoomState, member: Member): { state: RoomState; added: boolean } {
 	const existing = memberById(state, member.id);
 	if (existing) {
 		// 同一个人重连（刷新页面、切网络）只更新展示字段，不动入房时间和队伍位置。
 		const members = state.members.map((item) =>
 			item.id === member.id ? { ...item, name: member.name, avatar: member.avatar } : item,
 		);
-		return { state: bump(state, { members }), added: false, full: false };
+		return { state: bump(state, { members }), added: false };
 	}
-	if (state.members.length >= ROOM_MAX_MEMBERS) return { state, added: false, full: true };
 
 	const next = bump(state, { members: sortMembers([...state.members, member]) });
 	// 先按「人数 ÷ 每队上限」把队补齐，再放人：第 6 个人进来时第一队刚好满，
 	// 不补齐的话他会一直坐在空闲池里，而队伍数不会自己长出来。
-	return { state: state.autoAssign ? autoPlace(restructure(next, false), member.id) : next, added: true, full: false };
+	return { state: state.autoAssign ? autoPlace(restructure(next, false), member.id) : next, added: true };
 }
 
 /** 把人从所有队里摘掉。返回的状态没有 bump，调用方自己决定要不要算一次改动。 */

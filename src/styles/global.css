@@ -364,6 +364,33 @@ body {
 	background: rgb(198 82 44 / 0.16);
 }
 
+/*
+ * 队伍分配区全屏（/party 的「全屏展示」）。
+ *
+ * 全屏元素的背板默认是黑的，这里跟着主题走；铺满屏幕后队伍卡按可用宽度自适应列数，
+ * 不再受页面容器 max-width 的限制。
+ *
+ * `.is-faux-fullscreen` 是退化模式：不支持元素级全屏的浏览器（典型是 iPad 上的 Safari）
+ * 用固定定位达到同样的效果，Esc 由 partyRoom.ts 里的 keydown 接住。
+ */
+#team-stage:fullscreen,
+#team-stage.is-faux-fullscreen {
+	overflow-y: auto;
+	background: var(--color-ink);
+	padding: 1.5rem;
+}
+
+#team-stage.is-faux-fullscreen {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+}
+
+#team-stage:fullscreen #team-grid,
+#team-stage.is-faux-fullscreen #team-grid {
+	grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
 @media (prefers-reduced-motion: reduce) {
 	html {
 		scroll-behavior: auto;

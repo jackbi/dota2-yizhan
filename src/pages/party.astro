@@ -236,9 +236,9 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 							<input
 								id="create-password"
 								name="password"
-								type="text"
+								type="password"
 								maxlength="24"
-								autocomplete="off"
+								autocomplete="new-password"
 								placeholder="随便定一个，念给队友"
 								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
 							/>
@@ -298,7 +298,8 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 			<p id="room-notice" style="display:none" class="rounded-xl border px-4 py-2.5 text-sm" role="status" aria-live="polite"></p>
 
 			<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
-				<div class="min-w-0 space-y-4">
+				{/* 全屏展示的作用范围：工具栏 + 队伍 + 空闲池（见 global.css 里 #team-stage 的规则）。 */}
+				<div id="team-stage" class="min-w-0 space-y-4">
 					<div class="rounded-2xl border border-line bg-surface p-4">
 						<div class="flex flex-wrap items-center gap-2">
 							<label class="mr-1 flex items-center gap-2 text-xs text-faint" for="team-size">
@@ -329,6 +330,19 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 								<input id="auto-assign" type="checkbox" class="accent-dota" />
 								新人自动入队
 							</label>
+							{/*
+								全屏展示：排完队往往要投屏或者摆第二块屏，这一块单独铺满屏幕最实用。
+								用 Fullscreen API 而不是另开一个页面——另开页面就得再同步一份房间状态。
+							*/}
+							<button
+								id="team-fullscreen"
+								type="button"
+								aria-pressed="false"
+								title="把队伍分配区铺满整个屏幕（Esc 退出）"
+								class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+							>
+								全屏展示
+							</button>
 						</div>
 						<p class="mt-2 text-xs text-faint">
 							房主可用：自动分队按「人数 ÷ 每队上限」补齐队伍数；随机重排保留队名只打乱人；

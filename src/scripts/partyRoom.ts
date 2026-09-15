@@ -82,19 +82,18 @@ const ROOM_KEY = 'dota2-party/room';
 type LobbyAnnounce = {
 	code: string;
 	name: string;
+	/** 房里现在几个人。不报上限：房间不设人数上限，报了反而要多解释一次。 */
 	count: number;
-	capacity: number;
 	/** 房主离开房间时的告别消息，收到就把这条从列表里删掉。 */
 	gone: boolean;
 };
 
-type LobbyEntry = { code: string; name: string; count: number; capacity: number; at: number };
+type LobbyEntry = { code: string; name: string; count: number; at: number };
 
 /** `avatar` 用空串表示「没有」，理由见 partyLogic 顶部关于 `JsonValue` 的说明。 */
 type HelloPayload = { name: string; avatar: string };
 type SnapshotPayload = { state: RoomState; chat: ChatMessage[] };
 type ChatPayload = { message: ChatMessage };
-type RejectPayload = { reason: string };
 
 /** 非房主发给房主的指令。房主自己改状态不走这里，直接调 partyLogic。 */
 type Cmd =
@@ -151,6 +150,8 @@ const dom = {
 	roomNotice: $('#room-notice'),
 	teamSize: $<HTMLInputElement>('#team-size'),
 	autoAssign: $<HTMLInputElement>('#auto-assign'),
+	teamStage: $('#team-stage'),
+	teamFullscreen: $<HTMLButtonElement>('#team-fullscreen'),
 	teamGrid: $('#team-grid'),
 	freePool: $('#free-pool'),
 	rollList: $<HTMLOListElement>('#roll-list'),
@@ -208,7 +209,6 @@ interface RoomActions {
 	chat: MessageAction<ChatPayload>;
 	cmd: MessageAction<Cmd>;
 	bye: MessageAction<null>;
-	reject: MessageAction<RejectPayload>;
 }
 
 /** 取一个不依赖 Math.random 实现质量的随机源给房间逻辑用。 */
@@ -405,7 +405,6 @@ function attachLobbyHandlers(handle: Room): void {
 				code: data.code,
 				name: data.name,
 				count: data.count,
-				capacity: data.capacity,
 				at: Date.now(),
 			});
 		}
@@ -448,7 +447,6 @@ function announceNow(target?: string): void {
 		code: room.code,
 		name: room.name,
 		count: room.members.length,
-		capacity: L.ROOM_MAX_MEMBERS,
 		gone: false,
 	};
 	void announce.send(payload, target ? { target } : undefined);
@@ -458,7 +456,7 @@ function announceNow(target?: string): void {
 function announceGone(code: string): void {
 	if (!lobbyRoom) return;
 	const announce = lobbyRoom.makeAction<LobbyAnnounce>('announce');
-	void announce.send({ code, name: '', count: 0, capacity: 0, gone: true });
+	void announce.send({ code, name: '', count: 0, gone: true });
 }
 
 function renderLobby(): void {
@@ -474,7 +472,7 @@ function renderLobby(): void {
 			const head = h('div', 'flex items-baseline gap-2');
 			head.append(
 				h('h3', 'min-w-0 flex-1 truncate text-sm font-medium text-cream', entry.name),
-				h('span', 'shrink-0 text-xs text-faint', `${entry.count}/${entry.capacity}`),
+				h('span', 'shrink-0 text-xs text-faint', `${entry.count} 人`),
 			);
 			const meta = h('p', 'mt-1 text-xs text-faint');
 			meta.append(document.createTextNode('房间码 '));
@@ -521,6 +519,8 @@ function writeSession(session: RoomSession | null): void {
 }
 
 function showSetup(): void {
+	// 离房时如果还全屏着，先退出来：否则全屏的会是那个已经被藏起来的区域，屏幕上只剩一片空。
+	if (stageIsFullscreen()) setStageFullscreen(false);
 	setVisible(dom.setup, true);
 	setVisible(dom.room, false);
 	document.body.dataset.partyView = 'setup';
@@ -561,7 +561,6 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 		chat: handle.makeAction<ChatPayload>('chat'),
 		cmd: handle.makeAction<Cmd>('cmd'),
 		bye: handle.makeAction<null>('bye'),
-		reject: handle.makeAction<RejectPayload>('reject'),
 	};
 	roomActions = actions;
 
@@ -580,11 +579,6 @@ async function enterRoom(options: { code: string; password: string; asHost: bool
 	actions.chat.onMessage = (payload) => {
 		chat = L.appendChat(chat, payload.message);
 		renderChat();
-	};
-	actions.reject.onMessage = (payload) => {
-		// 房间满了：明确告诉对方，别让他对着「正在连接…」发呆。
-		setNotice(payload.reason === 'full' ? `这个房间满了（上限 ${L.ROOM_MAX_MEMBERS} 人）。` : '房主拒绝了这次加入。', 'error', true);
-		dom.chatInput.disabled = true;
 	};
 
 	handle.onPeerJoin = (peerId) => {
@@ -787,11 +781,6 @@ function hostAddMember(peerId: string, payload: HelloPayload): void {
 
 	const before = room;
 	const result = L.upsertMember(room, member);
-	if (result.full) {
-		// 满员要明确告诉对方，静默丢弃会让人以为是网络问题。
-		void roomActions.reject.send({ reason: 'full' }, { target: peerId });
-		return;
-	}
 	room = result.state;
 	pushMessage(systemMessage(`${name} 加入了房间`));
 	renderRoom();
@@ -907,7 +896,7 @@ function renderNet(): void {
 
 	const parts: string[] = [];
 	if (roomCode && room) {
-		parts.push(`房间内 ${room.members.length}/${L.ROOM_MAX_MEMBERS} 人`);
+		parts.push(`房间内 ${room.members.length} 人`);
 		// 房主是否真的在大厅里可见，是「大厅看不到房间」那类问题的唯一线索，这里一并摆出来。
 		if (isHost) parts.push(`大厅可见 · 已连 ${lobbyPeers} 人`);
 	} else {
@@ -935,7 +924,7 @@ function renderRoom(): void {
 	const state = room;
 	dom.roomTitle.textContent = state.name;
 	dom.roomCode.textContent = state.code;
-	dom.roomCount.textContent = `${state.members.length}/${L.ROOM_MAX_MEMBERS} 人`;
+	dom.roomCount.textContent = `${state.members.length} 人`;
 	dom.roomRole.textContent = isHost ? '房主' : '成员';
 	setHostToolsVisible();
 	dom.teamSize.value = String(state.teamSize);
@@ -1125,6 +1114,49 @@ function renderChat(): void {
 	dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
 }
 
+// ---------------------------------------------------------------- 全屏展示
+
+/**
+ * 队伍分配区全屏。
+ *
+ * 用 Fullscreen API 而不是「另开一个页面」：房间状态在房主的 `room` 里、成员各自在浏览器里，
+ * 另开一个页面就得再同步一份状态，还要处理哪个窗口说了算。全屏只是把这一个区域放大，
+ * 零同步成本，Esc 就能退出——排完队要投屏或者摆第二块屏，这就够了。
+ *
+ * 不支持元素级全屏的浏览器（典型是 iPad 上的 Safari）退回到固定定位的「伪全屏」，
+ * 按钮照样可用，退出键由上面绑的 keydown 接住。
+ */
+function stageIsFullscreen(): boolean {
+	return document.fullscreenElement === dom.teamStage || dom.teamStage.classList.contains('is-faux-fullscreen');
+}
+
+function syncStageFullscreenLabel(): void {
+	const active = stageIsFullscreen();
+	dom.teamFullscreen.textContent = active ? '退出全屏' : '全屏展示';
+	dom.teamFullscreen.setAttribute('aria-pressed', String(active));
+}
+
+function setStageFullscreen(on: boolean): void {
+	if (typeof dom.teamStage.requestFullscreen !== 'function') {
+		dom.teamStage.classList.toggle('is-faux-fullscreen', on);
+		syncStageFullscreenLabel();
+		return;
+	}
+	if (on) {
+		// 浏览器可能拒绝（比如不是用户手势触发的），那就退回固定定位，别让按钮点了没反应。
+		const pending = dom.teamStage.requestFullscreen() as Promise<void> | undefined;
+		void pending?.catch(() => dom.teamStage.classList.add('is-faux-fullscreen')).finally(syncStageFullscreenLabel);
+		return;
+	}
+	if (document.fullscreenElement === dom.teamStage) void document.exitFullscreen();
+	dom.teamStage.classList.remove('is-faux-fullscreen');
+	syncStageFullscreenLabel();
+}
+
+function toggleStageFullscreen(): void {
+	setStageFullscreen(!stageIsFullscreen());
+}
+
 // ---------------------------------------------------------------- 事件
 
 function bindEvents(): void {
@@ -1229,6 +1261,15 @@ function bindEvents(): void {
 		dom.joinPassword.focus();
 		dom.joinForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	});
+
+	dom.teamFullscreen.addEventListener('click', () => void toggleStageFullscreen());
+	// Esc 退出全屏由浏览器负责；固定定位那个退化模式得自己接。
+	document.addEventListener('keydown', (event) => {
+		if (event.key === 'Escape' && dom.teamStage.classList.contains('is-faux-fullscreen')) {
+			setStageFullscreen(false);
+		}
+	});
+	document.addEventListener('fullscreenchange', () => syncStageFullscreenLabel());
 
 	dom.roomCopy.addEventListener('click', () => {
 		const url = `${location.origin}${location.pathname}${HASH_PREFIX}${roomCode}`;
