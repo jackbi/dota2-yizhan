@@ -10,6 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "rebuild": "sh scripts/rebuild.sh",
+    "check:party": "node --experimental-strip-types scripts/partyLogic.check.ts",
     "astro": "astro"
   },
   "dependencies": {
@@ -17,7 +18,8 @@
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.10",
     "cookie": "^2.0.1",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "trystero": "^0.25.4"
   },
   "allowScripts": {
     "esbuild": true

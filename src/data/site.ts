@@ -2,6 +2,7 @@ import type { Platform } from './types';
 
 export const NAV = [
 	{ href: '/', label: '首页' },
+	{ href: '/party', label: '开黑房间' },
 	{ href: '/live', label: '分屏直播' },
 	{ href: '/ob', label: 'OB 大家庭' },
 	{ href: '/news', label: '新闻' },

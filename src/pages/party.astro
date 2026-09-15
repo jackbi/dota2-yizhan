@@ -1,0 +1,335 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+/**
+ * 开黑房间。
+ *
+ * 页面本身是**构建期预渲染的静态页**，没有任何服务端逻辑：房间的传输走 WebRTC
+ * （Trystero 的信令 + P2P 数据通道，见 `src/scripts/partyRoom.ts`），
+ * 服务端只提供两样已有的东西——静态 HTML 和 `/api/me`（Steam 昵称与头像）。
+ *
+ * 为什么不放服务端：本站是每 5 分钟重建并重启一次的静态站（见 README「部署与重建频率」），
+ * 任何存在 SSR 进程内存里的房间都会被那次重启清空；P2P 房间不吃这一套。
+ *
+ * 这里的标记分成两块，靠 `hidden` 切换：
+ * - `#party-setup`：身份 + 建房/加入 + 大厅列表；
+ * - `#party-room`：房间内（队伍、roll、聊天）。
+ * 队伍与成员卡由脚本生成（昵称是用户输入，必须走 textContent，不拼 HTML）。
+ */
+---
+
+<Layout
+	title="开黑房间 · DOTA2 驿站"
+	description="纯前端的开黑房间：建房、分队伍、roll 点、聊天，打开同一个链接就在同一个房间。"
+>
+	<section class="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
+		<div class="mb-6">
+			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">DOTA2 驿站 · 开黑房间</p>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">开黑房间</h1>
+			<p class="mt-3 max-w-3xl text-muted">
+				建房、拉人、分队、roll 点、边聊边排。房间走浏览器之间的点对点连接，
+				本站不存房间、不存聊天记录——关掉页面房间就散了。
+			</p>
+		</div>
+
+		{
+			/*
+			 * 网络状态条。P2P 的失败模式（信令中继连不上、双方 NAT 打不通）在控制台之外
+			 * 完全看不见，页面上必须有一条能说明「现在到底连上没有」的提示，
+			 * 否则用户只会看到「房间里没人」而不知道该重试还是该换网络。
+			 */
+		}
+		<div
+			id="net-status"
+			class="mb-5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface px-4 py-2.5 text-xs text-faint"
+			role="status"
+			aria-live="polite"
+		>
+			<span class="inline-flex items-center gap-1.5">
+				<span id="net-dot" class="h-2 w-2 shrink-0 rounded-full bg-faint"></span>
+				<span id="net-text">正在连接信令中继…</span>
+			</span>
+			<span id="net-detail" class="text-faint/80"></span>
+		</div>
+
+		<!-- ==================================================== 设置区 -->
+		<div id="party-setup" class="space-y-5">
+			<section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="identity-title">
+				<h2 id="identity-title" class="font-display text-lg">你是谁</h2>
+				<p class="mt-1 text-sm text-faint">
+					登录 Steam 的话，房间里直接显示 Steam 昵称和头像；没登录就自己起个昵称，头像用昵称首字母。
+				</p>
+
+				<div class="mt-4">
+					{/* 静态先渲染未登录态，脚本拿到 /api/me 后再换成 Steam 身份（页面是预渲染的）。 */}
+					<div id="identity-guest" class="flex flex-col gap-3 sm:flex-row sm:items-end">
+						<label class="flex-1" for="nickname">
+							<span class="mb-1 block text-xs font-medium text-faint">昵称</span>
+							<input
+								id="nickname"
+								name="nickname"
+								type="text"
+								maxlength="16"
+								autocomplete="nickname"
+								placeholder="最多 16 个字，例如：大魔导师"
+								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							/>
+						</label>
+						<a
+							href="/api/auth/steam/login"
+							class="inline-flex shrink-0 items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:bg-surface-2 hover:text-cream"
+						>
+							<svg height="16" viewBox="0 0 24 24" class="shrink-0 fill-current" aria-hidden="true">
+								<path
+									d="M23.938 12c0 6.595-5.353 11.938-11.957 11.938A11.95 11.95 0 0 1 .476 15.254l4.583 1.892a3.382 3.382 0 0 0 6.696-.823l4.067-2.898a4.512 4.512 0 0 0 4.611-4.5 4.511 4.511 0 0 0-9.02 0v.057l-2.85 4.125a3.37 3.37 0 0 0-2.094.583L.062 11.042C.553 4.895 5.7.062 11.981.062 18.585.062 23.938 5.405 23.938 12zm-16.38 6.176l-1.469-.607a2.541 2.541 0 0 0 1.31 1.242 2.544 2.544 0 0 0 3.32-1.367 2.51 2.51 0 0 0 .005-1.94A2.53 2.53 0 0 0 7.48 14.1l1.516.625a1.862 1.862 0 0 1 1.006 2.44 1.87 1.87 0 0 1-2.445 1.012zm8.365-6.253c-1.656 0-3.004-1.348-3.004-2.999s1.348-2.999 3.004-2.999 3.004 1.348 3.004 3-1.343 2.998-3.004 2.998zm.005-.75a2.254 2.254 0 0 0 0-4.505 2.257 2.257 0 0 0-2.258 2.251 2.263 2.263 0 0 0 2.258 2.253z"
+								></path>
+							</svg>
+							用 Steam 登录
+						</a>
+					</div>
+
+					{/* 这两个块带 `flex`，所以初值必须走 style 而不是 `hidden` 属性：Tailwind 的
+					    display 工具类在 utilities 层，会盖掉 base 层的 `[hidden]`。 */}
+					<div id="identity-steam" style="display:none" class="flex items-center gap-3">
+						<span id="identity-avatar" class="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-2 text-sm text-faint"></span>
+						<div class="min-w-0">
+							<p class="text-xs text-faint">已用 Steam 登录</p>
+							<p id="identity-name" class="truncate text-sm font-medium text-cream"></p>
+						</div>
+						<a href="/me" class="ml-auto shrink-0 text-xs text-dota-light transition hover:text-gold">我的战绩 →</a>
+					</div>
+				</div>
+			</section>
+
+			<div class="grid gap-5 lg:grid-cols-2">
+				<form id="join-form" class="rounded-2xl border border-line bg-surface p-5" novalidate>
+					<h2 class="font-display text-lg">加入房间</h2>
+					<p class="mt-1 text-sm text-faint">拿到房间码或邀请链接就能进。密码是房主建的，问一下队友。</p>
+					<div class="mt-4 space-y-3">
+						<label class="block" for="join-code">
+							<span class="mb-1 block text-xs font-medium text-faint">房间码</span>
+							<input
+								id="join-code"
+								name="code"
+								type="text"
+								maxlength="5"
+								autocomplete="off"
+								autocapitalize="characters"
+								spellcheck="false"
+								placeholder="5 位，例如 K7M2P"
+								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 font-display text-lg tracking-[0.3em] text-cream uppercase placeholder:font-body placeholder:text-sm placeholder:tracking-normal placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							/>
+						</label>
+						<label class="block" for="join-password">
+							<span class="mb-1 block text-xs font-medium text-faint">房间密码</span>
+							<input
+								id="join-password"
+								name="password"
+								type="password"
+								maxlength="24"
+								autocomplete="off"
+								placeholder="房主设置的密码"
+								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							/>
+						</label>
+						<button
+							type="submit"
+							class="w-full rounded-lg bg-dota px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-dota-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+						>
+							加入房间
+						</button>
+					</div>
+					<p data-form-error class="mt-3 hidden text-xs text-[#f0a08a]"></p>
+				</form>
+
+				<form id="create-form" class="rounded-2xl border border-line bg-surface p-5" novalidate>
+					<h2 class="font-display text-lg">创建房间</h2>
+					<p class="mt-1 text-sm text-faint">
+						你是房主：负责分队伍，房间也随你关页面而结束。建好后把邀请链接发到群里。
+					</p>
+					<div class="mt-4 space-y-3">
+						<label class="block" for="create-name">
+							<span class="mb-1 block text-xs font-medium text-faint">房间名称</span>
+							<input
+								id="create-name"
+								name="name"
+								type="text"
+								maxlength="16"
+								autocomplete="off"
+								placeholder="例如：周末天梯五连"
+								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							/>
+						</label>
+						<label class="block" for="create-password">
+							<span class="mb-1 block text-xs font-medium text-faint">房间密码</span>
+							<input
+								id="create-password"
+								name="password"
+								type="text"
+								maxlength="24"
+								autocomplete="off"
+								placeholder="随便定一个，念给队友"
+								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							/>
+						</label>
+						<button
+							type="submit"
+							class="w-full rounded-lg border border-dota bg-dota/15 px-4 py-2.5 text-sm font-semibold text-dota-light transition hover:bg-dota/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+						>
+							创建房间
+						</button>
+					</div>
+					<p data-form-error class="mt-3 hidden text-xs text-[#f0a08a]"></p>
+				</form>
+			</div>
+
+			<section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="lobby-title">
+				<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+					<h2 id="lobby-title" class="font-display text-lg">大厅</h2>
+					<p id="lobby-count" class="text-xs text-faint"></p>
+				</div>
+				<ul id="lobby-list" class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3"></ul>
+				<p id="lobby-empty" class="mt-3 text-sm text-faint">
+					现在还没有人开房。你也可以直接建房——队友只要有房间码就能进来，不必在这里出现。
+				</p>
+			</section>
+		</div>
+
+		<!-- ==================================================== 房间区 -->
+		<div id="party-room" hidden class="space-y-5">
+			<div class="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
+				<div class="min-w-0 flex-1">
+					<h2 id="room-title" class="truncate font-display text-xl"></h2>
+					<p class="mt-1 text-xs text-faint">
+						房间码 <span id="room-code" class="font-display tracking-[0.2em] text-gold"></span>
+						<span class="mx-1.5 text-line">|</span>
+						<span id="room-count"></span>
+						<span id="room-role" class="ml-2 rounded bg-surface-3 px-1.5 py-0.5 text-[11px] text-gold"></span>
+					</p>
+				</div>
+				<button
+					id="room-copy"
+					type="button"
+					class="rounded-lg border border-line px-3 py-2 text-xs text-muted transition hover:border-dota hover:text-cream"
+				>
+					复制邀请链接
+				</button>
+				<button
+					id="room-leave"
+					type="button"
+					class="rounded-lg border border-line px-3 py-2 text-xs text-muted transition hover:border-dota hover:text-cream"
+				>
+					离开房间
+				</button>
+			</div>
+
+			<p id="room-notice" hidden class="rounded-xl border px-4 py-2.5 text-sm" role="status" aria-live="polite"></p>
+
+			<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
+				<div class="min-w-0 space-y-4">
+					<div class="rounded-2xl border border-line bg-surface p-4">
+						<div class="flex flex-wrap items-center gap-2">
+							<label class="mr-1 flex items-center gap-2 text-xs text-faint" for="team-size">
+								每队上限
+								<input
+									id="team-size"
+									type="number"
+									min="1"
+									max="10"
+									step="1"
+									value="5"
+									class="w-16 rounded-md border border-line bg-ink-2 px-2 py-1 text-center text-sm text-cream focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+								/>
+							</label>
+							<button type="button" data-host-tool="autoForm" class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+								>按人数自动分队</button
+							>
+							<button type="button" data-host-tool="randomize" class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+								>随机重排</button
+							>
+							<button type="button" data-host-tool="byRoll" class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+								>按 roll 蛇形分队</button
+							>
+							<button type="button" data-host-tool="addTeam" class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+								>新增队伍</button
+							>
+							<label class="ml-auto flex items-center gap-2 text-xs text-faint" for="auto-assign">
+								<input id="auto-assign" type="checkbox" class="accent-dota" />
+								新人自动入队
+							</label>
+						</div>
+						<p class="mt-2 text-xs text-faint">
+							房主可用：自动分队按「人数 ÷ 每队上限」补齐队伍数；随机重排保留队名只打乱人；
+							按 roll 蛇形分队要大家先 roll 点。改「每队上限」会把超出的人放回空闲池。
+						</p>
+					</div>
+
+					<div id="team-grid" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"></div>
+					<div id="free-pool"></div>
+				</div>
+
+				<aside class="min-w-0 space-y-4 lg:sticky lg:top-20 lg:self-start">
+					<section class="rounded-2xl border border-line bg-surface p-4" aria-labelledby="roll-title">
+						<div class="flex flex-wrap items-center gap-2">
+							<h2 id="roll-title" class="font-display text-sm">
+								Roll 点 <span id="roll-round" class="text-faint"></span>
+							</h2>
+							<div class="ml-auto flex items-center gap-2">
+								<button
+									id="roll-btn"
+									type="button"
+									class="rounded-md bg-dota px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-dota-dark"
+								>
+									Roll
+								</button>
+								<button
+									id="roll-reset"
+									type="button"
+									data-host-tool="clearRolls"
+									class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+								>
+									重开一轮
+								</button>
+							</div>
+						</div>
+						<ol id="roll-list" class="mt-3 space-y-1.5 text-sm"></ol>
+						<p id="roll-empty" class="mt-2 text-xs text-faint">还没人 roll。谁先选人？roll 一把。</p>
+					</section>
+
+					<section class="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface" aria-labelledby="chat-title">
+						<h2 id="chat-title" class="border-b border-line px-4 py-3 font-display text-sm">聊天</h2>
+						<ol id="chat-log" class="max-h-[26rem] min-h-[12rem] flex-1 space-y-2.5 overflow-y-auto p-4 text-sm"></ol>
+						<form id="chat-form" class="flex gap-2 border-t border-line p-3" novalidate>
+							<label class="sr-only" for="chat-input">聊天内容</label>
+							<input
+								id="chat-input"
+								type="text"
+								maxlength="300"
+								autocomplete="off"
+								placeholder="说点什么…"
+								class="min-w-0 flex-1 rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+							/>
+							<button
+								type="submit"
+								class="shrink-0 rounded-lg border border-dota bg-dota/15 px-3 py-2 text-sm text-dota-light transition hover:bg-dota/25"
+							>
+								发送
+							</button>
+						</form>
+					</section>
+				</aside>
+			</div>
+		</div>
+
+		<noscript>
+			<p class="rounded-2xl border border-line bg-surface p-4 text-sm leading-relaxed text-muted">
+				开黑房间完全靠浏览器的点对点连接（WebRTC）跑，没有 JavaScript 就没有房间。
+				要一起玩的话先用语音或群聊约好，页面上其它内容不受影响。
+			</p>
+		</noscript>
+	</section>
+
+	<script>
+		import '../scripts/partyRoom';
+	</script>
+</Layout>
