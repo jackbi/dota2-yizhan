@@ -168,7 +168,7 @@ body {
 	line-height: 1.85;
 	overflow-wrap: break-word;
 }
-.nga-post,
+.nga-post strong,
 .hupu-post strong {
 	color: var(--color-cream);
 	font-weight: 600;
