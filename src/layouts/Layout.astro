@@ -41,11 +41,18 @@ const path = Astro.url.pathname;
 		<header class="sticky top-0 z-50 border-b border-line bg-ink/80 backdrop-blur-xl">
 			<div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
 				<a href="/" class="group flex items-center gap-2.5">
-					<span class="flex h-9 w-9 items-center justify-center rounded-md bg-dota text-white shadow-lg shadow-dota/30 transition group-hover:bg-dota-dark">
-						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-							<path d="M4 4h16v3H4zM7 8h10v3H7zM9 12h6v3H9zM11 16h2v3h-2z" fill="currentColor" />
-						</svg>
-					</span>
+					{/*
+						站点 logo 走 public/logo.png（和 /hero-filters/*.png 一样是 public 静态资源）。
+						图里虽然烧了「DOTA2 驿站」字样，但在 40px 下认不出来，所以旁边的文字保留。
+						`alt=""` 是故意的：旁边的文字已经念出了站点名，读屏不该听两遍。
+					*/}
+					<img
+						src="/logo.png"
+						alt=""
+						width="40"
+						height="40"
+						class="h-10 w-10 rounded-md shadow-lg shadow-dota/30 transition group-hover:brightness-110"
+					/>
 					<span class="font-display text-lg tracking-wide">DOTA2 驿站</span>
 				</a>
 
@@ -111,11 +118,7 @@ const path = Astro.url.pathname;
 			<div class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-10 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
 				<div>
 					<div class="flex items-center gap-2.5">
-						<span class="flex h-8 w-8 items-center justify-center rounded-md bg-dota text-white">
-							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-								<path d="M4 4h16v3H4zM7 8h10v3H7zM9 12h6v3H9zM11 16h2v3h-2z" fill="currentColor" />
-							</svg>
-						</span>
+						<img src="/logo.png" alt="" width="32" height="32" class="h-8 w-8 rounded-md" />
 						<span class="font-display">DOTA2 驿站</span>
 					</div>
 					<p class="mt-3 max-w-md text-sm text-muted">
