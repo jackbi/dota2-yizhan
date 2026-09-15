@@ -1,0 +1,92 @@
+---
+/**
+ * 页头的登录入口。
+ *
+ * 静态渲染出**未登录**状态（一个指向登录路由的普通链接），登录后再由下面的脚本换成头像。
+ * 这么绕一圈是因为站内绝大多数页面是构建期生成的纯 HTML，渲染时根本不知道谁在看——
+ * 若要在服务端出登录态，就得把所有页面都改成 SSR，代价远大于一次 `/api/me` 请求。
+ *
+ * 未登录态同时是没有 JS 时的兜底：`/api/auth/steam/login` 是 GET 跳转，直接点就能用。
+ */
+---
+
+<div id="auth-entry" class="flex items-center gap-2">
+	<a
+		href="/api/auth/steam/login"
+		class="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-medium text-muted transition hover:border-dota hover:bg-surface-2 hover:text-cream"
+	>
+		<svg height="16" viewBox="0 0 24 24" class="shrink-0 fill-current" aria-hidden="true">
+			<path
+				d="M23.938 12c0 6.595-5.353 11.938-11.957 11.938A11.95 11.95 0 0 1 .476 15.254l4.583 1.892a3.382 3.382 0 0 0 6.696-.823l4.067-2.898a4.512 4.512 0 0 0 4.611-4.5 4.511 4.511 0 0 0-9.02 0v.057l-2.85 4.125a3.37 3.37 0 0 0-2.094.583L.062 11.042C.553 4.895 5.7.062 11.981.062 18.585.062 23.938 5.405 23.938 12zm-16.38 6.176l-1.469-.607a2.541 2.541 0 0 0 1.31 1.242 2.544 2.544 0 0 0 3.32-1.367 2.51 2.51 0 0 0 .005-1.94A2.53 2.53 0 0 0 7.48 14.1l1.516.625a1.862 1.862 0 0 1 1.006 2.44 1.87 1.87 0 0 1-2.445 1.012zm8.365-6.253c-1.656 0-3.004-1.348-3.004-2.999s1.348-2.999 3.004-2.999 3.004 1.348 3.004 3-1.343 2.998-3.004 2.998zm.005-.75a2.254 2.254 0 0 0 0-4.505 2.257 2.257 0 0 0-2.258 2.251 2.263 2.263 0 0 0 2.258 2.253z"
+			></path>
+		</svg>
+		<span class="hidden sm:inline">Steam 登录</span>
+	</a>
+</div>
+
+<script>
+	interface SessionUser {
+		accountId: number;
+		name: string;
+		avatar: string;
+	}
+
+	/**
+	 * 全部用 createElement + textContent 拼 DOM。
+	 *
+	 * 昵称来自 Steam、头像 URL 来自 STRATZ，都是**用户可控**的输入；用 innerHTML 拼字符串
+	 * 就等于把 XSS 挂在每个页面的页头上。这里不给任何注入留口子。
+	 */
+	function renderUser(container: HTMLElement, user: SessionUser): void {
+		container.textContent = '';
+
+		const profile = document.createElement('a');
+		profile.href = '/me';
+		profile.className =
+			'flex items-center gap-2 rounded-md border border-line py-1 pl-1 pr-3 transition hover:border-dota hover:bg-surface-2';
+		profile.title = '查看我的战绩';
+
+		if (user.avatar) {
+			const img = document.createElement('img');
+			img.src = user.avatar;
+			img.alt = '';
+			img.width = 28;
+			// Steam 的头像 CDN 会拒掉带 Referer 的请求（站内其它头像也一并用 no-referrer）。
+			img.referrerPolicy = 'no-referrer';
+			// 取不到时不要让破图占位，直接摘掉。
+			img.addEventListener('error', () => img.remove());
+			img.className = 'h-7 w-7 shrink-0 rounded object-cover';
+			profile.append(img);
+		}
+
+		const name = document.createElement('span');
+		name.textContent = user.name;
+		name.className = 'max-w-28 truncate text-sm font-medium text-cream';
+		profile.append(name);
+
+		const logout = document.createElement('form');
+		logout.method = 'POST';
+		logout.action = '/api/auth/logout';
+
+		const button = document.createElement('button');
+		button.type = 'submit';
+		button.className = 'rounded-md px-2 py-2 text-xs text-faint transition hover:bg-surface-2 hover:text-cream';
+		button.textContent = '登出';
+		button.title = '登出';
+
+		logout.append(button);
+		container.append(profile, logout);
+	}
+
+	const entry = document.getElementById('auth-entry');
+	if (entry) {
+		fetch('/api/me', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+			.then((res) => (res.ok ? res.json() : null))
+			.then((data: { user: SessionUser | null } | null) => {
+				// 未登录就保持静态渲染出来的那个链接，什么都不用做。
+				if (data?.user) renderUser(entry, data.user);
+			})
+			// 取不到登录态不是错误：页头保持未登录样子即可，不该在控制台吓人。
+			.catch(() => {});
+	}
+</script>

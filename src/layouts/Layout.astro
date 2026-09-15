@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import AuthEntry from '../components/AuthEntry.astro';
 import { NAV } from '../data/site';
 
 interface Props {
@@ -66,18 +67,21 @@ const path = Astro.url.pathname;
 					}
 				</nav>
 
-				<button
-					id="menu-btn"
-					type="button"
-					class="flex h-10 w-10 items-center justify-center rounded-md border border-line text-cream transition hover:bg-surface-2 lg:hidden"
-					aria-label="打开导航菜单"
-					aria-controls="mobile-menu"
-					aria-expanded="false"
-				>
-					<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-					</svg>
-				</button>
+				<div class="flex items-center gap-2">
+					<AuthEntry />
+					<button
+						id="menu-btn"
+						type="button"
+						class="flex h-10 w-10 items-center justify-center rounded-md border border-line text-cream transition hover:bg-surface-2 lg:hidden"
+						aria-label="打开导航菜单"
+						aria-controls="mobile-menu"
+						aria-expanded="false"
+					>
+						<svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+						</svg>
+					</button>
+				</div>
 			</div>
 
 			<nav id="mobile-menu" class="hidden border-t border-line bg-ink lg:hidden" aria-label="移动端导航" hidden>

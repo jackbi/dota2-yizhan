@@ -1,0 +1,55 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { sessionConfigured } from '../lib/session';
+
+export const prerender = false;
+
+const configured = sessionConfigured();
+
+/** 回调失败时带来的原因码，翻成能看懂的话。 */
+const ERROR_TEXT: Record<string, string> = {
+	state: '登录请求已过期或不是从本站发起的，请重新点击登录。',
+	verify: 'Steam 没能确认这次登录，请重试。',
+};
+
+const error = Astro.url.searchParams.get('error') ?? '';
+const errorText = ERROR_TEXT[error] ?? '';
+---
+
+<Layout title="使用 Steam 登录 | DOTA2 驿站" description="用 Steam 账号登录，查看自己的 DOTA2 战绩与比赛记录。">
+	<div class="mx-auto max-w-2xl px-4 py-20 sm:px-6">
+		<div class="rounded-xl border border-line bg-surface px-6 py-12 text-center">
+			<div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-dota/15">
+				<svg height="26" viewBox="0 0 24 24" class="fill-dota-light" aria-hidden="true">
+					<path
+						d="M23.938 12c0 6.595-5.353 11.938-11.957 11.938A11.95 11.95 0 0 1 .476 15.254l4.583 1.892a3.382 3.382 0 0 0 6.696-.823l4.067-2.898a4.512 4.512 0 0 0 4.611-4.5 4.511 4.511 0 0 0-9.02 0v.057l-2.85 4.125a3.37 3.37 0 0 0-2.094.583L.062 11.042C.553 4.895 5.7.062 11.981.062 18.585.062 23.938 5.405 23.938 12zm-16.38 6.176l-1.469-.607a2.541 2.541 0 0 0 1.31 1.242 2.544 2.544 0 0 0 3.32-1.367 2.51 2.51 0 0 0 .005-1.94A2.53 2.53 0 0 0 7.48 14.1l1.516.625a1.862 1.862 0 0 1 1.006 2.44 1.87 1.87 0 0 1-2.445 1.012zm8.365-6.253c-1.656 0-3.004-1.348-3.004-2.999s1.348-2.999 3.004-2.999 3.004 1.348 3.004 3-1.343 2.998-3.004 2.998zm.005-.75a2.254 2.254 0 0 0 0-4.505 2.257 2.257 0 0 0-2.258 2.251 2.263 2.263 0 0 0 2.258 2.253z"
+					></path>
+				</svg>
+			</div>
+
+			<h1 class="mt-5 font-display text-2xl text-cream">用 Steam 登录</h1>
+			<p class="mx-auto mt-3 max-w-md text-sm leading-relaxed text-muted">
+				登录后可以查看自己的比赛记录、英雄统计与操作分析。我们只读取你在 DOTA2 里的公开比赛数据，
+				<span class="text-cream">不会</span>拿到你的 Steam 密码，也不会代你进行任何操作。
+			</p>
+
+			{errorText && <p class="mx-auto mt-4 max-w-md rounded-md bg-surface-3 px-4 py-2 text-sm text-gold">{errorText}</p>}
+
+			{
+				configured ? (
+					<a
+						href="/api/auth/steam/login"
+						class="mt-7 inline-flex items-center gap-2 rounded-md bg-dota px-6 py-3 text-sm font-medium text-white transition hover:bg-dota-dark"
+					>
+						使用 Steam 登录
+					</a>
+				) : (
+					<p class="mt-7 rounded-md border border-line bg-surface-2 px-4 py-3 text-left text-sm text-muted">
+						站点尚未配置 <code class="text-gold">SESSION_SECRET</code>，无法签发登录状态。
+						请参考 README 的「环境变量」一节补齐后重启服务。
+					</p>
+				)
+			}
+		</div>
+	</div>
+</Layout>
