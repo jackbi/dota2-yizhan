@@ -17,6 +17,17 @@ pnpm preview    # 预览构建产物（会起服务端，不是纯静态预览�
 **定时重建别用 `pnpm build`，用 `pnpm rebuild`**：就地重建会把正在服务的资源挖空，原因见
 「[部署与重建频率](#部署与重建频率)」。
 
+站点的 logo / 标签页图标是**从母版生成**的，不是手改的：
+
+```sh
+# 换 logo：替换 src/assets/logo.png（方形，1254px 或更大），然后
+sh scripts/logo-assets.sh   # 生成 public/{logo.webp, favicon.png, apple-touch-icon.png}
+```
+
+母版刻意放在 `src/assets/` 而不是 `public/`——`public/` 会原样进发布产物，而站点只需要几张
+128px 以内的小图（页眉的 WebP 是 4.7 KB，母版 PNG 是 590 KB）。标签页图标用 PNG 而不用 WebP：
+Safari 至今不支持 WebP 的 favicon。
+
 ## 主题色板
 
 颜色定义在 `src/styles/global.css` 的 `@theme` 里，是一条约定的「余烬」梯度：

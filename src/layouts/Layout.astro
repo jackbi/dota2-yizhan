@@ -18,8 +18,9 @@ const path = Astro.url.pathname;
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="description" content={description} />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
+		{/* 标签页图标用 logo 生成的 PNG 而不是 WebP：Safari 至今不支持 WebP 的 favicon。 */}
+		<link rel="icon" type="image/png" href="/favicon.png" sizes="96x96" />
+		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<meta name="generator" content={Astro.generator} />
 		<title>{title}</title>
 		<link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -42,12 +43,13 @@ const path = Astro.url.pathname;
 			<div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
 				<a href="/" class="group flex items-center gap-2.5">
 					{/*
-						站点 logo 走 public/logo.png（和 /hero-filters/*.png 一样是 public 静态资源）。
-						图里虽然烧了「DOTA2 驿站」字样，但在 40px 下认不出来，所以旁边的文字保留。
-						`alt=""` 是故意的：旁边的文字已经念出了站点名，读屏不该听两遍。
+						站点 logo 是 public/logo.webp：由母版 src/assets/logo.png 转出来的 128px WebP（4.7 KB），
+						换 logo 跑 scripts/logo-assets.sh。母版刻意不放 public/，否则那张 1254px 原图会跟着发布产物走。
+						128px 够 40px 的显示在 3 倍屏上用。图里虽然烧了「DOTA2 驿站」字样，但在 40px 下认不出来，
+						所以旁边的文字保留。`alt=""` 是故意的：旁边的文字已经念出了站点名，读屏不该听两遍。
 					*/}
 					<img
-						src="/logo.png"
+						src="/logo.webp"
 						alt=""
 						width="40"
 						height="40"
@@ -118,7 +120,7 @@ const path = Astro.url.pathname;
 			<div class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-10 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
 				<div>
 					<div class="flex items-center gap-2.5">
-						<img src="/logo.png" alt="" width="32" height="32" class="h-8 w-8 rounded-md" />
+						<img src="/logo.webp" alt="" width="32" height="32" class="h-8 w-8 rounded-md" />
 						<span class="font-display">DOTA2 驿站</span>
 					</div>
 					<p class="mt-3 max-w-md text-sm text-muted">
