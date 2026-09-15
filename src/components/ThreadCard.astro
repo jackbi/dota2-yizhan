@@ -1,31 +1,48 @@
 ---
-import type { CommunityThread } from '../lib/ngaApi';
-import { formatMatchTime } from '../lib/format';
+import type { CommunityPost } from '../lib/communityFeed';
+import { SOURCE_LABEL } from '../lib/communityFeed';
+import { formatCount, formatMatchTime } from '../lib/format';
 
 interface Props {
-	thread: CommunityThread;
+	post: CommunityPost;
 	/** Unix 秒 */
 	nowSec: number;
 }
 
-const { thread, nowSec } = Astro.props;
+const { post, nowSec } = Astro.props;
+
+/** 虎扑没有站内详情页，直接跳原帖；外链开新标签，并给读屏补一句说明。 */
+const linkAttrs = post.external ? { target: '_blank', rel: 'noopener noreferrer' } : {};
 ---
 
 <a
-	href={`/community/nga/${thread.tid}`}
-	class="group flex flex-col rounded-2xl border border-line bg-surface p-4 transition hover:border-dota/40 hover:bg-surface-2"
+	href={post.href}
+	{...linkAttrs}
+	class="group flex h-full flex-col rounded-2xl border border-line bg-surface p-4 transition hover:border-dota/40 hover:bg-surface-2"
 >
 	<div class="flex items-start gap-3">
-		<h3 class="min-w-0 flex-1 font-display leading-snug transition group-hover:text-dota-light">{thread.title}</h3>
-		<span class="shrink-0 rounded-md bg-gold/15 px-2 py-1 text-xs font-semibold text-gold">{thread.replies} 回复</span>
+		<h3 class="min-w-0 flex-1 font-display leading-snug transition group-hover:text-dota-light">{post.title}</h3>
+		<span class="shrink-0 rounded-md bg-gold/15 px-2 py-1 text-xs font-semibold text-gold">{post.replies} 回复</span>
 	</div>
 
-	{thread.summary ? <p class="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{thread.summary}</p> : null}
+	{post.summary ? <p class="mt-2 line-clamp-3 text-sm leading-relaxed text-muted">{post.summary}</p> : null}
 
 	<div class="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 pt-3 text-xs text-faint">
-		<span class="truncate">{thread.author}</span>
+		<span class="shrink-0 rounded border border-line px-1.5 py-0.5 text-[10px] font-semibold text-muted">
+			{SOURCE_LABEL[post.source]}
+		</span>
+		<span class="truncate">{post.author}</span>
 		<span aria-hidden="true">·</span>
-		<span>最后回复 {formatMatchTime(thread.lastReplyAt, nowSec)}</span>
+		<span>最后回复 {formatMatchTime(post.lastReplyAt, nowSec)}</span>
+		{
+			post.views ? (
+				<>
+					<span aria-hidden="true">·</span>
+					<span title="浏览量">{formatCount(post.views)} 浏览</span>
+				</>
+			) : null
+		}
+		{post.external ? <span class="sr-only">（在新标签页打开虎扑原帖）</span> : null}
 		<svg class="ml-auto h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-gold" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 			<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 		</svg>

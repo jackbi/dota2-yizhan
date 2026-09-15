@@ -81,6 +81,19 @@ export function formatMatchTime(unix: number, nowSec: number): string {
 	return `${formatRelativeDay(unix, nowSec)} ${formatClock(unix)}`;
 }
 
+/**
+ * 按国内习惯把大数字写短：23.1 万 / 1.2 亿。
+ *
+ * 浏览数与播放量这类数字动辄五六位，原样铺在卡片上又长又难读；一万以下保持原样，
+ * 免得把"541"写成"0.1 万"这种反而看不出来的形式。
+ */
+export function formatCount(value: number): string {
+	if (!Number.isFinite(value) || value <= 0) return '0';
+	if (value >= 100_000_000) return `${(value / 100_000_000).toFixed(1)} 亿`;
+	if (value >= 10_000) return `${(value / 10_000).toFixed(1)} 万`;
+	return String(value);
+}
+
 /** 2026.09.06 — 2026.09.13，同一天只显示一个日期 */
 export function formatRange(start: number, end: number): string {
 	if (dayKey(start) === dayKey(end)) return formatDay(start);

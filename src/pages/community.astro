@@ -1,58 +1,103 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import ThreadCard from '../components/ThreadCard.astro';
-import type { CommunityThread } from '../lib/ngaApi';
-import { HOT_WINDOWS, fetchCommunityThreads } from '../lib/ngaApi';
+import { HOT_WINDOWS } from '../lib/ngaApi';
+import type { CommunityPost, CommunitySource } from '../lib/communityFeed';
+import { SOURCE_LABEL, countBySource, fetchCommunityFeed } from '../lib/communityFeed';
 
-let threads: CommunityThread[] = [];
+let posts: CommunityPost[] = [];
 try {
-	threads = await fetchCommunityThreads();
+	posts = await fetchCommunityFeed();
 } catch {
-	threads = [];
+	posts = [];
 }
 
 // 时间格式化统一用 Unix 秒。
 const now = Math.floor(Date.now() / 1000);
 const DEFAULT_WINDOW = HOT_WINDOWS[0].days;
-const countOf = (days: number) => threads.filter((thread) => thread.windows.includes(days)).length;
+
+type SourceFilter = 'all' | CommunitySource;
+const SOURCES: { id: SourceFilter; label: string }[] = [
+	{ id: 'all', label: '全部' },
+	{ id: 'nga', label: SOURCE_LABEL.nga },
+	{ id: 'hupu', label: SOURCE_LABEL.hupu },
+];
+const sourceCounts = countBySource(posts);
+const countOf = (days: number) => posts.filter((post) => post.windows.includes(days)).length;
+
+/** 每个时间窗在每个来源下各有多少条：切来源时页签上的数字要跟着变，所以整组都带上。 */
+const windowCounts = (days: number) => ({
+	all: countOf(days),
+	nga: posts.filter((post) => post.windows.includes(days) && post.source === 'nga').length,
+	hupu: posts.filter((post) => post.windows.includes(days) && post.source === 'hupu').length,
+});
 ---
 
-<Layout title="社区热帖 · DOTA2 驿站" description="NGA DOTA2 版块的社区热帖榜，按回复数追踪当前最热的讨论。">
+<Layout
+	title="社区热帖 · DOTA2 驿站"
+	description="NGA 刀塔版块与虎扑 DOTA2 区的社区热帖榜，按回复数追踪当前最热的讨论。"
+>
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 		<div class="mb-8">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">社区</p>
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">社区热帖</h1>
 			<p class="mt-3 max-w-2xl text-muted">
-				取自 NGA 刀塔版块的热帖榜，按窗口内的回复数排序，跟着社区一起追当前最热的话题。
+				中文社区取自 NGA 刀塔版块与虎扑 DOTA2 区，各自按回复数排序，跟着社区一起追当前最热的话题。
+				切到单个来源时口径才一致——两家的回复数不是一回事，说明见页面底部。
 			</p>
 		</div>
 
-		<div id="thread-tabs" class="mb-8 flex flex-wrap gap-2" role="group" aria-label="热帖时间范围">
-			{
-				HOT_WINDOWS.map((window) => (
-					<button
-						type="button"
-						data-window={window.days}
-						class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
-						aria-pressed={window.days === DEFAULT_WINDOW ? 'true' : 'false'}
-					>
-						{window.label}
-						<span class="ml-1 text-xs text-faint">{countOf(window.days)}</span>
-					</button>
-				))
-			}
+		<div class="mb-8 space-y-4">
+			<div>
+				<p class="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-faint">来源</p>
+				<div id="source-tabs" class="flex flex-wrap gap-2" role="group" aria-label="帖子来源">
+					{
+						SOURCES.map((source) => (
+							<button
+								type="button"
+								data-source={source.id}
+								class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+								aria-pressed={source.id === 'all' ? 'true' : 'false'}
+							>
+								{source.label}
+								<span class="ml-1 text-xs text-faint">{sourceCounts[source.id]}</span>
+							</button>
+						))
+					}
+				</div>
+			</div>
+
+			<div>
+				<p class="mb-2 text-xs font-semibold uppercase tracking-[0.2em] text-faint">时间</p>
+				<div id="thread-tabs" class="flex flex-wrap gap-2" role="group" aria-label="热帖时间范围">
+					{
+						HOT_WINDOWS.map((window) => (
+							<button
+								type="button"
+								data-window={window.days}
+								data-counts={JSON.stringify(windowCounts(window.days))}
+								class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+								aria-pressed={window.days === DEFAULT_WINDOW ? 'true' : 'false'}
+							>
+								{window.label}
+								<span class="win-count ml-1 text-xs text-faint">{countOf(window.days)}</span>
+							</button>
+						))
+					}
+				</div>
+			</div>
 		</div>
 
 		{
-			threads.length === 0 ? (
+			posts.length === 0 ? (
 				<p class="rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
-					社区热帖暂不可用：构建期没有取到 NGA 的榜单，也没有可用的本地缓存。
+					社区热帖暂不可用：构建期没有取到 NGA 与虎扑的榜单，也没有可用的本地缓存。
 				</p>
 			) : (
 				<div id="thread-list" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
-					{threads.map((thread) => (
-						<div data-windows={thread.windows.join(',')}>
-							<ThreadCard thread={thread} nowSec={now} />
+					{posts.map((post) => (
+						<div data-source={post.source} data-windows={post.windows.join(',')}>
+							<ThreadCard post={post} nowSec={now} />
 						</div>
 					))}
 				</div>
@@ -63,37 +108,94 @@ const countOf = (days: number) => threads.filter((thread) => thread.windows.incl
 			该时间范围内暂时没有帖子。
 		</p>
 
+		<section class="mt-12 rounded-2xl border border-line bg-surface p-5 text-sm leading-relaxed text-muted">
+			<h2 class="font-display text-base text-cream">两个来源的口径</h2>
+			<ul class="mt-3 space-y-2.5">
+				<li>
+					<span class="text-cream">回复数不可横向比较。</span>
+					NGA 的数字来自它的热榜接口，是<span class="text-cream/80">所选时间窗内</span>的回复数；
+					虎扑列表给的是<span class="text-cream/80">帖子总回复数</span>。两套口径没法换算，
+					所以这里不做归一化：切到单个来源时排序才可比，「全部」只是把两边的热帖放在一起看。
+				</li>
+				<li>
+					<span class="text-cream">时间窗对虎扑是近似的。</span>
+					NGA 的窗口由它自己的热榜接口决定；虎扑没有窗口参数，只能按
+					<span class="text-cream/80">最后回复时间落在窗口内</span>归属，
+					筛掉太久没人理的帖子，不代表窗口内的热度。
+				</li>
+				<li>
+					<span class="text-cream">虎扑帖子点进去是原站。</span>
+					本站只索引标题、摘要与计数，跳转到虎扑阅读完整讨论；摘要取自主楼首段，
+					抓不到就只显示标题。
+				</li>
+				<li>
+					<span class="text-cream">微博与贴吧为什么不在。</span>
+					两家都不是解析问题：微博的内容接口全部要登录态（移动端接口直接 302 到
+					「Sina Visitor System」，热搜接口 403），贴吧直连 403、走读取代理拿到的是
+					「百度安全验证」。取不到数据就不做，不拿别的站的内容顶替。
+				</li>
+			</ul>
+		</section>
+
 		<p class="mt-10 text-center text-xs text-faint">
-			热帖来自 NGA 刀塔版块，版权归 NGA 与原作者所有；点击标题前往原帖阅读完整讨论。
+			热帖版权归 NGA、虎扑与原作者所有；点击标题前往原帖阅读完整讨论。
 		</p>
 	</section>
 </Layout>
 
 <script>
 	(() => {
-		const tabs = document.getElementById('thread-tabs');
+		const sourceTabs = document.getElementById('source-tabs');
+		const windowTabs = document.getElementById('thread-tabs');
 		const list = document.getElementById('thread-list');
 		const empty = document.getElementById('thread-empty');
-		if (!tabs || !list) return;
+		if (!sourceTabs || !windowTabs || !list) return;
 		const cards = Array.from(list.querySelectorAll<HTMLElement>('[data-windows]'));
-		const apply = (days: string) => {
+
+		let source = sourceTabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.dataset.source ?? 'all';
+		let days = windowTabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.dataset.window ?? '1';
+
+		/** 两个维度都满足才显示；时间页签上的数字按当前来源重算。 */
+		const apply = () => {
 			let shown = 0;
 			for (const card of cards) {
-				const matched = (card.dataset.windows ?? '').split(',').includes(days);
+				const matched =
+					(source === 'all' || card.dataset.source === source) &&
+					(card.dataset.windows ?? '').split(',').includes(days);
 				card.hidden = !matched;
 				if (matched) shown++;
 			}
-			if (empty) empty.hidden = shown > 0;
+			if (empty) {
+				empty.hidden = shown > 0;
+				empty.textContent =
+					source === 'all' ? '该时间范围内暂时没有帖子。' : '该来源在这个时间范围内暂时没有帖子。';
+			}
+			for (const btn of windowTabs.querySelectorAll<HTMLButtonElement>('button[data-counts]')) {
+				const counts = JSON.parse(btn.dataset.counts ?? '{}') as Record<string, number>;
+				const label = btn.querySelector('.win-count');
+				if (label) label.textContent = String(counts[source] ?? 0);
+			}
 		};
-		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+
+		sourceTabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
 			btn.addEventListener('click', () => {
-				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				sourceTabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
 				btn.setAttribute('aria-pressed', 'true');
-				apply(btn.dataset.window ?? '1');
+				source = btn.dataset.source ?? 'all';
+				apply();
 			});
 		});
-		// 无脚本时保留全部卡片，有脚本时先按默认时间范围收敛一次。
-		const active = tabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
-		apply(active?.dataset.window ?? '1');
+
+		windowTabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				windowTabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+				btn.setAttribute('aria-pressed', 'true');
+				days = btn.dataset.window ?? '1';
+				apply();
+			});
+		});
+
+		// 无脚本时保留全部卡片，有脚本时先按默认的来源与时间范围收敛一次。
+		apply();
 	})();
 </script>

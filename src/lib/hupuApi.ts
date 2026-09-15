@@ -1,0 +1,261 @@
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { decodeEntities, summarizeArticle } from './articleHtml';
+import { mapLimit } from './concurrency';
+import { reportSource } from './dataHealth';
+
+/**
+ * 虎扑 DOTA2 区（`bbs.hupu.com/dota2`）的社区帖层。
+ *
+ * **为什么是虎扑**：微博与贴吧都试过，不是解析难度的问题，是根本取不到数据——
+ * 微博的内容接口全部要登录态（`m.weibo.cn` 的 container 接口回 302 到 "Sina Visitor System"，
+ * `weibo.com/ajax/side/hotSearch` 直接 403），贴吧直连 403、走读取代理拿到的是「百度安全验证」。
+ * 虎扑的版块列表直连就是服务端渲染好的 HTML，列表自带「回复/浏览」、作者与最后回复时间，
+ * 是少数能稳定抓的中文社区。
+ *
+ * **与 NGA 的口径差异**（页面上有说明）：NGA 的 `replies` 是**时间窗内**的回复数，
+ * 虎扑给的是**帖子总回复数**，两者不可直接比较。这里不做归一化、不编数据，
+ * 页面上按来源分开筛选时各自可比。
+ *
+ * **窗口归属**：NGA 的窗口来自它自己的热榜接口，虎扑没有对应的窗口参数，
+ * 所以按「最后回复时间落在窗口内」归属（见 communityFeed）。
+ */
+
+const BOARD_URL = 'https://bbs.hupu.com/dota2';
+const ORIGIN = 'https://bbs.hupu.com';
+const CACHE_DIR = path.join(process.cwd(), '.cache', 'community');
+const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
+
+const LIST_TTL_SECONDS = 30 * 60;
+/** 摘要只跟主楼，重新抓的代价是每个帖子一次请求，所以按小时级刷新。 */
+const DETAIL_TTL_SECONDS = 2 * 3600;
+/** 列表页有 49 条，按回复数取前若干条，与 NGA 那套「每窗 15 条」对齐。 */
+const THREADS_PER_BOARD = 20;
+/** 少于这个回复数的不算热帖，和 NGA 保持一致。 */
+const MIN_REPLIES = 5;
+const FETCH_CONCURRENCY = 4;
+/** 虎扑未见限流，但没必要打太急。 */
+const MIN_INTERVAL_MS = 200;
+
+const USER_AGENT =
+	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+export interface HupuThread {
+	/** 帖子 id，取自列表里的 `/642425918.html` */
+	pid: string;
+	title: string;
+	author: string;
+	/** 帖子总回复数（不是窗口内的） */
+	replies: number;
+	/** 浏览量 */
+	views: number;
+	/** 最后回复时间，Unix 秒 */
+	lastReplyAt: number;
+	/** 主楼首段摘要；抓不到就是空串 */
+	summary: string;
+}
+
+/** 帖子在虎扑的地址，用于署名跳转（本站不做虎扑的站内详情页）。 */
+export function hupuThreadUrl(pid: string): string {
+	return `${ORIGIN}/${pid}.html`;
+}
+
+// ---------------------------------------------------------------- 请求与缓存
+
+let lastRequestAt = 0;
+let paceQueue: Promise<void> = Promise.resolve();
+
+/** 串行化请求间隔，避免并发同时穿过限速窗口。 */
+function pace(): Promise<void> {
+	paceQueue = paceQueue.then(async () => {
+		const wait = lastRequestAt + MIN_INTERVAL_MS - Date.now();
+		if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+		lastRequestAt = Date.now();
+	});
+	return paceQueue;
+}
+
+/** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
+let networkFetches = 0;
+
+async function fetchHtml(url: string): Promise<string | null> {
+	await pace();
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 20_000);
+	try {
+		const res = await fetch(url, {
+			signal: controller.signal,
+			redirect: 'follow',
+			headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml' },
+		});
+		if (!res.ok) return null;
+		networkFetches += 1;
+		return await res.text();
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+function cacheFile(key: string): string {
+	return path.join(CACHE_DIR, `${key}.json`);
+}
+
+async function readCache<T>(key: string): Promise<{ value: T; ageMs: number } | null> {
+	try {
+		const file = cacheFile(key);
+		const stat = await fs.stat(file);
+		return { value: JSON.parse(await fs.readFile(file, 'utf8')) as T, ageMs: Date.now() - stat.mtimeMs };
+	} catch {
+		return null;
+	}
+}
+
+async function writeCache(key: string, value: unknown): Promise<void> {
+	await fs.mkdir(CACHE_DIR, { recursive: true });
+	await fs.writeFile(cacheFile(key), JSON.stringify(value), 'utf8');
+}
+
+// ---------------------------------------------------------------- 列表解析
+
+/**
+ * 列表页只给 `MM-DD HH:mm`，没有年份。
+ *
+ * 按**北京时间**（UTC+8）解成 Unix 秒：虎扑的时间是北京时间，而构建机的时区不一定，
+ * 用本地时区解会让 `lastReplyAt` 随构建设备漂移。跨年时解出来的时间会比"现在"还晚，
+ * 那就退回上一年。
+ */
+function parseMonthDay(value: string, nowSec: number): number {
+	const match = /^(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(value.trim());
+	if (!match) return 0;
+	const month = Number(match[1]);
+	const day = Number(match[2]);
+	const hour = Number(match[3]);
+	const minute = Number(match[4]);
+	const at = (year: number) => Math.floor(Date.UTC(year, month - 1, day, hour - 8, minute) / 1000);
+	const currentYear = new Date(nowSec * 1000).getUTCFullYear();
+	const guess = at(currentYear);
+	return guess > nowSec + 3600 ? at(currentYear - 1) : guess;
+}
+
+/** 列表行：标题、地址、`回复 / 浏览`、作者、最后回复时间。 */
+function toThreads(html: string, nowSec: number): HupuThread[] | null {
+	const rows = [...html.matchAll(/<li class="bbs-sl-web-post-body">([\s\S]*?)<\/li>/g)].map((match) => match[1]);
+	if (rows.length === 0) return null;
+	const threads: HupuThread[] = [];
+	for (const block of rows) {
+		const href = /<a href="(\/\d+\.html)"/.exec(block)?.[1];
+		const pid = href?.replace(/\D/g, '') ?? '';
+		const title = stripTags(/class="p-title"[^>]*>([\s\S]*?)<\/a>/.exec(block)?.[1] ?? '');
+		const datum = /class="post-datum">([^<]*)</.exec(block)?.[1] ?? '';
+		const author = stripTags(/class="post-auth">([\s\S]*?)<\/div>/.exec(block)?.[1] ?? '');
+		const [replies, views] = datum.split('/').map((part) => Number(part.trim()) || 0);
+		if (!pid || !title || !author) continue;
+		threads.push({
+			pid,
+			title,
+			author,
+			replies,
+			views,
+			lastReplyAt: parseMonthDay(/class="post-time">([^<]*)</.exec(block)?.[1] ?? '', nowSec),
+			summary: '',
+		});
+	}
+	return threads.filter((thread) => thread.replies >= MIN_REPLIES && thread.lastReplyAt > 0);
+}
+
+/** 列表里的标题与作者带内联标签与实体，统一还原成纯文本。 */
+function stripTags(html: string): string {
+	return decodeEntities(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+async function loadBoard(): Promise<HupuThread[]> {
+	const key = 'hupu-list';
+	const cached = await readCache<HupuThread[]>(key);
+	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return cached.value;
+
+	let value: HupuThread[] | null = null;
+	if (!OFFLINE) {
+		const nowSec = Math.floor(Date.now() / 1000);
+		for (let attempt = 0; attempt < 2 && value === null; attempt++) {
+			const html = await fetchHtml(BOARD_URL);
+			if (html === null) continue;
+			value = toThreads(html, nowSec);
+		}
+	}
+	if (value === null) return cached?.value ?? [];
+
+	value = value.sort((a, b) => b.replies - a.replies || b.lastReplyAt - a.lastReplyAt || a.pid.localeCompare(b.pid));
+	value = value.slice(0, THREADS_PER_BOARD);
+	await writeCache(key, value);
+	return value;
+}
+
+// ---------------------------------------------------------------- 主楼摘要
+
+/** 主楼正文容器；列表页没有摘要，只能点进详情页取第一段。 */
+const MAIN_POST_RE = /<div class="thread-content-detail">/;
+
+/** 按 div 嵌套深度配对闭合标签，取出主楼正文 HTML。 */
+function extractMainPost(html: string): string {
+	const start = html.search(MAIN_POST_RE);
+	if (start < 0) return '';
+	const bodyStart = html.indexOf('>', start) + 1;
+	const tagRe = /<\/?div\b[^>]*>/gi;
+	tagRe.lastIndex = bodyStart;
+	let depth = 1;
+	let match: RegExpExecArray | null;
+	while ((match = tagRe.exec(html))) {
+		if (match[0][1] === '/') {
+			if (--depth === 0) return html.slice(bodyStart, match.index);
+		} else {
+			depth++;
+		}
+	}
+	return html.slice(bodyStart);
+}
+
+async function loadSummary(pid: string): Promise<string | null> {
+	const key = `hupu-thread-v1-${pid}`;
+	const cached = await readCache<{ summary: string }>(key);
+	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return cached.value.summary;
+	if (OFFLINE) return cached?.value.summary ?? null;
+
+	const html = await fetchHtml(hupuThreadUrl(pid));
+	if (html === null) return cached?.value.summary ?? null;
+	const summary = summarizeArticle(extractMainPost(html));
+	await writeCache(key, { summary });
+	return summary;
+}
+
+// ---------------------------------------------------------------- 对外接口
+
+let boardPromise: Promise<HupuThread[]> | null = null;
+
+/** 列表 + 摘要，一次构建只抓一轮。取不到就返回空数组（页面按"没有数据"处理）。 */
+export function fetchHupuThreads(): Promise<HupuThread[]> {
+	if (!boardPromise) boardPromise = loadBoardWithSummaries();
+	return boardPromise;
+}
+
+async function loadBoardWithSummaries(): Promise<HupuThread[]> {
+	const threads = await loadBoard();
+	/** 摘要"抓失败"（网络不通、页面结构变了）与"主楼本来就没文字"是两回事，汇总里分开报。 */
+	let failed = 0;
+	await mapLimit(threads, FETCH_CONCURRENCY, async (thread) => {
+		const summary = await loadSummary(thread.pid);
+		if (summary === null) failed += 1;
+		thread.summary = summary ?? '';
+	});
+
+	const withSummary = threads.filter((thread) => thread.summary).length;
+	const state = networkFetches > 0 ? 'fresh' : threads.length > 0 ? 'cache' : 'empty';
+	await reportSource(
+		'hupu',
+		'虎扑 DOTA2 区',
+		state,
+		`${threads.length} 个帖子，摘要抓取失败 ${failed} 个，${withSummary} 个有文字摘要，联网抓取 ${networkFetches} 次`,
+	);
+	return threads;
+}

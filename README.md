@@ -54,7 +54,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | 目录 | 内容 | 缓存时长 |
 | --- | --- | --- |
 | `.cache/news/` | dota2.com.cn 官方新闻列表与正文 | 列表 30 分钟，正文永久 |
-| `.cache/community/` | NGA 刀塔版块热帖与楼层 | 列表 30 分钟，帖子 7 天 |
+| `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与主楼摘要 | 列表 30 分钟，帖子 2 小时 – 7 天 |
 | `.cache/reddit/` | r/DotA2 热帖 | 1 小时 |
 | `.cache/opendota/` | 队伍索引、职业比赛、阵容名单 | 6 小时 – 7 天 |
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
@@ -229,6 +229,40 @@ iframe 只带 `allow="… fullscreen …"`，不再叠 `allowfullscreen`：Chrom
 
 抓取层（直连优先、失败退回代理、重试、`extractJson`）抽在 `src/lib/fetchText.ts`，
 `liveApi` 与 `roomList` 共用。
+
+### 社区热帖：来源与口径
+
+社区页（`src/pages/community.astro`）有**两个**来源，聚合在 `src/lib/communityFeed.ts`：
+NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src/lib/hupuApi.ts`
+（`bbs.hupu.com/dota2` 直连就是服务端渲染好的 HTML）。页面按「来源 + 时间」两个维度筛选，
+两个维度都在 `data-*` 属性上，客户端只切 `hidden`，计数按来源预埋在时间页签的 `data-counts` 里。
+
+**回复数不可跨来源比较，所以不做归一化。** NGA 的 `replies` 来自它的热榜接口，是**所选时间窗内**
+的回复数；虎扑列表给的是**帖子总回复数**。两套口径没法换算，`communityFeed` 只保证"按回复数倒序"
+这一个排序规则，切到单个来源时才可比。同理，虎扑没有窗口参数，它的时间窗只能按
+**最后回复时间落在窗口内**归属（近似，只用来筛掉太久没人理的帖子）。这些都写在了页面上。
+
+**虎扑的取舍**（都是实测出来的）：
+
+- 列表取默认的「最新回复」页（49 条），按 `回复数 >= 5` 过滤后取前 20 条，与 NGA 的「每窗 15 条」对齐；
+  列表给的是 `回复 / 浏览`（`post-datum`）、作者、`MM-DD HH:mm`。
+- **时间没有年份**，按 **UTC+8** 显式解析：虎扑是北京时间，构建机时区不定，用本地时区解会让
+  `lastReplyAt` 随构建设备漂移；解出来比"现在"晚，就退回上一年。
+- 摘要要另抓详情页（列表没有摘要），主楼在 `<div class="thread-content-detail">`，
+  按 div 嵌套深度配对后交给 `summarizeArticle` 取首段；抓不到就只显示标题，不编内容。
+  列表缓存 30 分钟、摘要 2 小时，一轮构建约 21 次请求。
+- 虎扑**不做站内详情页**，卡片直接跳原帖（`target="_blank"` + `rel="noopener noreferrer"`）；
+  NGA 仍然是站内 `/community/nga/[tid]`。
+
+**微博与贴吧为什么不在**（都试过，不是解析问题，是取不到数据）：
+
+- 微博：`weibo.com/ajax/side/hotSearch` → 403，`s.weibo.com/weibo?q=DOTA2` → 302，
+  移动端 `m.weibo.cn/api/container/getIndex?...` → 302；走 `r.jina.ai` 拿到的是
+  「Sina Visitor System」。所有内容接口都要登录态（`SUB` cookie 或开放平台 OAuth）。
+- 贴吧：直连 `tieba.baidu.com/f?kw=dota2` → 403，走 `r.jina.ai` 拿到的是「百度安全验证」；
+  想用 RSSHub 绕，公共实例 `rsshub.app` 又被 Cloudflare 403 挡住。
+
+取不到就不做，也不拿别的站的内容顶替——这两家只有拿到可用凭证（cookie / 开放平台 key）才谈得上接入。
 
 ### 主播头像：取回来自已发
 
