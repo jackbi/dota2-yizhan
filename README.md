@@ -476,6 +476,16 @@ jina 只能转文本，对图片来说就是纯代理。
 > 对象，老缓存不会自己长出字段：加头像那次就没加版本，结果 64 个热门房间一个头像都没有，
 > 而构建汇总还写着「使用缓存」，看上去像抓取失败，其实是拿了一份旧形状的数据。
 
+**还有哪些图没落地。** 站点里仍有大量外链图（`img.dota2.com.cn` 1287 张、`liquipedia.net` 993 张，
+以及社区正文里的图），它们量级大、多数来自第三方正文，没有跟着一起本地化。已知会挂的两处：
+
+- **虎扑正文图全 403**：`sanitizeHupuHtml()` 只补了 `loading="lazy"`，没补
+  `referrerpolicy="no-referrer"`（NGA 那边的 `ngaBbcode.ts` 是有的），浏览器带上站外 Referer 就被拒。
+  用 headless Chrome 看 `/community/hupu/641010132/`，5 张图全是 `403 text/plain`，
+  而 `curl` 不带 Referer 是 200。修的时候记得把 `hupu-thread-v2-` 的缓存键升版，
+  否则 `.cache/` 里的旧 HTML 会继续用。
+- **Reddit 缩略图**：`i.redd.it` 和 `i*.hdslb.com` 一样会被重置，`/news/reddit/[id]` 的图因此经常不出。
+
 **两种全屏是并列的**，都在右侧工具栏里，共用一套沉浸样式：
 
 - 「网页全屏」只把面板抽成 `position: fixed; inset: 0` 铺满浏览器窗口，并用 `body` 上的
