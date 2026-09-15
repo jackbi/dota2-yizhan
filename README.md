@@ -166,9 +166,11 @@ SSR 侧代码刻意只用 Web 标准 API：
 
 **STRATZ 的 token 绑定 IP。** 出口 IP 一变就直接返回
 `You cannot use different IP Addresses when using the API`（403，而且**是纯文本响应、
-连 `content-type` 都没有**）。它和 Cloudflare 挑战页同为 403，但后者返回 HTML 且随机出现、
-值得重试，所以 `stratzPlayer.ts` 的 `gql()` 会先读 body 再分类——不特判的话页面上只剩一句
-「HTTP 403」，看不出该去改什么（这个坑真踩过）。
+连 `content-type` 都没有**）。它和 Cloudflare 挑战页同为 403，但后者随机出现、值得重试，
+所以 `stratzPlayer.ts` 的 `gql()` 会先读 body 再分类——不特判的话页面上只剩一句
+「HTTP 403」，看不出该去改什么（这个坑真踩过）。除这两类之外的 403 也按「可能短暂」重试
+（挑战页的返回形态不止 HTML 一种），但重试耗尽后的文案保留原始状态码，不冒充挑战页——
+否则 token 失效这类硬失败会被说成「稍后再试」。
 
 **绑的是哪一个 IP，实测过。** 同一条查询、连着四轮，**走代理 4/4 通，`--noproxy` 绕开代理
 直连 4/4 全是 403**——这个 token 绑定的是**代理节点那一个出口 IP**，家宽 IP 不在绑定里。
@@ -485,10 +487,11 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 3. 允不允许外链由平台随时决定，判不判 Referer 我们控制不了，失败就是一排破图；
 4. 热链等于把访客的 IP 送给平台 CDN。
 
-所以构建期把字节取回来。**两条腿走路**：直连优先，被重置时退回 `wsrv.nl` 图片代理，顺便裁成
-需要的尺寸——两家头像原图一个 200×200、一个 140×140，封面原图实测 4KB ~ 187KB 不等，
-统一到 800×450 反而更省。`LIVE_PROXY` 同样管这里：`off` 只直连，`jina` 只走代理——
-jina 只能转文本，对图片来说就是纯代理。
+所以构建期把字节取回来。**两条腿走路**：直连优先，被重置时退回 `wsrv.nl` 图片代理。裁切与缩放
+只发生在代理那一支（`w` / `h` / `fit=cover`）：直连拿到的字节是**原样落盘**的，尺寸由对方决定，
+超出频道上限（封面 1MB）才丢弃——所以「统一到 800×450」只对走代理的那些成立。两家头像原图一个
+200×200、一个 140×140，封面原图实测 4KB ~ 187KB 不等。`LIVE_PROXY` 同样管这里：`off` 只直连，
+`jina` 只走代理——jina 只能转文本，对图片来说就是纯代理。
 
 落盘与发布：
 
@@ -524,11 +527,13 @@ jina 只能转文本，对图片来说就是纯代理。
 **还有哪些图没落地。** 站点里仍有大量外链图（`img.dota2.com.cn` 1287 张、`liquipedia.net` 993 张，
 以及社区正文里的图），它们量级大、多数来自第三方正文，没有跟着一起本地化。已知会挂的两处：
 
-- **虎扑正文图全 403**：`sanitizeHupuHtml()` 只补了 `loading="lazy"`，没补
-  `referrerpolicy="no-referrer"`（NGA 那边的 `ngaBbcode.ts` 是有的），浏览器带上站外 Referer 就被拒。
-  用 headless Chrome 看 `/community/hupu/641010132/`，5 张图全是 `403 text/plain`，
-  而 `curl` 不带 Referer 是 200。修的时候记得把 `hupu-thread-v2-` 的缓存键升版，
-  否则 `.cache/` 里的旧 HTML 会继续用。
+- **虎扑正文图**：一度记为「全 403，因为 `sanitizeHupuHtml()` 没补 `referrerpolicy`」——这个结论
+  是错的，别再照它去改。详情页有**文档级**的 `<meta name="referrer" content="no-referrer">`
+  （`src/pages/community/hupu/[pid].astro`，构建产物里确认过它在 `<head>` 里），正文的 `<img>`
+  因此根本不带 Referer。实测同一个 `i11.hoopchina.com.cn` 地址：`curl` 不带 Referer 得
+  `200 image/webp`，带站外 Referer 得 `403 text/plain`——拒的是 Referer，不是缺 `referrerpolicy`。
+  真再看到 403，先在浏览器 Network 里确认请求头里到底有没有 Referer，别顺手去升
+  `hupu-thread-v2-` 缓存键（那次改动没动到 `sanitizeHupuHtml()`，升了也没用）。
 - **Reddit 缩略图**：`i.redd.it` 和 `i*.hdslb.com` 一样会被重置，`/news/reddit/[id]` 的图因此经常不出。
 
 **两种全屏是并列的**，都在右侧工具栏里，共用一套沉浸样式：
@@ -590,6 +595,7 @@ jina 只能转文本，对图片来说就是纯代理。
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
 | `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与图片本地化（头像、B站封面）的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
+| `IMAGE_DEBUG` | 否 | 图片本地化的调试开关（原名 `AVATAR_DEBUG`，拆出 `localImages.ts` 时一并改名）。设为 `1` 时构建日志里逐个频道打印「发布 N 张 / 新下载 N / 命中缓存 N / 拿不到 N」 |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
 
 ## 赛事数据来自 Liquipedia
