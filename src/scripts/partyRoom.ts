@@ -104,18 +104,19 @@ function $<T extends HTMLElement>(selector: string): T {
 const dom = {
 	setup: $('#party-setup'),
 	room: $('#party-room'),
-	identityGuest: $('#identity-guest'),
-	identitySteam: $('#identity-steam'),
-	identityAvatar: $('#identity-avatar'),
-	identityName: $('#identity-name'),
-	nickname: $<HTMLInputElement>('#nickname'),
-	steamIdBox: $('#steamid-box'),
-	steamIdInput: $<HTMLInputElement>('#steamid-input'),
-	steamIdLoad: $<HTMLButtonElement>('#steamid-load'),
-	steamIdPreview: $('#steamid-preview'),
-	steamIdAvatar: $('#steamid-avatar'),
-	steamIdResult: $('#steamid-result'),
-	steamIdStatus: $('#steamid-status'),
+	/** 未登录的页面上才有这个输入框；已登录时服务端不渲染它（见 party.astro）。 */
+	nickname: document.querySelector<HTMLInputElement>('#nickname'),
+	/*
+	 * 下面这组只有**未登录**的页面上才有（服务端按会话决定渲染哪一版，见 party.astro）。
+	 * 所以不能用 `$()`——它在缺失时会直接抛，把已登录用户的整个脚本带走。用可选查法，
+	 * 用到的地方自己判空。
+	 */
+	steamIdInput: document.querySelector<HTMLInputElement>('#steamid-input'),
+	steamIdLoad: document.querySelector<HTMLButtonElement>('#steamid-load'),
+	steamIdPreview: document.querySelector<HTMLElement>('#steamid-preview'),
+	steamIdAvatar: document.querySelector<HTMLElement>('#steamid-avatar'),
+	steamIdResult: document.querySelector<HTMLElement>('#steamid-result'),
+	steamIdStatus: document.querySelector<HTMLElement>('#steamid-status'),
 	joinForm: $<HTMLFormElement>('#join-form'),
 	joinCode: $<HTMLInputElement>('#join-code'),
 	joinPassword: $<HTMLInputElement>('#join-password'),
@@ -158,8 +159,6 @@ function setVisible(node: HTMLElement, visible: boolean): void {
 let identity: { name: string; avatar: string } = { name: '', avatar: '' };
 /** Steam 登录态。为 null 表示未登录，此时房间里用输入框里的昵称。 */
 let steamUser: { name: string; avatar: string } | null = null;
-/** `/api/me` 的结果。提交表单前必须 await，否则已登录的人可能在拿到身份前被要求填昵称。 */
-let profileReady: Promise<void> = Promise.resolve();
 
 let lobbyRoom: Room | null = null;
 /** 我在大厅里的角色。大厅访客用 `passive` 加入，访客之间因此不会互建连接。 */
@@ -200,47 +199,42 @@ function cryptoRand(): number {
 
 // ---------------------------------------------------------------- 身份
 
-function renderIdentity(user: { name: string; avatar: string } | null): void {
-	// 已登录的人不需要「填 Steam ID」这条路：他本来就有真昵称和真头像。
-	setVisible(dom.steamIdBox, !user);
-	if (!user) {
-		steamUser = null;
-		setVisible(dom.identityGuest, true);
-		setVisible(dom.identitySteam, false);
-		return;
-	}
-	const name = L.sanitizeName(user.name) || 'Steam 玩家';
-	steamUser = { name, avatar: user.avatar || '' };
+/**
+ * 身份来自**服务端渲染的那段 HTML**，不在客户端再问一次 `/api/me`。
+ *
+ * 登录状态服务端本来就知道（签名 Cookie 就在请求里），因此页面渲染出来的就是最终形态：
+ * 已登录的人直接看到 Steam 头像和昵称，不会先闪一下「用 Steam 登录」——之前用
+ * `/api/me` 在客户端替换就吃过这个亏：脚本一旦没跑起来（Vite 预构建 504 那次），
+ * 已登录的人看到的就是一个登录入口。
+ *
+ * `data-*` 里的昵称是用户可控内容，只经过 `sanitizeName`，渲染仍然全部走 textContent。
+ */
+function readIdentityFromDom(): void {
+	const block = document.getElementById('identity-block');
+	if (!block) return;
+	if (block.dataset.mode !== 'steam') return;
+	const name = L.sanitizeName(block.dataset.name ?? '') || 'Steam 玩家';
+	steamUser = { name, avatar: block.dataset.avatar ?? '' };
 	identity = { ...steamUser };
-	dom.identityAvatar.replaceChildren(avatarNode(name, identity.avatar, 40));
-	dom.identityName.textContent = name;
-	setVisible(dom.identityGuest, false);
-	setVisible(dom.identitySteam, true);
 }
 
-function loadProfile(): Promise<void> {
-	return fetch('/api/me', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-		.then((res) => (res.ok ? res.json() : null))
-		.then((data: { user: { name: string; avatar: string } | null } | null) => {
-			renderIdentity(data?.user ?? null);
-		})
-		// 登录态取不到不是错误：按未登录处理，页面上还有昵称输入框可用。
-		.catch(() => renderIdentity(null));
-}
+readIdentityFromDom();
+
+// ---------------------------------------------------------------- 大厅
 
 /** 表单提交时取「我在房间里叫什么」：Steam 登录 > 手填 Steam ID 取到的资料 > 输入框昵称。 */
-async function resolveName(form: HTMLFormElement): Promise<string | null> {
-	await profileReady;
+function resolveName(form: HTMLFormElement): string | null {
 	if (steamUser) {
 		identity = { ...steamUser };
 		return steamUser.name;
 	}
-	const issue = L.nicknameIssue(dom.nickname.value);
+	const raw = dom.nickname?.value ?? '';
+	const issue = L.nicknameIssue(raw);
 	if (issue) {
 		setFormError(form, issue);
 		return null;
 	}
-	const name = L.sanitizeName(dom.nickname.value);
+	const name = L.sanitizeName(raw);
 	// 头像保留：它可能来自上面那次「填 Steam ID 读资料」，不能因为提交表单就丢掉。
 	identity = { name, avatar: identity.avatar };
 	try {
@@ -252,10 +246,12 @@ async function resolveName(form: HTMLFormElement): Promise<string | null> {
 }
 
 function setSteamIdStatus(message: string | null, kind: 'info' | 'error' = 'info'): void {
-	setVisible(dom.steamIdStatus, message !== null);
+	const node = dom.steamIdStatus;
+	if (!node) return;
+	setVisible(node, message !== null);
 	if (message === null) return;
-	dom.steamIdStatus.textContent = message;
-	dom.steamIdStatus.className = `text-xs leading-relaxed ${kind === 'error' ? 'text-[#f0a08a]' : 'text-muted'}`;
+	node.textContent = message;
+	node.className = `text-xs leading-relaxed ${kind === 'error' ? 'text-[#f0a08a]' : 'text-muted'}`;
 }
 
 /**
@@ -267,13 +263,21 @@ function setSteamIdStatus(message: string | null, kind: 'info' | 'error' = 'info
  * 拿到之后**填进昵称输入框**而不是锁死：用户可以改，头像跟着走（改昵称不改头像）。
  */
 async function loadSteamId(): Promise<void> {
-	const id = dom.steamIdInput.value.trim();
+	const input = dom.steamIdInput;
+	const button = dom.steamIdLoad;
+	const preview = dom.steamIdPreview;
+	const avatarSlot = dom.steamIdAvatar;
+	const result = dom.steamIdResult;
+	// 已登录时这一整块服务端不渲染，这条路走不到；这里只是把「元素可能不存在」处理干净。
+	if (!input || !button || !preview || !avatarSlot || !result) return;
+
+	const id = input.value.trim();
 	if (!id) {
 		setSteamIdStatus('先填一个 Steam ID 或资料链接。', 'error');
 		return;
 	}
-	dom.steamIdLoad.disabled = true;
-	dom.steamIdLoad.textContent = '读取中…';
+	button.disabled = true;
+	button.textContent = '读取中…';
 	setSteamIdStatus('正在查这个账号…');
 	try {
 		const res = await fetch(`/api/steam/profile?id=${encodeURIComponent(id)}`, {
@@ -281,14 +285,14 @@ async function loadSteamId(): Promise<void> {
 		});
 		const data = (await res.json()) as { ok: boolean; name?: string; avatar?: string; error?: string };
 		if (!data.ok) {
-			setVisible(dom.steamIdPreview, false);
+			setVisible(preview, false);
 			setSteamIdStatus(data.error ?? '读取失败，稍后再试。', 'error');
 			return;
 		}
 		const name = L.sanitizeName(data.name ?? '');
 		const avatar = typeof data.avatar === 'string' && data.avatar.startsWith('https://') ? data.avatar : '';
 		if (name) {
-			dom.nickname.value = name;
+			if (dom.nickname) dom.nickname.value = name;
 			identity = { name, avatar };
 			try {
 				localStorage.setItem(NICK_KEY, name);
@@ -297,17 +301,17 @@ async function loadSteamId(): Promise<void> {
 				// 存不下就只是刷新后要重新读一次。
 			}
 		}
-		dom.steamIdAvatar.replaceChildren(avatarNode(name || '?', avatar, 36));
-		dom.steamIdResult.textContent = name
+		avatarSlot.replaceChildren(avatarNode(name || '?', avatar, 36));
+		result.textContent = name
 			? `已读到：${name}${avatar ? '，头像也带上了' : '（这账号没公开头像，先用昵称首字母）'}。之后改昵称不会改头像。`
 			: '这个账号没有公开昵称，但头像可以用上了。';
-		setVisible(dom.steamIdPreview, true);
+		setVisible(preview, true);
 		setSteamIdStatus(null);
 	} catch {
 		setSteamIdStatus('请求没发出去，检查一下网络再试。', 'error');
 	} finally {
-		dom.steamIdLoad.disabled = false;
-		dom.steamIdLoad.textContent = '读取资料';
+		button.disabled = false;
+		button.textContent = '读取资料';
 	}
 }
 
@@ -500,8 +504,6 @@ function showRoom(): void {
 }
 
 async function enterRoom(options: { code: string; password: string; asHost: boolean; name?: string }): Promise<void> {
-	// 身份必须先就位：房主要用它建房、成员要用它打招呼，而 /api/me 是异步的。
-	await profileReady;
 	if (roomCode) await leaveRoom({ silent: true, keepLobby: true });
 	leaveLobby();
 
@@ -1092,8 +1094,8 @@ function bindEvents(): void {
 		dom.joinCode.value = L.normalizeCode(dom.joinCode.value);
 	});
 
-	dom.steamIdLoad.addEventListener('click', () => void loadSteamId());
-	dom.steamIdInput.addEventListener('keydown', (event) => {
+	dom.steamIdLoad?.addEventListener('click', () => void loadSteamId());
+	dom.steamIdInput?.addEventListener('keydown', (event) => {
 		// 这是个输入框不是表单，回车得自己接。输入框在 <details> 里，回车不会误触提交。
 		if (event.key === 'Enter') {
 			event.preventDefault();
@@ -1282,22 +1284,19 @@ function restoreNickname(): void {
 		const name = L.sanitizeName(localStorage.getItem(NICK_KEY) ?? '');
 		const avatar = localStorage.getItem(AVATAR_KEY) ?? '';
 		if (!name) return;
-		dom.nickname.value = name;
-		// 未登录时它就是我的房间昵称。先填上，这样刷新页面能自动回到房间里，
-		// 不用再手打一次；`loadProfile()` 拿到 Steam 身份后会覆盖它。
-		identity = { name, avatar };
+		if (dom.nickname) dom.nickname.value = name;
+		// 未登录时它就是我的房间昵称。先填上，这样刷新页面能自动回到房间里，不用再手打一次。
+		// 已登录的话 `readIdentityFromDom()` 已经填过 identity，这里不要覆盖成手填的名字。
+		if (!steamUser) identity = { name, avatar };
 	} catch {
 		// 隐私模式下读不到，进房时再输一次即可。
 	}
 }
 
-async function boot(): Promise<void> {
+function boot(): void {
 	restoreNickname();
 	bindEvents();
 	startTicker();
-	// 先等身份：自动回房和建房都要用到昵称，晚几十毫秒换掉一次「请输入昵称」是值得的。
-	profileReady = loadProfile();
-	await profileReady;
 
 	const code = codeFromHash();
 	const session = readSession();
@@ -1322,4 +1321,4 @@ async function boot(): Promise<void> {
 	renderNet();
 }
 
-void boot();
+boot();

@@ -118,7 +118,9 @@ API Key**——登录只用到 OpenID，昵称和头像由 STRATZ 一并返回�
 | `/api/auth/steam/callback` | 校验断言、发会话、回 `/me` |
 | `/api/auth/logout` | POST 清会话 |
 | `/api/me` | 页头脚本查登录态用的 JSON |
+| `/api/steam/profile` | 按手填的 Steam ID 查昵称与头像（开黑房间用） |
 | `/login`、`/me`、`/me/*` | 登录页与六个战绩页 |
+| `/party` | 开黑房间。**页面是 SSR，房间不是**：只为把「你是谁」按登录态渲染对，房间本身仍全在浏览器里 |
 
 `astro.config.mjs` 里挂了 `@astrojs/node`，构建产物因此从「一个 `dist/`」变成
 `dist/client/`（静态资源）+ `dist/server/`（SSR）。**部署方式随之改变**：
@@ -236,9 +238,10 @@ Steam 的头像 CDN（`avatars.steamstatic.com`）会拒掉带 Referer 的请求
 
 ## 开黑房间（`/party`）
 
-建房、大厅、聊天、roll 点、分队伍。**这是全站唯一一个有实时交互的功能，也是唯一一个
-完全不经过服务端的**：传输是 WebRTC 数据通道，信令走 Trystero 的公共中继，服务端只提供
-静态 HTML 和已有的 `/api/me`。
+建房、大厅、聊天、roll 点、分队伍。**房间完全不经过服务端**：传输是 WebRTC 数据通道，
+信令走 Trystero 的公共中继。页面本身是 SSR（`prerender = false`），但只为一件事：
+把「你是谁」按登录态渲染对——登录状态服务端本来就知道，没必要让已登录的人先看到一个
+「用 Steam 登录」按钮（脚本一挂就一直留在那儿，Vite 预构建 504 那次真踩过）。
 
 ### 为什么不做成服务端房间
 
@@ -248,7 +251,7 @@ P2P 房间不受重启影响，代价写在下文「[连不上的几种情况](#
 
 | 文件 | 职责 |
 | --- | --- |
-| `src/pages/party.astro` | 页面骨架（设置区 / 房间区、静态预渲染），不写业务逻辑 |
+| `src/pages/party.astro` | 页面骨架（身份按会话渲染、设置区 / 房间区），不写业务逻辑 |
 | `src/scripts/partyRoom.ts` | 大厅与房间的传输、渲染、事件 |
 | `src/lib/partyLogic.ts` | 成员/队伍/roll 的**纯状态变换**，不碰 DOM 也不碰 WebRTC |
 | `scripts/partyLogic.check.ts` | 上面那一层的自检（队伍重排是最容易写错的部分） |
@@ -314,6 +317,15 @@ WebRTC 的失败在浏览器里长得一模一样——都是「房间里没人�
 2. TURN 通过 `joinRoom` 的 `turnConfig` 传入，目前没有配置项，需要时在那里加。
 
 TURN 只是中转字节，数据仍然是端到端加密的；它不解密、也没有业务逻辑。
+
+### 一个 Vite 的坑：`trystero` 必须写进 `optimizeDeps.include`
+
+它只被 `/party` 的页面脚本 import，而 Astro 启动时的依赖扫描**没有**把它收进
+`node_modules/.vite/deps`（那份 `_metadata.json` 里只有 dev-toolbar 的几个包）。于是 Vite
+每次都在请求到达时按需发现它：生成一个新的 `?v=` 哈希、把模块改写成指向新哈希，预构建
+产物却没落盘——页面反复吃 `504 Outdated Optimize Dep`，而且**每刷一次哈希就换一个**
+（实测连着见过三个）。`astro.config.mjs` 里已显式列进 `include`，哈希就稳定了。
+**以后再有「只被某个页面脚本 import」的依赖，同样要加到这里。**
 
 ### 已知的取舍
 

@@ -1,21 +1,31 @@
 ---
+import Avatar from '../components/player/Avatar.astro';
 import Layout from '../layouts/Layout.astro';
+import { readSession } from '../lib/session';
 
 /**
  * 开黑房间。
  *
- * 页面本身是**构建期预渲染的静态页**，没有任何服务端逻辑：房间的传输走 WebRTC
- * （Trystero 的信令 + P2P 数据通道，见 `src/scripts/partyRoom.ts`），
- * 服务端只提供两样已有的东西——静态 HTML 和 `/api/me`（Steam 昵称与头像）。
+ * **房间**不走服务端：传输是 WebRTC（Trystero 的信令 + P2P 数据通道，见
+ * `src/scripts/partyRoom.ts`），服务端不存房间、不存聊天。理由是本站每 5 分钟
+ * 重建并重启一次（见 README「部署与重建频率」），任何存在 SSR 内存里的房间都会被
+ * 那次重启清空。
  *
- * 为什么不放服务端：本站是每 5 分钟重建并重启一次的静态站（见 README「部署与重建频率」），
- * 任何存在 SSR 进程内存里的房间都会被那次重启清空；P2P 房间不吃这一套。
+ * 但**页面本身是 SSR 的**（`prerender = false`），只为一件事：登录状态服务端本来就知道。
+ * 之前这里是静态页，「你是谁」那块要先等客户端 `/api/me` 回来才敢把「用 Steam 登录」
+ * 换成 Steam 身份——脚本一挂（比如 Vite 预构建 504）或者网慢一点，已登录的人就会看到
+ * 一个「用 Steam 登录」按钮。现在服务端直接渲染对的那一版，顺带省掉一次请求。
  *
- * 这里的标记分成两块，靠 `hidden` 切换：
+ * 这里的标记分成两块，靠 `style.display` 切换（不用 `hidden` 属性：带 `flex` 这类
+ * display 工具类的元素会把它盖掉）：
  * - `#party-setup`：身份 + 建房/加入 + 大厅列表；
  * - `#party-room`：房间内（队伍、roll、聊天）。
  * 队伍与成员卡由脚本生成（昵称是用户输入，必须走 textContent，不拼 HTML）。
  */
+export const prerender = false;
+
+const session = await readSession(Astro.cookies);
+const me = session ? { name: session.name, avatar: session.avatar } : null;
 ---
 
 <Layout
@@ -60,88 +70,104 @@ import Layout from '../layouts/Layout.astro';
 					登录 Steam 的话，房间里直接显示 Steam 昵称和头像；没登录就自己起个昵称，头像用昵称首字母。
 				</p>
 
-				<div class="mt-4">
-					{/* 静态先渲染未登录态，脚本拿到 /api/me 后再换成 Steam 身份（页面是预渲染的）。 */}
-					<div id="identity-guest" class="flex flex-col gap-3 sm:flex-row sm:items-end">
-						<label class="flex-1" for="nickname">
-							<span class="mb-1 block text-xs font-medium text-faint">昵称</span>
-							<input
-								id="nickname"
-								name="nickname"
-								type="text"
-								maxlength="16"
-								autocomplete="nickname"
-								placeholder="最多 16 个字，例如：大魔导师"
-								class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-							/>
-						</label>
-						<a
-							href="/api/auth/steam/login"
-							class="inline-flex shrink-0 items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:bg-surface-2 hover:text-cream"
-						>
-							<svg height="16" viewBox="0 0 24 24" class="shrink-0 fill-current" aria-hidden="true">
-								<path
-									d="M23.938 12c0 6.595-5.353 11.938-11.957 11.938A11.95 11.95 0 0 1 .476 15.254l4.583 1.892a3.382 3.382 0 0 0 6.696-.823l4.067-2.898a4.512 4.512 0 0 0 4.611-4.5 4.511 4.511 0 0 0-9.02 0v.057l-2.85 4.125a3.37 3.37 0 0 0-2.094.583L.062 11.042C.553 4.895 5.7.062 11.981.062 18.585.062 23.938 5.405 23.938 12zm-16.38 6.176l-1.469-.607a2.541 2.541 0 0 0 1.31 1.242 2.544 2.544 0 0 0 3.32-1.367 2.51 2.51 0 0 0 .005-1.94A2.53 2.53 0 0 0 7.48 14.1l1.516.625a1.862 1.862 0 0 1 1.006 2.44 1.87 1.87 0 0 1-2.445 1.012zm8.365-6.253c-1.656 0-3.004-1.348-3.004-2.999s1.348-2.999 3.004-2.999 3.004 1.348 3.004 3-1.343 2.998-3.004 2.998zm.005-.75a2.254 2.254 0 0 0 0-4.505 2.257 2.257 0 0 0-2.258 2.251 2.263 2.263 0 0 0 2.258 2.253z"
-								></path>
-							</svg>
-							用 Steam 登录
-						</a>
-					</div>
-
-					{/* 这两个块带 `flex`，所以初值必须走 style 而不是 `hidden` 属性：Tailwind 的
-					    display 工具类在 utilities 层，会盖掉 base 层的 `[hidden]`。 */}
-					<div id="identity-steam" style="display:none" class="flex items-center gap-3">
-						<span id="identity-avatar" class="relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-2 text-sm text-faint"></span>
-						<div class="min-w-0">
-							<p class="text-xs text-faint">已用 Steam 登录</p>
-							<p id="identity-name" class="truncate text-sm font-medium text-cream"></p>
-						</div>
-						<a href="/me" class="ml-auto shrink-0 text-xs text-dota-light transition hover:text-gold">我的战绩 →</a>
-					</div>
-
-					{/*
-						不登录也想用自己的头像：填 Steam ID 去 STRATZ 换昵称和头像。
-						默认折叠——它是「登录」之外的次要选项，而且必须先说清它不是身份证明。
-					*/}
-					<details id="steamid-box" style="display:none" class="mt-3 rounded-xl border border-line bg-ink-2/60 px-3 py-2.5">
-						<summary class="cursor-pointer text-xs text-muted transition hover:text-cream">
-							不想登录？也可以填自己的 Steam ID，用你 Steam 的头像和昵称进来
-						</summary>
-						<div class="mt-3 space-y-2.5">
-							<div class="flex flex-col gap-2 sm:flex-row">
-								<label class="min-w-0 flex-1" for="steamid-input">
-									<span class="sr-only">Steam ID</span>
-									<input
-										id="steamid-input"
-										name="steamid"
-										type="text"
-										autocomplete="off"
-										spellcheck="false"
-										placeholder="17 位 SteamID64、好友码，或个人资料链接"
-										class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-									/>
-								</label>
-								<button
-									id="steamid-load"
-									type="button"
-									class="shrink-0 rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:text-cream disabled:opacity-60"
-								>
-									读取资料
-								</button>
+				{/*
+					服务端就知道登录状态，所以这里只渲染**一种**身份形态，另用一组 data-* 交给脚本
+					（见 partyRoom.ts 里的 identity 初始化）。用 data 属性而不是内联 JSON：昵称是用户可控的，
+					塞进 <script> 里就得自己处理 </script> 转义，属性交给 Astro 转义更省心。
+				*/}
+				<div
+					id="identity-block"
+					class="mt-4"
+					data-mode={me ? 'steam' : 'guest'}
+					data-name={me?.name ?? ''}
+					data-avatar={me?.avatar ?? ''}
+				>
+					{
+						me && (
+							<div class="flex items-center gap-3">
+								<Avatar src={me.avatar || null} name={me.name} size={40} />
+								<div class="min-w-0">
+									<p class="text-xs text-faint">已用 Steam 登录</p>
+									<p class="truncate text-sm font-medium text-cream">{me.name}</p>
+								</div>
+								<a href="/me" class="ml-auto shrink-0 text-xs text-dota-light transition hover:text-gold">
+									我的战绩 →
+								</a>
 							</div>
-							<div id="steamid-preview" style="display:none" class="flex items-center gap-2.5">
-								<span id="steamid-avatar" class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-2 text-xs text-faint"></span>
-								<p id="steamid-result" class="min-w-0 text-xs leading-relaxed text-muted"></p>
-							</div>
-							<p id="steamid-status" style="display:none" class="text-xs leading-relaxed"></p>
-							<p id="steamid-note" class="text-xs leading-relaxed text-faint">
-								ID 在 Steam 个人资料页的地址栏里（<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">/profiles/</code>
-								后面那串 17 位数字），好友码也能用。这只用来取头像和昵称，<strong class="text-muted"
-									>不能证明这个账号是你的</strong
-								>，要表明身份请用上面的 Steam 登录。
-							</p>
+						)
+					}
+					{
+						!me && (
+						<div id="identity-guest" class="flex flex-col gap-3 sm:flex-row sm:items-end">
+							<label class="flex-1" for="nickname">
+								<span class="mb-1 block text-xs font-medium text-faint">昵称</span>
+								<input
+									id="nickname"
+									name="nickname"
+									type="text"
+									maxlength="16"
+									autocomplete="nickname"
+									placeholder="最多 16 个字，例如：大魔导师"
+									class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+								/>
+							</label>
+							<a
+								href="/api/auth/steam/login"
+								class="inline-flex shrink-0 items-center gap-2 rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:bg-surface-2 hover:text-cream"
+							>
+								<svg height="16" viewBox="0 0 24 24" class="shrink-0 fill-current" aria-hidden="true">
+									<path
+										d="M23.938 12c0 6.595-5.353 11.938-11.957 11.938A11.95 11.95 0 0 1 .476 15.254l4.583 1.892a3.382 3.382 0 0 0 6.696-.823l4.067-2.898a4.512 4.512 0 0 0 4.611-4.5 4.511 4.511 0 0 0-9.02 0v.057l-2.85 4.125a3.37 3.37 0 0 0-2.094.583L.062 11.042C.553 4.895 5.7.062 11.981.062 18.585.062 23.938 5.405 23.938 12zm-16.38 6.176l-1.469-.607a2.541 2.541 0 0 0 1.31 1.242 2.544 2.544 0 0 0 3.32-1.367 2.51 2.51 0 0 0 .005-1.94A2.53 2.53 0 0 0 7.48 14.1l1.516.625a1.862 1.862 0 0 1 1.006 2.44 1.87 1.87 0 0 1-2.445 1.012zm8.365-6.253c-1.656 0-3.004-1.348-3.004-2.999s1.348-2.999 3.004-2.999 3.004 1.348 3.004 3-1.343 2.998-3.004 2.998zm.005-.75a2.254 2.254 0 0 0 0-4.505 2.257 2.257 0 0 0-2.258 2.251 2.263 2.263 0 0 0 2.258 2.253z"
+									></path>
+								</svg>
+								用 Steam 登录
+							</a>
 						</div>
-					</details>
+						)
+					}
+					{
+						!me && (
+						<details id="steamid-box" style="display:none" class="mt-3 rounded-xl border border-line bg-ink-2/60 px-3 py-2.5">
+							<summary class="cursor-pointer text-xs text-muted transition hover:text-cream">
+								不想登录？也可以填自己的 Steam ID，用你 Steam 的头像和昵称进来
+							</summary>
+							<div class="mt-3 space-y-2.5">
+								<div class="flex flex-col gap-2 sm:flex-row">
+									<label class="min-w-0 flex-1" for="steamid-input">
+										<span class="sr-only">Steam ID</span>
+										<input
+											id="steamid-input"
+											name="steamid"
+											type="text"
+											autocomplete="off"
+											spellcheck="false"
+											placeholder="17 位 SteamID64、好友码，或个人资料链接"
+											class="w-full rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+										/>
+									</label>
+									<button
+										id="steamid-load"
+										type="button"
+										class="shrink-0 rounded-lg border border-line px-3 py-2 text-sm text-muted transition hover:border-dota hover:text-cream disabled:opacity-60"
+									>
+										读取资料
+									</button>
+								</div>
+								<div id="steamid-preview" style="display:none" class="flex items-center gap-2.5">
+									<span id="steamid-avatar" class="relative inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border border-line bg-surface-2 text-xs text-faint"></span>
+									<p id="steamid-result" class="min-w-0 text-xs leading-relaxed text-muted"></p>
+								</div>
+								<p id="steamid-status" style="display:none" class="text-xs leading-relaxed"></p>
+								<p id="steamid-note" class="text-xs leading-relaxed text-faint">
+									ID 在 Steam 个人资料页的地址栏里（<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">/profiles/</code>
+									后面那串 17 位数字），好友码也能用。这只用来取头像和昵称，<strong class="text-muted"
+										>不能证明这个账号是你的</strong
+									>，要表明身份请用上面的 Steam 登录。
+								</p>
+							</div>
+						</details>
+						)
+					}
 				</div>
 			</section>
 
