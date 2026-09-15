@@ -281,15 +281,6 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 					</p>
 				</div>
 				<button
-					id="page-fullscreen"
-					type="button"
-					aria-pressed="false"
-					title="整个页面进入全屏（Esc 退出）"
-					class="rounded-lg border border-line px-3 py-2 text-xs text-muted transition hover:border-dota hover:text-cream"
-				>
-					网页全屏
-				</button>
-				<button
 					id="room-copy"
 					type="button"
 					class="rounded-lg border border-line px-3 py-2 text-xs text-muted transition hover:border-dota hover:text-cream"
@@ -310,7 +301,7 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 			<div class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,340px)] xl:grid-cols-[minmax(0,1fr)_minmax(0,380px)]">
 				{/* 全屏展示的作用范围：工具栏 + 队伍 + 空闲池（见 global.css 里 #team-stage 的规则）。 */}
 				<div id="team-stage" class="min-w-0 space-y-4">
-					<div class="rounded-2xl border border-line bg-surface p-4">
+					<div id="team-toolbar" class="rounded-2xl border border-line bg-surface p-4">
 						<div class="flex flex-wrap items-center gap-2">
 							<label class="mr-1 flex items-center gap-2 text-xs text-faint" for="team-size">
 								每队上限
@@ -341,17 +332,27 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 								新人自动入队
 							</label>
 							{/*
-								全屏展示：排完队往往要投屏或者摆第二块屏，这一块单独铺满屏幕最实用。
-								用 Fullscreen API 而不是另开一个页面——另开页面就得再同步一份房间状态。
+								两种全屏，机制不同、给人的感觉也不同，所以是两个按钮（见 partyRoom.ts 的说明）：
+								- 浏览器全屏：Fullscreen API，浏览器收起自己的界面，和 F11 一样；
+								- 网页全屏：纯 CSS 固定定位，在当前页面里盖满视口，浏览器界面照旧。
 							*/}
 							<button
-								id="team-fullscreen"
+								id="team-page-fullscreen"
 								type="button"
 								aria-pressed="false"
-								title="把队伍分配区铺满整个屏幕（Esc 退出）"
+								title="在当前页面里把队伍分配区铺满窗口（浏览器界面保持不变，Esc 退出）"
 								class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
 							>
-								全屏展示
+								网页全屏
+							</button>
+							<button
+								id="team-api-fullscreen"
+								type="button"
+								aria-pressed="false"
+								title="用浏览器的全屏（地址栏与标签页都会收起来，Esc 退出）"
+								class="rounded-md border border-line px-2.5 py-1.5 text-xs text-muted transition hover:border-dota hover:text-cream"
+							>
+								浏览器全屏
 							</button>
 						</div>
 						<p class="mt-2 text-xs text-faint">

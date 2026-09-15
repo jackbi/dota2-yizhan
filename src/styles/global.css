@@ -365,30 +365,43 @@ body {
 }
 
 /*
- * 队伍分配区全屏（/party 的「全屏展示」）。
+ * 队伍分配区的两种「全屏」（/party 工具栏上的两个按钮，见 partyRoom.ts 的说明）。
  *
- * 全屏元素的背板默认是黑的，这里跟着主题走；铺满屏幕后队伍卡按可用宽度自适应列数，
+ * - 浏览器全屏：`:fullscreen`，Fullscreen API 让浏览器收起自己的界面；
+ * - 网页全屏：`.is-page-fullscreen`，纯 CSS 固定定位，在当前页面里盖满视口。
+ *
+ * 两者共用的部分是「铺满之后怎么排」：背板跟着主题走，队伍卡按可用宽度自适应列数，
  * 不再受页面容器 max-width 的限制。
- *
- * `.is-faux-fullscreen` 是退化模式：不支持元素级全屏的浏览器（典型是 iPad 上的 Safari）
- * 用固定定位达到同样的效果，Esc 由 partyRoom.ts 里的 keydown 接住。
  */
 #team-stage:fullscreen,
-#team-stage.is-faux-fullscreen {
+#team-stage.is-page-fullscreen {
 	overflow-y: auto;
 	background: var(--color-ink);
 	padding: 1.5rem;
 }
 
-#team-stage.is-faux-fullscreen {
+#team-stage.is-page-fullscreen {
 	position: fixed;
 	inset: 0;
 	z-index: 60;
 }
 
+/* 盖满之后工具栏吸顶：否则往下滚几屏就够不到「退出网页全屏」了。 */
+#team-stage:fullscreen > #team-toolbar,
+#team-stage.is-page-fullscreen > #team-toolbar {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+}
+
 #team-stage:fullscreen #team-grid,
-#team-stage.is-faux-fullscreen #team-grid {
+#team-stage.is-page-fullscreen #team-grid {
 	grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
+/* 网页全屏时锁住页面滚动，否则滚轮会穿透到后面的页面。 */
+body.is-stage-page-fullscreen {
+	overflow: hidden;
 }
 
 @media (prefers-reduced-motion: reduce) {

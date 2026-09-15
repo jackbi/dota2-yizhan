@@ -164,8 +164,8 @@ const dom = {
 	teamSize: $<HTMLInputElement>('#team-size'),
 	autoAssign: $<HTMLInputElement>('#auto-assign'),
 	teamStage: $('#team-stage'),
-	teamFullscreen: $<HTMLButtonElement>('#team-fullscreen'),
-	pageFullscreen: $<HTMLButtonElement>('#page-fullscreen'),
+	teamPageFullscreen: $<HTMLButtonElement>('#team-page-fullscreen'),
+	teamApiFullscreen: $<HTMLButtonElement>('#team-api-fullscreen'),
 	joinSubmit: $<HTMLButtonElement>('#join-submit'),
 	teamGrid: $('#team-grid'),
 	freePool: $('#free-pool'),
@@ -1209,80 +1209,72 @@ function renderChat(): void {
 // ---------------------------------------------------------------- 全屏
 
 /**
- * 全屏。两个目标，逻辑完全一样，只是节点不同：
+ * 队伍分配区的两种「全屏」。它们机制不同、给人的感觉也不同，所以是两个按钮而不是一个：
  *
- * - **网页全屏**：整个 `<html>`，看直播式的沉浸浏览；
- * - **队伍分配区**：只放大队伍那一块，排完队投屏或摆第二块屏时用。
+ * - **浏览器全屏**（`#team-api-fullscreen`）：Fullscreen API。浏览器收起自己的界面
+ *   （地址栏、标签页），效果和 F11 一样，Esc 由浏览器负责退出；
+ * - **网页全屏**（`#team-page-fullscreen`）：纯 CSS 固定定位，把这一块盖满**当前视口**。
+ *   浏览器界面照旧、页面还在后面，Esc 由下面绑的 keydown 接住。
  *
- * 用 Fullscreen API 而不是「另开一个页面」：房间状态在房主的 `room` 里、成员各自在浏览器里，
- * 另开一个页面就得再同步一份状态，还要处理哪个窗口说了算。全屏只是把节点放大，零同步成本。
- *
- * 队伍区在不支持元素级全屏的浏览器上（典型是 iPad Safari）退回固定定位的「伪全屏」，
- * 那个模式浏览器不管 Esc，由下面绑的 keydown 接住。网页全屏不需要退化方案——页面本来
- * 就占满视口，没有 API 时按钮直接不出现。
+ * 两者互斥：进一个就先把另一个退掉，免得出现「一个固定定位的元素同时又是全屏元素」这种叠加态。
+ * 页面全屏（整个 `<html>` 走 API）不做：那是浏览器全屏的整页版，跟这两个不是一回事。
  */
-type FullscreenSpec = {
-	node: HTMLElement;
-	button: HTMLButtonElement;
-	enterLabel: string;
-	exitLabel: string;
-	/** 退化模式用的类名；不给就表示这个目标没有退化方案。 */
-	fauxClass?: string;
-};
+const PAGE_FULLSCREEN_CLASS = 'is-page-fullscreen';
 
-let FULLSCREEN: FullscreenSpec[] = [];
+function stageApiFullscreen(): boolean {
+	return document.fullscreenElement === dom.teamStage;
+}
 
-function fullscreenActive(spec: FullscreenSpec): boolean {
-	if (document.fullscreenElement === spec.node) return true;
-	return spec.fauxClass !== undefined && spec.node.classList.contains(spec.fauxClass);
+function stagePageFullscreen(): boolean {
+	return dom.teamStage.classList.contains(PAGE_FULLSCREEN_CLASS);
 }
 
 function syncFullscreenLabels(): void {
-	for (const spec of FULLSCREEN) {
-		const active = fullscreenActive(spec);
-		spec.button.textContent = active ? spec.exitLabel : spec.enterLabel;
-		spec.button.setAttribute('aria-pressed', String(active));
-	}
-}
+	const api = stageApiFullscreen();
+	dom.teamApiFullscreen.textContent = api ? '退出浏览器全屏' : '浏览器全屏';
+	dom.teamApiFullscreen.setAttribute('aria-pressed', String(api));
 
-function setFullscreen(spec: FullscreenSpec, on: boolean): void {
-	const supported = typeof spec.node.requestFullscreen === 'function';
-	if (!supported) {
-		if (spec.fauxClass === undefined) return;
-		spec.node.classList.toggle(spec.fauxClass, on);
-		syncFullscreenLabels();
-		return;
-	}
-	if (on) {
-		// 浏览器可能拒绝（比如不是用户手势触发的），有退化方案就退回去，别让按钮点了没反应。
-		const pending = spec.node.requestFullscreen() as Promise<void> | undefined;
-		void pending
-			?.catch(() => {
-				if (spec.fauxClass !== undefined) spec.node.classList.add(spec.fauxClass);
-			})
-			.finally(syncFullscreenLabels);
-		return;
-	}
-	if (document.fullscreenElement === spec.node) void document.exitFullscreen();
-	if (spec.fauxClass !== undefined) spec.node.classList.remove(spec.fauxClass);
-	syncFullscreenLabels();
-}
-
-/** 退出所有全屏（Esc 用）。 */
-function exitAllFullscreen(): void {
-	for (const spec of FULLSCREEN) if (fullscreenActive(spec)) setFullscreen(spec, false);
+	const page = stagePageFullscreen();
+	dom.teamPageFullscreen.textContent = page ? '退出网页全屏' : '网页全屏';
+	dom.teamPageFullscreen.setAttribute('aria-pressed', String(page));
 }
 
 /**
- * 只退出「有退化方案」的那些目标——也就是队伍区。
+ * 网页全屏：固定定位盖住视口。
  *
- * 离房时要调：队伍区在房间界面里，界面一藏，全屏的就会是一片空的区域。网页全屏不在此列，
- * 它跟房间界面的显隐无关，人退出房间后继续全屏着是合理的。
+ * 同时给 `body` 加一个类锁住页面滚动（见 global.css）——不锁的话，当前面的内容比视口矮时
+ * 滚轮会穿透过去滚后面的页面，看起来像是全屏区域在乱动。
+ */
+function setPageFullscreen(on: boolean): void {
+	if (on && stageApiFullscreen()) void document.exitFullscreen();
+	dom.teamStage.classList.toggle(PAGE_FULLSCREEN_CLASS, on);
+	document.body.classList.toggle('is-stage-page-fullscreen', on);
+	syncFullscreenLabels();
+}
+
+/** 浏览器全屏：不支持元素级全屏的浏览器（典型是 iPad Safari）直接退回网页全屏。 */
+function setApiFullscreen(on: boolean): void {
+	if (typeof dom.teamStage.requestFullscreen !== 'function') {
+		setPageFullscreen(on);
+		return;
+	}
+	if (on) {
+		setPageFullscreen(false);
+		// 浏览器也可能拒绝（比如不是用户手势触发的），那就退回网页全屏，别让按钮点了没反应。
+		const pending = dom.teamStage.requestFullscreen() as Promise<void> | undefined;
+		void pending?.catch(() => setPageFullscreen(true)).finally(syncFullscreenLabels);
+		return;
+	}
+	if (stageApiFullscreen()) void document.exitFullscreen();
+	syncFullscreenLabels();
+}
+
+/**
+ * 退出队伍区的两种全屏。离房时要调：这块在房间界面里，界面一藏，全屏的就只剩一片空。
  */
 function exitStageFullscreen(): void {
-	for (const spec of FULLSCREEN) {
-		if (spec.fauxClass !== undefined && fullscreenActive(spec)) setFullscreen(spec, false);
-	}
+	if (stageApiFullscreen()) void document.exitFullscreen();
+	if (stagePageFullscreen()) setPageFullscreen(false);
 }
 
 // ---------------------------------------------------------------- 事件
@@ -1390,28 +1382,11 @@ function bindEvents(): void {
 		dom.joinForm.scrollIntoView({ behavior: 'smooth', block: 'center' });
 	});
 
-	// 两个全屏目标在这里登记，按钮文案由 syncFullscreenLabels 统一维护。
-	FULLSCREEN = [
-		{ node: document.documentElement, button: dom.pageFullscreen, enterLabel: '网页全屏', exitLabel: '退出全屏' },
-		{
-			node: dom.teamStage,
-			button: dom.teamFullscreen,
-			enterLabel: '全屏展示',
-			exitLabel: '退出全屏',
-			fauxClass: 'is-faux-fullscreen',
-		},
-	];
-	for (const spec of FULLSCREEN) {
-		// 网页全屏没有退化方案：浏览器不支持就别摆一个点了没反应的按钮。
-		if (spec.fauxClass === undefined && typeof spec.node.requestFullscreen !== 'function') {
-			spec.button.hidden = true;
-			continue;
-		}
-		spec.button.addEventListener('click', () => setFullscreen(spec, !fullscreenActive(spec)));
-	}
-	// Esc 退出全屏由浏览器负责；固定定位那个退化模式得自己接。
+	dom.teamPageFullscreen.addEventListener('click', () => setPageFullscreen(!stagePageFullscreen()));
+	dom.teamApiFullscreen.addEventListener('click', () => setApiFullscreen(!stageApiFullscreen()));
+	// Esc：网页全屏靠这里退（浏览器全屏那边浏览器自己会处理，这里再调一次是空操作）。
 	document.addEventListener('keydown', (event) => {
-		if (event.key === 'Escape') exitAllFullscreen();
+		if (event.key === 'Escape') exitStageFullscreen();
 	});
 	document.addEventListener('fullscreenchange', syncFullscreenLabels);
 
