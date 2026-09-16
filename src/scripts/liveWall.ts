@@ -1,4 +1,4 @@
-import { PLATFORM_META, roomUrl } from '../data/site';
+import { PLATFORM_META, embedUrl, roomUrl } from '../data/site';
 import type { Platform, RoomRef } from '../data/types';
 
 /**
@@ -46,6 +46,13 @@ interface State {
 	 * 长度就对不上，那时按比例重采样（见 resample），形状大致保留。
 	 */
 	ratios: Record<string, { c: number[]; r: number[] }>;
+	/**
+	 * 显式要求「嵌平台整页」的房间 key。
+	 *
+	 * 斗鱼默认走直链 + `<video>`（见 `playDouyu`），只有解析失败、自动播放被拦，或者用户自己
+	 * 切过来时才用 iframe。虎牙本来就是官方播放器页，跟这个开关无关。
+	 */
+	iframeKeys: string[];
 }
 
 const LAYOUTS = [1, 2, 4, 6, 9];
@@ -53,35 +60,40 @@ const MAX_SLOTS = 9;
 const STORAGE_KEY = 'dota2-live-wall/v1';
 
 /**
- * 「只显示画面」的取景参数。
+ * 「只显示画面」的取景参数——**现在只剩斗鱼一家**。
  *
  * 每格里嵌的是平台**整个直播间页面**，导航、弹幕、礼物、推荐位都在里面，画面自然小。
  * iframe 跨域，父页面碰不到里面的 DOM，所以唯一的办法是把 iframe 放大再错位，
  * 让播放器正好落在格子里——外层 `overflow: hidden` 把其余部分裁掉。
  *
  * 难点是**播放器在页面里的位置不稳定**：斗鱼有个 1299px 高的推荐/广告块把播放器顶到
- * y=1439，虎牙的广告条会把播放器挤成 249px 宽。用 **URL 片段锚点**可以解决：带上播放器
- * 容器的 id，iframe 自己会把播放器滚到顶部，位置就归零了。
+ * y=1439。用 **URL 片段锚点**可以解决：带上播放器容器的 id，iframe 自己会把播放器滚到顶部，
+ * 位置就归零了。
  *
- * **但锚点必须"加载完再补"，不能只写在初次导航的地址里。** 两家都是客户端渲染，播放器容器
- * 出现在浏览器的片段滚动之后，于是滚不滚全看运气——实测同一个平台 `9999` 滚到了（scrollY=1379）
+ * **但锚点必须"加载完再补"，不能只写在初次导航的地址里。** 斗鱼是客户端渲染，播放器容器
+ * 出现在浏览器的片段滚动之后，于是滚不滚全看运气——实测 `9999` 滚到了（scrollY=1379）
  * 而 `88660` 完全没滚（scrollY=1），页面上就露出一条房间信息条。
  * 加载完再补一次**同文档**的片段导航（只改 hash，不重新加载），那次一定滚得准。
- * 所以 `scheduleAnchor()` 会在页面出来后按几次，把位置按住。
+ * 所以 `scheduleAnchor()` 会在页面出来后补一次，把位置按住。
  *
- * 补锚点后的实测值（1280×720 视口，冷启动，两家各测两个房间）：
+ * 补锚点后的实测值（1280×720 视口，冷启动）：
  *
  * | 平台 | 锚点 | 播放器位置 | 尺寸 | 页头 |
  * | --- | --- | --- | --- | --- |
  * | 斗鱼 | `#js-player-video` | (32, 0) | 813×457 | `relative`，会滚走 |
- * | 虎牙 | `#J_playerMain` | (90, 60) | 785×442 | `fixed`，吸顶，得给它留 60px |
+ *
+ * **虎牙已经不需要裁切了**：它有一个官方的纯播放器页 `liveshare.huya.com/iframe/{房间号}`
+ * （见 `data/site.ts` 的 `embedUrl()`），嵌进去就是画面本身，还自带每格可拖的音量滑杆。
+ * 所以 `CROP` 里没有虎牙——`cropSpecOf('huya')` 返回 undefined，虎牙格子走「正常铺满」那条路。
+ * （之前的写死值是 `#J_playerMain`、(90,60)、785×442，虎牙页头 `fixed` 吸顶得留 60px；
+ * 那套连同它的偏移微调都已经删掉，别再照着老注释往回加。）
  *
  * **B站 不在表里，因为它根本嵌不进来**：`live.bilibili.com` 发
  * `X-Frame-Options: SAMEORIGIN`，浏览器直接把 iframe 拒掉
  * （`net::ERR_BLOCKED_BY_RESPONSE`，这正是"被响应头拒绝"的标志），格子里只会是黑的。
  * 手动添加里粘 B站 链接会得到一个打不开的格子，页面上有提示。
  *
- * 取景框以这两组数写死，平台改版就会偏；广告后到时也会把播放器顶偏（实测同一平台一间正好、
+ * 取景框以这组数写死，平台改版就会偏；广告后到时也会把播放器顶偏（实测同一间正好、
  * 一间偏 180px），所以每格左下角有上下微调，按房间号记住。
  */
 interface CropSpec {
@@ -96,10 +108,9 @@ interface CropSpec {
 
 const CROP: Partial<Record<Platform, CropSpec>> = {
 	douyu: { anchor: 'js-player-video', x: 32, y: 0, w: 813, h: 457 },
-	huya: { anchor: 'J_playerMain', x: 90, y: 60, w: 785, h: 442 },
 };
 
-/** 取景时 iframe 的逻辑视口：桌面布局下的整数尺寸，两家实测都用它。 */
+/** 取景时 iframe 的逻辑视口：桌面布局下的整数尺寸。 */
 const CROP_VIEW = { w: 1280, h: 720 };
 
 /**
@@ -172,6 +183,7 @@ const countEl = document.getElementById('room-count');
 const searchEl = document.getElementById('room-search') as HTMLInputElement | null;
 const filterEl = document.getElementById('room-filters');
 const layoutEl = document.getElementById('wall-layout');
+const roomPanelEl = document.getElementById('room-panel');
 const panelEl = document.getElementById('wall-panel');
 const pageFullBtn = document.getElementById('wall-page-full') as HTMLButtonElement | null;
 const browserFullBtn = document.getElementById('wall-browser-full') as HTMLButtonElement | null;
@@ -203,6 +215,19 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)} 亿`;
 		if (n >= 10_000) return `${(n / 10_000).toFixed(1)} 万`;
 		return String(n);
+	}
+
+	/**
+	 * 榜单快照时间（本地时区，`MM.DD HH:mm`）。
+	 *
+	 * 这句话原来在页面底部那张说明卡里，卡片收掉之后挪到列表页脚：**「数据有多旧」是这页最该写清的事**
+	 * ——热门榜与 OB 状态都是构建期快照，不随时间刷新，所以时间必须一直看得见。
+	 */
+	function snapshotLabel(): string {
+		const at = new Date(payload.snapshotAt);
+		if (Number.isNaN(at.getTime())) return '未知';
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${pad(at.getMonth() + 1)}.${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}`;
 	}
 
 	function badge(platform: Platform): string {
@@ -254,6 +279,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			crop: false,
 			cropOffsets: {},
 			ratios: {},
+			iframeKeys: [],
 		};
 		try {
 			const raw = localStorage.getItem(STORAGE_KEY);
@@ -270,7 +296,18 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				const n = Number(value);
 				if (Number.isFinite(n) && n !== 0) cropOffsets[key] = Math.max(-600, Math.min(600, n));
 			}
-			return { layout, slots, manual, crop: parsed.crop === true, cropOffsets, ratios: sanitizeRatios(parsed.ratios) };
+			const iframeKeys = (Array.isArray(parsed.iframeKeys) ? parsed.iframeKeys : []).filter(
+				(k): k is string => typeof k === 'string' && k.length > 0,
+			);
+			return {
+				layout,
+				slots,
+				manual,
+				crop: parsed.crop === true,
+				cropOffsets,
+				ratios: sanitizeRatios(parsed.ratios),
+				iframeKeys,
+			};
 		} catch {
 			return fallback;
 		}
@@ -360,7 +397,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				? rows.map(rowHtml).join('')
 				: '<p class="px-3 py-6 text-center text-sm text-faint">没有匹配的直播间。</p>';
 		const total = rooms.size + state.manual.length;
-		countEl!.textContent = `显示 ${rows.length} / ${total} 个`;
+		countEl!.textContent = `显示 ${rows.length} / ${total} 个 · 榜单快照 ${snapshotLabel()}`;
 	}
 
 	// ------------------------------------------------------------ 右侧监控室
@@ -400,12 +437,29 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			</div>`;
 		}
 
+		/*
+		 * 虎牙格子里是它的官方播放器，**控制条就贴在底部**（暂停/刷新/弹幕/音量）。
+		 * 我们那个 "打开直播间" 原先固定挂右下角，实测正好盖在音量滑杆和清晰度上（见截图），
+		 * 所以按平台换个位置：虎牙放到标题栏里，斗鱼保持右下角（它底部是裁出来的播放器区域，
+		 * 不冲突）。
+		 */
+		const huya = r.platform === 'huya';
+		const openLink = (cls: string): string =>
+			`<a href="${roomUrl(r.platform, r.roomId)}" target="_blank" rel="noopener noreferrer"
+				class="${cls}" data-open="${esc(r.key)}">打开直播间</a>`;
+
 		return `<div class="${base} border-line bg-ink-2" data-slot="${index}" data-key="${esc(r.key)}">
 			<div class="flex items-center gap-2 border-b border-line bg-surface/80 px-2 py-1.5">
 				${avatarBadge(r, 'tile')}
 				<span class="min-w-0 flex-1 truncate text-xs font-medium text-cream">${esc(r.name)}</span>
 				<span class="shrink-0 text-[10px] tabular-nums text-faint">${esc(r.roomId)}</span>
 				${badge(r.platform)}
+				${huya ? openLink('shrink-0 rounded px-1 text-[11px] text-dota-light transition hover:bg-surface-3 hover:text-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold') : ''}
+				${
+					r.platform === 'douyu' && state.iframeKeys.includes(r.key)
+						? `<button type="button" class="tile-use-video shrink-0 rounded px-1 text-[11px] text-dota-light transition hover:bg-surface-3 hover:text-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold" data-tile="${index}" title="改用直链播放（画面自己铺满，音量可控）">直链</button>`
+						: ''
+				}
 				<button type="button" class="tile-remove shrink-0 rounded px-1.5 py-0.5 text-faint transition hover:bg-surface-3 hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
 					data-tile="${index}" aria-label="把 ${esc(r.name)} 从第 ${index + 1} 格移出">✕</button>
 			</div>
@@ -416,20 +470,21 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 						<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
 						播放这一格
 					</button>
-					<span class="px-3 text-center text-[11px] leading-relaxed text-faint">
-						点开才会加载直播间页面${r.live ? '' : '（榜单房间，抓取时在播）'}
+					<span class="tile-hint px-3 text-center text-[11px] leading-relaxed text-faint">
+						点开才会加载${huya ? '虎牙官方播放器' : '直播间画面'}${r.live ? '' : '（榜单房间，抓取时在播）'}
 					</span>
 				</div>
 			</div>
 			${cropControl(r, index)}
-			<a href="${roomUrl(r.platform, r.roomId)}" target="_blank" rel="noopener noreferrer"
-				class="absolute bottom-2 right-2 z-10 rounded-md bg-dota/90 px-2 py-1 text-[11px] font-medium text-white backdrop-blur transition hover:bg-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-				data-open="${esc(r.key)}">打开直播间</a>
+			${huya ? '' : openLink('absolute bottom-2 right-2 z-10 rounded-md bg-dota/90 px-2 py-1 text-[11px] font-medium text-white backdrop-blur transition hover:bg-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold')}
 		</div>`;
 	}
 
 	function renderWall(): void {
 		const n = state.layout;
+		// 重建 innerHTML 会把 `<video>` 一起抹掉，所以先把播放器按规矩销毁——否则 mpegts.js
+		// 手里还攥着已经不存在的 media element，控制台会刷一串错。
+		destroyAllDouyuTiles();
 		// 列宽行高全部走内联的 grid-template-*（见 applyTracks），类名只留布局骨架。
 		wallEl!.className = 'grid gap-3';
 		wallEl!.innerHTML = Array.from({ length: n }, (_, i) => tileHtml(i)).join('');
@@ -438,9 +493,20 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		});
 		syncCropControls();
 		applyTracks();
-		const used = state.slots.slice(0, n).filter(Boolean).length;
+		syncWallStatus();
+	}
+
+	/**
+	 * 工具栏上的格数文案。
+	 *
+	 * 单独抽出来是因为 `resetTile()` 也可能改变格数（点 ✕ 把房间移出格子），而它刻意不重建
+	 * 整面墙——不抽出来的话，工具栏会停在移出前的数字，要等下一次 `renderWall()`（换格数、
+	 * 全屏、清空）才纠正。
+	 */
+	function syncWallStatus(): void {
+		const used = state.slots.slice(0, state.layout).filter(Boolean).length;
 		const status = document.getElementById('wall-status');
-		if (status) status.textContent = `墙上 ${used} / ${n} 格`;
+		if (status) status.textContent = `墙上 ${used} / ${state.layout} 格`;
 	}
 
 	// ------------------------------------------------------------ 格子尺寸
@@ -496,16 +562,39 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	}
 
 	/**
+	 * 非全屏时墙面的目标总高。
+	 *
+	 * 桌面端（≥1024px，和 `lg:` 断点对齐）**一屏放下整面墙**：以「视口剩下的高度」为准，
+	 * 4/6/9 格时行高会被压得比 16:9 矮，这是故意的——原来一律按 16:9 折行高，
+	 * 两个直播间时格子只有 ~195px 高，上下全是空白；格子一多又反过来溢出、还得滚动。
+	 * 手机上仍按 16:9：墙排在长长的房间列表下面，一屏一格反而不好翻。
+	 *
+	 * 下限是 `MIN_ROW_PX * 行数`：视口实在太矮时（小笔记本、工具栏换行）宁可让页面滚动，
+	 * 也不要把格子压成一条缝。
+	 */
+	function wallTargetHeight(cols: number, rows: number): number {
+		const base = rowBasePx(cols) * rows;
+		if (window.innerWidth < 1024) return base;
+		const top = wallEl!.getBoundingClientRect().top;
+		// 底下留 24px：和侧栏的 `lg:max-h-[calc(100dvh-6rem)]` 观感一致，别顶到窗口边缘。
+		const available = window.innerHeight - top - 24;
+		const floor = MIN_ROW_PX * rows + gridGap() * (rows - 1);
+		return Math.max(available, Math.min(base, floor));
+	}
+
+	/**
 	 * 一个「比例单位」折算成多少 px——比例和总是 1，所以它就是整条可用轨道空间。
 	 *
 	 * 行高分两种：沉浸模式下面板 fixed 铺满视口，墙面高度确定，直接用墙面高度；
-	 * 非沉浸模式下墙面高度是内容撑出来的，得回到「等分时每行多高 × 行数」这个总量（见 rowBasePx）。
+	 * 非沉浸模式下墙面高度是内容撑出来的，得回到「目标总高」这个总量（见 wallTargetHeight）。
 	 */
 	function unitPx(kind: 'c' | 'r', cols: number, rows: number): number {
 		const gap = gridGap();
 		if (kind === 'c') return Math.max(1, wallEl!.clientWidth - gap * (cols - 1));
 		if (immersive()) return Math.max(1, wallEl!.clientHeight - gap * (rows - 1));
-		return Math.max(1, rowBasePx(cols) * rows);
+		// 行之间还有 gap，可用轨道空间要先把它们扣掉——和 `applyTracks()` 里算法保持一致，
+		// 否则拖动分隔条时的最小格高会差那么十几像素。
+		return Math.max(1, wallTargetHeight(cols, rows) - gap * (rows - 1));
 	}
 
 	/**
@@ -513,7 +602,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	 *
 	 * 列宽用 fr：容器宽度确定，fr 按比例分且把 gap 算在里面（用百分比会连 gap 一起超出去）。
 	 * 行高在全屏时同样用 fr 跟着视口长；非全屏时容器高度不确定，fr 会被当成 auto
-	 * （实测行高塌成标题条那么高），所以按等分高度折成 px——比例都是 1 时与原来的 16:9 一模一样。
+	 * （实测行高塌成标题条那么高），所以按 `wallTargetHeight()` 折成 px。
 	 */
 	function applyTracks(): void {
 		const { cols, rows } = arrangement(state.layout);
@@ -522,12 +611,31 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		if (immersive()) {
 			wallEl!.style.gridTemplateRows = ratio.r.map((v) => `${v}fr`).join(' ');
 		} else {
-			const total = rowBasePx(cols) * rows;
-			wallEl!.style.gridTemplateRows = ratio.r.map((v) => `${(v * total).toFixed(1)}px`).join(' ');
+			// 行之间还有 gap，得从目标总高里先扣掉，否则整墙会比视口高出几行 gap。
+			const total = wallTargetHeight(cols, rows) - gridGap() * (rows - 1);
+			wallEl!.style.gridTemplateRows = ratio.r.map((v) => `${Math.max(40, v * total).toFixed(1)}px`).join(' ');
 		}
 		drawSplitters(cols, rows);
+		syncRoomPanelHeight();
 		// 格子尺寸变了，取景的比例也得跟着重算，否则已经在播的画面会错位。
 		refitCrops();
+	}
+
+	/**
+	 * 让左侧房间列表**和墙一样高**。
+	 *
+	 * 侧栏原来写的是 `lg:max-h-[calc(100dvh-6rem)]`：它按「面板顶到视口顶」算，
+	 * 可实际上它跟墙一样从标题 / 工具栏下面开始（实测 top≈389px），于是整页被它顶出一条长滚动条，
+	 * 两侧底边也参差不齐。这里按实测的顶边算，和 `wallTargetHeight()` 用的是同一套数。
+	 */
+	function syncRoomPanelHeight(): void {
+		if (!roomPanelEl) return;
+		if (window.innerWidth < 1024 || immersive()) {
+			roomPanelEl.style.maxHeight = '';
+			return;
+		}
+		const top = roomPanelEl.getBoundingClientRect().top;
+		roomPanelEl.style.maxHeight = `${Math.max(320, window.innerHeight - top - 24)}px`;
 	}
 
 	/** `c:1` 是第 1 列与第 2 列之间的竖条，`r:2` 是第 2 行与第 3 行之间的横条。 */
@@ -725,6 +833,209 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		return CROP[platform as Platform];
 	}
 
+	// ------------------------------------------------------------ 斗鱼：直链 + <video>
+
+	/**
+	 * 斗鱼格子**自己播流**，不再嵌整页。
+	 *
+	 * 为什么可以这么做（都是实测出来的，别凭直觉改）：
+	 *
+	 * - 服务端能解出直链：`betard → getEncryption →` 纯 MD5 签名 `→ getH5PlayV1`
+	 *   （见 `lib/liveStream.ts`，**不需要跑平台 JS**）。
+	 * - 斗鱼 CDN 给 `Access-Control-Allow-Origin: *`，浏览器直连没有跨域问题。
+	 * - **视频字节不过我们的服务器**：`/api/live/stream-url` 只回一条 URL，剩下的浏览器直接去 CDN 拉。
+	 *
+	 * 但那条 URL 有两个要命的性质，整个实现都是绕着它们转的：
+	 *
+	 * 1. **一次性。** 同一个 token 第一次拉能一直推（实测 6 秒 11MB），第二次只剩约 400KB 就断。
+	 *    所以任何重试、重播、换清晰度都**必须重新解析**，绝不能把旧地址再用一次。
+	 * 2. **有效期很短。** 解析完等 25 秒再拉就已经断（1 秒内没事）。所以是「点了才解析、解析完立刻播」，
+	 *    不能提前解析揣着。
+	 *
+	 * 顺带一提：这两条也解释了「为什么之前怎么试都只出一秒画面」——诊断脚本在播放前先用这条地址
+	 * 探了三次 CORS，token 被消耗掉了。
+	 *
+	 * 好处是实打实的：画面 `object-fit: cover` 铺满格子（不用再裁平台的页面）、
+	 * **音量归父页面管**（默认静音，想让哪一格出声就点哪一格）、内存比嵌整页小得多。
+	 * 代价是每次播放要一次解析往返（约 1～4 秒），以及斗鱼改接口时这一块会先坏。
+	 */
+	interface DouyuTile {
+		player: {
+			pause(): void;
+			unload(): void;
+			detachMediaElement(): void;
+			destroy(): void;
+		};
+		video: HTMLVideoElement;
+	}
+	const douyuTiles = new Map<number, DouyuTile>();
+	/** 每格已重试几次（重新解析算一次）。轮播房间放完会 ended，允许自动续一次。 */
+	const retries = new Map<number, number>();
+
+	function setHint(tile: HTMLElement, text: string): void {
+		const el = tile.querySelector('.tile-hint');
+		if (el) el.textContent = text;
+	}
+
+	function destroyDouyuTile(index: number): void {
+		const entry = douyuTiles.get(index);
+		douyuTiles.delete(index);
+		if (!entry) return;
+		try {
+			entry.player.pause();
+			entry.player.unload();
+			entry.player.detachMediaElement();
+			entry.player.destroy();
+		} catch {
+			// 已经坏掉的播放器，销毁失败无所谓。
+		}
+		entry.video.remove();
+	}
+
+	function destroyAllDouyuTiles(): void {
+		for (const index of [...douyuTiles.keys()]) destroyDouyuTile(index);
+	}
+
+	/** 直链播不动时的退路：把这个格子切回「嵌平台整页 + 取景」那条老路。 */
+	function useIframeFallback(index: number, note: string): void {
+		destroyDouyuTile(index);
+		state.iframeKeys = [...new Set([...state.iframeKeys, state.slots[index] ?? ''])].filter(Boolean);
+		save();
+		setNote(note);
+		// 只重画这一格：`renderWall()` 会把别的格子里正在播的画面一起停掉（实测掉过一回）。
+		resetTile(index);
+		playSlot(index);
+	}
+
+	/** 每格左下角那组控制：静音开关 + 停止 + 当前清晰度。 */
+	function douyuControls(index: number, quality: string, muted: boolean): string {
+		const btn =
+			'flex h-6 items-center justify-center rounded bg-ink/80 px-1.5 text-cream/80 backdrop-blur transition hover:bg-dota hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold';
+		return `<span class="absolute bottom-2 left-2 z-10 flex items-center gap-1" role="group" aria-label="这一格的声音与播放">
+			<button type="button" class="tile-mute ${btn}" data-tile="${index}" aria-pressed="${muted ? 'true' : 'false'}" aria-label="${muted ? '让这一格出声' : '把这一格静音'}">${muted ? '🔇' : '🔊'}</button>
+			<button type="button" class="tile-stop ${btn}" data-tile="${index}" aria-label="停掉这一格（房间留在格子里）">■</button>
+			<span class="rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-cream/60 backdrop-blur">${esc(quality)}</span>
+		</span>`;
+	}
+
+	/**
+	 * 斗鱼格子的播放：解析 → 立刻用 `<video>` 播。
+	 *
+	 * 这里的 `await` 顺序不能动：拿到 `url` 之后**中间不能再插任何请求**（包括探测、预加载、日志上报），
+	 * 否则就是在烧那个一次性 token。
+	 */
+	async function playDouyu(index: number, r: RoomRef): Promise<void> {
+		const tile = wallEl!.querySelector<HTMLElement>(`[data-slot="${index}"]`);
+		if (!tile) return;
+		destroyDouyuTile(index);
+		tile.querySelector('.tile-video-controls')?.remove();
+		tile.querySelector('.tile-idle')?.remove();
+		const body = tile.querySelector<HTMLElement>('.tile-body');
+		if (!body) return;
+		body.innerHTML = '<div class="tile-loading absolute inset-0 grid place-items-center text-[11px] text-faint">取直链…</div>';
+
+		let payload: { ok?: boolean; url?: string; kind?: string; quality?: string; error?: string };
+		try {
+			const res = await fetch(`/api/live/stream-url?platform=douyu&room=${encodeURIComponent(r.roomId)}`);
+			payload = (await res.json()) as typeof payload;
+		} catch (e) {
+			payload = { ok: false, error: e instanceof Error ? e.message : String(e) };
+		}
+		// 解析期间用户可能已经把这一格换掉/清掉了。
+		if (!tile.isConnected || state.slots[index] !== r.key) return;
+		if (!payload.ok || !payload.url) {
+			useIframeFallback(index, `斗鱼直链解析失败（${payload.error ?? '未知原因'}），这一格已切回平台页面。`);
+			return;
+		}
+
+		body.innerHTML = '';
+		const video = document.createElement('video');
+		// 多路同时出声只会糊成一片，所以默认静音；要哪一路出声点它左下角的喇叭。
+		video.muted = true;
+		video.autoplay = true;
+		video.playsInline = true;
+		video.className = 'h-full w-full';
+		// 分屏里「铺满格子」才是常态：格子不是 16:9 时（比如全屏下被拉高）按多的那头裁，
+		// 而不是留两条黑边。平台的清晰度不够时画面会糊，但不会缩成一小块。
+		video.style.objectFit = 'cover';
+		body.append(video);
+
+		const quality = payload.quality ?? '';
+		tile.insertAdjacentHTML('beforeend', `<span class="tile-video-controls contents">${douyuControls(index, quality, true)}</span>`);
+
+		let mpegts: typeof import('mpegts.js').default;
+		try {
+			// 按需加载：只在真的播斗鱼时才把这 200 多 KB 的库拉下来。
+			mpegts = (await import('mpegts.js')).default;
+		} catch (e) {
+			useIframeFallback(index, `播放器没加载起来（${e instanceof Error ? e.message : String(e)}），这一格已切回平台页面。`);
+			return;
+		}
+		if (!tile.isConnected || state.slots[index] !== r.key) return;
+
+		const retry = (): void => {
+			const used = (retries.get(index) ?? 0) + 1;
+			retries.set(index, used);
+			if (used <= 2) {
+				// **重新解析**，绝不重用刚才那条地址。
+				void playDouyu(index, r);
+			} else {
+				useIframeFallback(index, '这一格反复播不起来，已切回平台页面（点「播放这一格」可再试）。');
+			}
+		};
+
+		const player = mpegts.createPlayer(
+			{ type: payload.kind === 'm3u8' ? 'mse' : 'flv', isLive: true, url: payload.url },
+			// 直播：别攒缓冲，起播要快。
+			{ enableStashBuffer: false, stashInitialSize: 128, liveBufferLatencyChasing: true },
+		);
+		player.on(mpegts.Events.ERROR, retry);
+		// 轮播房间（斗鱼 `videoLoop === 1`）拉到的是一段有限的流，放完就是 ended：自动续一次。
+		video.addEventListener('ended', retry);
+		player.attachMediaElement(video);
+		/*
+		 * **先登记，再 load/play。**
+		 *
+		 * 登记晚于 `play()` 时，下面两条失败分支（ERROR 早于 play 落定、自动播放被拦）里的
+		 * `useIframeFallback()` → `destroyDouyuTile()` 会在表里查不到条目、直接 return：
+		 * pause / unload / detachMediaElement / destroy 一个都不执行，而 `resetTile()` 已经把这个
+		 * `<video>` 换出 DOM。结果是格子上显示兜底页面、后台仍挂着一个 mpegts loader 在拉流，
+		 * 它的 ERROR handler 还会再触发一次重新解析，等于多叠一个 player。
+		 */
+		douyuTiles.set(index, { player, video });
+		player.load();
+		try {
+			await player.play();
+			retries.set(index, 0);
+			setHint(tile, '');
+		} catch (e) {
+			// 起播这段时间里用户可能已经把这一格清掉或换成别的房间了，那时别拿「自动播放被拦」
+			// 去解释——播放器已经在表里，`resetTile()` 负责销毁它。
+			if (!tile.isConnected || state.slots[index] !== r.key) return;
+			useIframeFallback(index, `自动播放被拦（${e instanceof Error ? e.message : String(e)}），这一格已切回平台页面。`);
+			return;
+		}
+	}
+
+	/**
+	 * 只把一个格子恢复成「未播放」的样子，**不动其它格子**。
+	 *
+	 * 事件全部委托在 `#wall` 上，所以这里直接换掉那一格的 DOM 是安全的；比重建整面墙好得多
+	 * ——后者会把别的格子里正在播的画面一起停掉。
+	 */
+	function resetTile(index: number): void {
+		const tile = wallEl!.querySelector<HTMLElement>(`[data-slot="${index}"]`);
+		if (!tile) return;
+		destroyDouyuTile(index);
+		retries.delete(index);
+		const wrapper = document.createElement('div');
+		wrapper.innerHTML = tileHtml(index).trim();
+		const fresh = wrapper.firstElementChild;
+		if (fresh) tile.replaceWith(fresh);
+		// 点 ✕ 会把房间移出格子，格数随之变化——只重画这一格，所以这里得自己刷工具栏。
+		syncWallStatus();
+	}
+
 	/** 真正创建 iframe 只发生在用户点了播放之后。 */
 	function playSlot(index: number): void {
 		const tile = wallEl!.querySelector<HTMLElement>(`[data-slot="${index}"]`);
@@ -732,17 +1043,25 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		if (!tile || !key) return;
 		const r = rooms.get(key) ?? state.manual.find((m) => m.key === key);
 		if (!r) return;
+		// 斗鱼走直链自己播；用户显式要求「用平台页面」时（解析失败/手动切）才回到 iframe。
+		if (r.platform === 'douyu' && !state.iframeKeys.includes(r.key)) {
+			void playDouyu(index, r);
+			return;
+		}
 		const body = tile.querySelector('.tile-body');
 		if (!body || body.querySelector('iframe')) return;
 		tile.querySelector('.tile-idle')?.remove();
 
 		const spec = state.crop ? cropSpecOf(r.platform) : undefined;
 		const frame = document.createElement('iframe');
-		const url = roomUrl(r.platform, r.roomId);
+		// 嵌哪一页由 `embedUrl()` 决定：虎牙是官方的纯播放器页，斗鱼是整页（要靠 spec 裁）。
+		const url = embedUrl(r.platform, r.roomId);
 		// 先按正常地址加载，锚点等页面出来再补（见 scheduleAnchor 的注释）。
 		frame.src = url;
 		frame.title = `${r.name} 直播间`;
 		frame.className = spec ? 'absolute left-0 top-0' : 'h-full w-full';
+		// 虎牙那个纯播放器页自己带音量滑杆；`autoplay` 交给平台页自己判断，
+		// 父页面读不到它的音量，但用户可以在格子里单独拖。
 		frame.setAttribute('allow', 'autoplay; fullscreen; picture-in-picture; encrypted-media');
 		frame.setAttribute('loading', 'lazy');
 		if (spec) {
@@ -789,7 +1108,8 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	/** 切换取景方式后把已经在播的格子重新加载，省得用户再点一遍。 */
 	function reloadPlayers(): void {
 		const playing = [...wallEl!.querySelectorAll<HTMLElement>('[data-slot]')]
-			.filter((tile) => tile.querySelector('iframe'))
+			// 斗鱼是 `<video>`（在 `douyuTiles` 里），虎牙与兜底是 `<iframe>`，两边都要捞。
+			.filter((tile) => tile.querySelector('iframe') || douyuTiles.has(Number(tile.dataset.slot)))
 			.map((tile) => Number(tile.dataset.slot))
 			.filter((n) => Number.isInteger(n));
 		renderWall();
@@ -797,6 +1117,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	}
 
 	function stopAll(): void {
+		destroyAllDouyuTiles();
 		wallEl!.querySelectorAll('iframe').forEach((f) => f.remove());
 		renderWall();
 	}
@@ -938,7 +1259,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		reloadPlayers();
 		setNote(
 			state.crop
-				? '只显示画面：裁到平台播放器区域，页面其余部分不显示。切换会重新加载画面；某一格位置偏了，用它左下角的上下按钮对齐。'
+				? '只显示画面（只在「嵌平台整页」的兜底路上生效）：裁到播放器区域，页面其余部分不显示。切换会重新加载画面；某一格位置偏了，用它左下角的上下按钮对齐。正常走直链的斗鱼格子和虎牙格子用不到这个开关。'
 				: '',
 		);
 	});
@@ -968,6 +1289,18 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			refitCrops();
 		}).observe(wallEl!);
 	}
+
+	/*
+	 * 只改窗口高度时（拖窗口下沿、手机上地址栏收起）`ResizeObserver` 那条路不会重写轨道——
+	 * 而墙面现在是要撑满视口的，视口一变行高就得跟着变。所以单独听一次 resize，
+	 * 只在高度的确变了时才重算（宽度变化归上面那个观察器管，避免两边同时写轨道）。
+	 */
+	let lastViewportHeight = window.innerHeight;
+	window.addEventListener('resize', () => {
+		if (window.innerHeight === lastViewportHeight) return;
+		lastViewportHeight = window.innerHeight;
+		applyTracks();
+	});
 
 	// Esc 退出网页全屏。系统全屏时 Esc 归浏览器管（它会自己退出并触发 fullscreenchange），
 	// 这里让开，否则会把两个全屏一起关掉。
@@ -1066,11 +1399,43 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			resetCrop(Number(cropReset.dataset.tile));
 			return;
 		}
+		// 斗鱼直链播放时的两个控制：静音开关（多路分屏最需要的那件事）与「停掉但留着房间」。
+		const mute = target.closest<HTMLButtonElement>('.tile-mute');
+		if (mute?.dataset.tile) {
+			const entry = douyuTiles.get(Number(mute.dataset.tile));
+			if (entry) {
+				entry.video.muted = !entry.video.muted;
+				mute.textContent = entry.video.muted ? '🔇' : '🔊';
+				mute.setAttribute('aria-pressed', String(entry.video.muted));
+				mute.setAttribute('aria-label', entry.video.muted ? '让这一格出声' : '把这一格静音');
+			}
+			return;
+		}
+		const stopTile = target.closest<HTMLElement>('.tile-stop');
+		if (stopTile?.dataset.tile) {
+			resetTile(Number(stopTile.dataset.tile));
+			return;
+		}
+		// 「直链」：把这一格从「嵌平台整页」切回自己播流。
+		const useVideo = target.closest<HTMLElement>('.tile-use-video');
+		if (useVideo?.dataset.tile) {
+			const index = Number(useVideo.dataset.tile);
+			const key = state.slots[index];
+			if (key) {
+				state.iframeKeys = state.iframeKeys.filter((k) => k !== key);
+				save();
+				resetTile(index);
+				playSlot(index);
+			}
+			return;
+		}
 		const remove = target.closest<HTMLElement>('.tile-remove');
 		if (remove?.dataset.tile) {
-			state.slots[Number(remove.dataset.tile)] = null;
+			const index = Number(remove.dataset.tile);
+			state.slots[index] = null;
 			save();
-			renderWall();
+			// 只重画这一格：重建整面墙会把其它格子里正播的画面一起停掉。
+			resetTile(index);
 		}
 	});
 
