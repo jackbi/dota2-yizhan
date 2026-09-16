@@ -103,6 +103,19 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
+上面那些「永久」指的是**读取时不判过期**，不等于文件会一直留着。每轮构建开头会扫一遍
+（`astro:build:start`）：
+
+- 图片频道（avatars / covers / patch-heroes / patch-items）走 `pruneImages()`：**30 天没被用到**
+  就删——`localImages()` 每次命中都会把 mtime 刷成当前时间，所以这里的 mtime 是「上次用到」。
+- 其余目录走 `pruneCacheDirs()`：**180 天没写过**的 JSON / HTML 删掉，外加任何年龄的 `*.tmp`
+  写入残留。这里的 mtime 是「上次写入」——命中缓存不刷新它，只有真联网抓回来才写，所以窗口给得
+  很宽：删早了的代价是上游恢复后本来能命中的兜底缓存没了。
+- 写入是**原子的**（`buildCache.writeCacheFile()`）：先写 `<file>.<pid>.<序号>.tmp` 再 `rename`。
+  Astro 并行开多个渲染进程、同时读写同一个 `.cache/`，就地 `writeFile` 的中间态会被读到——JSON
+  读坏只算没命中，但正文那份缓存的 TTL 是「永久」，半截 HTML 一旦被当成新鲜命中就永远不会重抓，
+  所以正文读的时候还多一条 `isCompleteHtml()` 校验。
+
 ### `.cache/` 不进仓库
 
 已经在 `.gitignore` 里，**不要提交，也不要上传**：它是可再生的抓取结果，而且包含

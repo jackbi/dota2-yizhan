@@ -1,9 +1,11 @@
 // @ts-check
 import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, envField } from 'astro/config';
 import node from '@astrojs/node';
 import tailwindcss from '@tailwindcss/vite';
+import { CACHE_KEEP_DAYS, pruneCacheDirs } from './src/lib/cachePrune.ts';
 
 /**
  * Astro 只在构建期把 `.env` 注入 `process.env`，`astro dev` 不会——结果是
@@ -144,15 +146,29 @@ async function publishImages(channel, dir, logger) {
 const dataSourceReport = {
 	name: 'data-source-report',
 	hooks: {
-		'astro:build:start': async ({ logger }) => {
-			// 上一轮的结果不能混进本轮汇总。
-			await fs.rm(HEALTH_DIR, { recursive: true, force: true });
-			buildStartedAt = Date.now();
-			for (const channel of IMAGE_CHANNELS) {
-				await pruneImages(channel, logger);
-				imagesBefore.set(channel.dir, await listImages(channel.dir));
-			}
-		},
+	'astro:build:start': async ({ logger }) => {
+		// 上一轮的结果不能混进本轮汇总。
+		await fs.rm(HEALTH_DIR, { recursive: true, force: true });
+		buildStartedAt = Date.now();
+		for (const channel of IMAGE_CHANNELS) {
+			await pruneImages(channel, logger);
+			imagesBefore.set(channel.dir, await listImages(channel.dir));
+		}
+		/*
+		 * 图片之外的那些缓存也回收一次。它们没有 TTL 之外的任何清理机制，而 key 有一部分来自
+		 * 「当前内容」（热帖详情、新闻正文、翻译），于是随每次重建单调增长——见 `cachePrune.ts`。
+		 * 图片频道有自己的 30 天规则、`health/` 每轮清空，都在 skip 里让开。
+		 */
+		const pruned = await pruneCacheDirs(fileURLToPath(CACHE_BASE), {
+			skip: [...IMAGE_CHANNELS.map((channel) => channel.dir), 'health'],
+		});
+		if (pruned.removed > 0 || pruned.tmpRemoved > 0) {
+			logger.info(
+				`回收缓存：过期 ${pruned.removed} 个、写入残留 ${pruned.tmpRemoved} 个` +
+					`（扫了 ${pruned.dirs} 个目录，窗口 ${CACHE_KEEP_DAYS} 天）`,
+			);
+		}
+	},
 		'astro:build:done': async ({ dir, logger }) => {
 			for (const channel of IMAGE_CHANNELS) await publishImages(channel, dir, logger);
 
