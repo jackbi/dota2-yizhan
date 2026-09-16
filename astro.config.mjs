@@ -222,18 +222,19 @@ export default defineConfig({
 	vite: {
 		plugins: [tailwindcss()],
 		/*
-		 * `trystero` 必须显式列进来。
+		 * `trystero` 与 `mpegts.js` 必须显式列进来。
 		 *
-		 * 它只被 /party 的页面脚本 import，而实测 Astro 启动时的依赖扫描**没有**把它收进
+		 * 它们只被页面脚本 import（`/party` 的组队脚本、`/live` 的 liveWall，后者还是动态
+		 * `import()`），而实测 Astro 启动时的依赖扫描**没有**把它们收进
 		 * `node_modules/.vite/deps`（那份 _metadata.json 里只有 dev-toolbar 的几个包）。
 		 * 于是 Vite 每次都在请求到达时按需发现它：生成一个新的 `?v=` 哈希、把模块改写成
 		 * 指向新哈希，但预构建产物并没有落盘——页面于是反复吃
 		 * `504 Outdated Optimize Dep`，而且每刷一次哈希就换一个（实测见过三个）。
 		 *
-		 * 写进 `include` 后它和 dev-toolbar 一起在启动时预构建，哈希稳定。
+		 * 写进 `include` 后它们和 dev-toolbar 一起在启动时预构建，哈希稳定。
 		 * **以后再有「只被某个页面脚本 import」的依赖，同样要加到这里。**
 		 */
-		optimizeDeps: { include: ['trystero'] },
+		optimizeDeps: { include: ['trystero', 'mpegts.js'] },
 	},
 	integrations: [dataSourceReport, imagesInDev],
 

@@ -18,6 +18,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.2.10",
     "cookie": "^2.0.1",
+    "mpegts.js": "^1.8.2",
     "tailwindcss": "^4.3.3",
     "trystero": "^0.25.4"
   },
