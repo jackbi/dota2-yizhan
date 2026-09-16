@@ -11,6 +11,7 @@ pnpm dev        # http://localhost:4321
 pnpm build      # 产物在 dist/client（静态）+ dist/server（SSR）
 pnpm rebuild    # 构建到暂存目录、成功后切换，供定时任务用（见「部署与重建频率」）
 pnpm preview    # 预览构建产物（会起服务端，不是纯静态预览）
+pnpm fonts      # 重新抓 Google Fonts 的两个家族，见下
 ```
 
 线上运行见「[Steam 登录与个人战绩](#steam-登录与个人战绩)」——多了一步 `node dist/server/entry.mjs`。
@@ -27,6 +28,19 @@ sh scripts/logo-assets.sh   # 生成 public/{logo.webp, favicon.png, apple-touch
 母版刻意放在 `src/assets/` 而不是 `public/`——`public/` 会原样进发布产物，而站点只需要几张
 128px 以内的小图（页眉的 WebP 是 4.7 KB，母版 PNG 是 590 KB）。标签页图标用 PNG 而不用 WebP：
 Safari 至今不支持 WebP 的 favicon。
+
+字体同样是生成出来的，跑一遍这条：
+
+```sh
+pnpm fonts   # 拉 Google Fonts 的 CSS 与 woff2 → public/fonts/ + src/styles/fonts.css
+```
+
+两个家族（`Russo One`、`Chakra Petch`）的分片文件提交进仓库，运行时不碰第三方域名。
+换家族、换字重、或者想让 Google 那边的新版生效时重跑即可；脚本会顺手删掉不再被引用的旧分片。
+`pnpm check` 里有 `scripts/fonts.check.ts` 盯着「CSS 引用的文件都在、文件都被引用、没人再连
+Google Fonts」——这三件事坏掉时页面不会报错，只会静默回退到系统字体，肉眼很难发现。
+`unicode-range` 是省流量的关键：中文走 PingFang SC / 微软雅黑，这两个拉丁字体只在页面真的
+出现拉丁字符时才下载对应的那一片（19 个分片共 133 KB，一个页面通常只取 1～5 个）。
 
 ## 主题色板
 

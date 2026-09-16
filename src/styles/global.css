@@ -1,4 +1,9 @@
 @import "tailwindcss";
+/*
+ * 自托管的 @font-face（由 `pnpm fonts` 生成）。放在这里而不是 Layout 里加一个 <link>：
+ * 它最后会并进同一个 CSS 产物，首屏少一个请求，也不用再处理外部样式表阻塞渲染的问题。
+ */
+@import "./fonts.css";
 
 @theme {
 	--font-display: "Russo One", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;

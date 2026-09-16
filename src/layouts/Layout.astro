@@ -23,29 +23,13 @@ const path = Astro.url.pathname;
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<meta name="generator" content={Astro.generator} />
 		<title>{title}</title>
-		<link rel="preconnect" href="https://fonts.googleapis.com" />
-		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 		{/*
-			外部样式表放在 `<head>` 里是渲染阻塞资源：它没回来之前浏览器不绘制，连不上就一直白屏。
-			所以先用 `media="print"` 让它不参与首屏渲染，加载完由 onload 换回 `all`；禁用 JS 时退回
-			`<noscript>` 里的同步版本。`display=swap` 管的是字体文件，管不了这张样式表本身。
-
-			只请求真正用到的两个家族（见 global.css 的 `--font-display` / `--font-body`）。原先还带了
-			`Noto Sans SC`，但没有任何字体栈引用它——那是一段死配置，只让首屏多等一个请求。中文本来
-			就走 PingFang SC / 微软雅黑 / system-ui，要给 Linux、Android 兜底应当自托管子集。
+			字体是自托管的：`@font-face` 在 global.css 里（由 scripts/fonts.mjs 生成，
+			分片文件和 unicode-range 都取自 Google Fonts）。原先这里引 fonts.googleapis.com，
+			但那两个域名在国内连不通——绝大多数访客其实一直在看回退字体，还要为一次必然
+			失败的跨域请求多付一次 DNS / TLS 握手。现在既没有第三方请求，也不需要
+			再用 `media="print"` + onload 绕开渲染阻塞。
 		*/}
-		<link
-			rel="stylesheet"
-			href="https://fonts.googleapis.com/css2?family=Russo+One&family=Chakra+Petch:wght@400;500;600;700&display=swap"
-			media="print"
-			onload="this.media='all'"
-		/>
-		<noscript>
-			<link
-				rel="stylesheet"
-				href="https://fonts.googleapis.com/css2?family=Russo+One&family=Chakra+Petch:wght@400;500;600;700&display=swap"
-			/>
-		</noscript>
 		<slot name="head" />
 	</head>
 	<body>
