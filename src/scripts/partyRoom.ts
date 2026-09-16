@@ -61,8 +61,15 @@ function relayConfig(): RelayConfigPayload {
 
 /** 房主每隔多久向大厅重播一次自己的房间。 */
 const ANNOUNCE_MS = 15_000;
-/** 超过这么久没重播的房间从大厅列表里剔除：房主关页面是不会有告别消息的。 */
-const LOBBY_STALE_MS = 45_000;
+/**
+ * 超过这么久没重播的房间从大厅列表里剔除：房主关页面是不会有告别消息的。
+ *
+ * **必须明显大于一分钟。** 浏览器对隐藏标签的定时器有节流（Chrome 长时间隐藏后是每分钟一次），
+ * 而房主切去打游戏、把页面留在后台是常态——那里 15 秒的播报间隔会被拉到 60 秒以上。窗口要是只有
+ * 45 秒，房间就会在最常见的用法下「每 45 秒从别人列表里消失一次」。2 分钟给节流留了余量，代价是
+ * 房主真的关掉页面时，那条房间会在列表里多挂一分钟。
+ */
+const LOBBY_STALE_MS = 120_000;
 /** 进房后等不到房主数据的提示延迟。 */
 const HOST_SILENCE_MS = 10_000;
 /** 房主掉线后等他回来的窗口：刷新只要一两秒，真的走了就等这么久。 */
@@ -1571,6 +1578,19 @@ function bindEvents(): void {
 	window.addEventListener('pagehide', () => {
 		if (!isHost && roomActions) void roomActions.bye.send(null);
 	});
+
+	/*
+	 * 回到前台立刻补一次播报与重绘，不等下一个 5 秒节拍。
+	 *
+	 * 隐藏期间播报会被浏览器节流（Chrome 约一分钟一次，见 `LOBBY_STALE_MS` 的注释），
+	 * 房主切回来时别人列表里的房间可能刚好过期了，这一下能把状态推回去。
+	 */
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) return;
+		if (lobbyAsHost) announceNow();
+		if (lobbyEntries.size > 0) renderLobby();
+		renderNet();
+	});
 }
 
 async function submitJoin(): Promise<void> {
@@ -1653,15 +1673,17 @@ async function copyText(text: string, button: HTMLButtonElement): Promise<void> 
 // ---------------------------------------------------------------- 启动
 
 function startTicker(): void {
-	// 一个 5 秒的节拍同时干三件事：剔除过期的房间、按需重播、刷新网络状态。
-	window.setInterval(() => {
-		if (lobbyAsHost) {
-			if (Date.now() - lastAnnounceAt > ANNOUNCE_MS) announceNow();
-		} else if (lobbyRoom && lobbyEntries.size > 0) {
-			renderLobby();
-		}
-		renderNet();
-	}, 5000);
+/*
+ * 一个 5 秒的节拍同时干三件事：按需重播、剔除过期的房间、刷新网络状态。
+ *
+ * 「剔除过期房间」不能只在非房主那条分支里——剪枝写在 `renderLobby()` 内部，房主原先永远走
+ * 播报分支，于是只有别人播报时才顺带重绘一次，自己列表里的失效房间会一直挂着。
+ */
+window.setInterval(() => {
+if (lobbyAsHost && Date.now() - lastAnnounceAt > ANNOUNCE_MS) announceNow();
+if (lobbyEntries.size > 0) renderLobby();
+renderNet();
+}, 5000);
 }
 
 function restoreNickname(): void {

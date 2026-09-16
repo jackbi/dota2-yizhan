@@ -109,7 +109,7 @@ export function decodeDouyuPackets(bytes: Uint8Array): DanmakuPacket[] {
 	return out;
 }
 
-export type DanmakuStatus = 'connecting' | 'live' | 'closed';
+export type DanmakuStatus = 'connecting' | 'live' | 'paused' | 'closed';
 
 export interface DanmakuClientOptions {
 	/** 斗鱼的房间号（`betard` 里的 `room.room_id`，和地址栏里的号通常一致）。 */
@@ -205,7 +205,8 @@ export function createDouyuDanmaku(options: DanmakuClientOptions): DanmakuClient
 	};
 
 	const retry = (): void => {
-		if (closed) return;
+		// 隐藏期间不排重试：`onVisibilityChange` 回到前台会重新起一轮。
+		if (closed || document.hidden) return;
 		attempt += 1;
 		retryTimer = setTimeout(connect, retryDelay(attempt));
 	};
@@ -225,7 +226,7 @@ export function createDouyuDanmaku(options: DanmakuClientOptions): DanmakuClient
 	};
 
 	function connect(): void {
-		if (closed) return;
+		if (closed || document.hidden) return;
 		const port = DANMAKU_PORTS[attempt % DANMAKU_PORTS.length];
 		options.onStatus?.('connecting');
 		let ws: WebSocket;
@@ -267,18 +268,42 @@ export function createDouyuDanmaku(options: DanmakuClientOptions): DanmakuClient
 			drop();
 			retry();
 		};
-		ws.onclose = () => {
-			if (socket !== ws) return;
-			drop();
-			retry();
-		};
+	ws.onclose = () => {
+		if (socket !== ws) return;
+		drop();
+		retry();
+	};
 	}
 
-	connect();
+	/**
+	 * 页面被隐藏时**主动断开**，回到前台再连。
+	 *
+	 * 不是为了省资源，是为了不被踢：浏览器对隐藏标签的定时器有节流（Chrome 长时间隐藏后是
+	 * 每分钟一次），心跳 40 秒会被拉到 60 秒以上，越过斗鱼那条 45 秒的线，于是连接被踢、
+	 * 客户端按 `retryDelay()` 重连——9 格同开就是「隐藏期间每分钟 9 条新连接」，而实测这种
+	 * 形态会被斗鱼静默无视（见文件头）。隐藏时干脆关掉、回来立刻重连，反而更少更干净。
+	 */
+	const onVisibilityChange = (): void => {
+		if (closed) return;
+		if (document.hidden) {
+			drop();
+			options.onStatus?.('paused');
+			return;
+		}
+		// 回前台按「重新开始」处理：端口从第一个试起，失败计数清零。
+		attempt = 0;
+		connect();
+	};
+	document.addEventListener('visibilitychange', onVisibilityChange);
+
+	// 一开始就是隐藏的（后台标签里打开）就别连，等可见时那条监听会接手。
+	if (document.hidden) options.onStatus?.('paused');
+	else connect();
 
 	return {
 		close(): void {
 			closed = true;
+			document.removeEventListener('visibilitychange', onVisibilityChange);
 			drop();
 			options.onStatus?.('closed');
 		},
