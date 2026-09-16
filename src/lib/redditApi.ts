@@ -1,7 +1,7 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, sanitizeArticleHtml } from './articleHtml';
+import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
 import { translateToChinese } from './translate';
@@ -108,7 +108,7 @@ export function postBodyParagraphs(post: RedditPost): string[] {
 // ---------------------------------------------------------------- 缓存
 
 function cacheFile(): string {
-	return path.join(CACHE_DIR, 'hot.json');
+	return cachePath(CACHE_DIR, 'hot.json');
 }
 
 /**
@@ -121,20 +121,15 @@ function normalizePost(raw: RedditPost & { titleZh?: string; summaryZh?: string;
 	return { ...rest, zh: { title: titleZh, summary: summaryZh, body: bodyZh } };
 }
 
+/** 读缓存，连同它的年龄；老字段在读的时候顺手迁移（见 `normalizePost`）。 */
 async function readCache(): Promise<{ posts: RedditPost[]; ageMs: number } | null> {
-	try {
-		const file = cacheFile();
-		const stat = await fs.stat(file);
-		const posts = JSON.parse(await fs.readFile(file, 'utf8')) as (RedditPost & { titleZh?: string })[];
-		return { posts: posts.map(normalizePost), ageMs: Date.now() - stat.mtimeMs };
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<(RedditPost & { titleZh?: string; summaryZh?: string; bodyZh?: string })[]>(cacheFile());
+	if (!hit || !Array.isArray(hit.value)) return null;
+	return { posts: hit.value.map(normalizePost), ageMs: hit.ageMs };
 }
 
-async function writeCache(posts: RedditPost[]): Promise<void> {
-	await fs.mkdir(CACHE_DIR, { recursive: true });
-	await fs.writeFile(cacheFile(), JSON.stringify(posts), 'utf8');
+function writeCache(posts: RedditPost[]): Promise<void> {
+	return writeCacheFile(cacheFile(), JSON.stringify(posts));
 }
 
 async function get(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<Response | null> {

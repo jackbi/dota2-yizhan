@@ -1,5 +1,5 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { isFresh, readCacheJson, readRawJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
 import { extractJson, fetchNote, fetchText, sleep } from './fetchText';
@@ -154,31 +154,19 @@ function pageOwnerFromTitle(platform: Platform, text: string): string | undefine
 
 // ---------------------------------------------------------------- 缓存
 
+/** 命中新鲜缓存的开播状态；过期或坏掉返回 null。 */
 async function readCache(file: string, ttlSeconds: number): Promise<LiveStatus | null> {
-	try {
-		const stat = await fs.stat(file);
-		if (Date.now() - stat.mtimeMs >= ttlSeconds * 1000) return null;
-		return JSON.parse(await fs.readFile(file, 'utf8')) as LiveStatus;
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<LiveStatus>(file);
+	return hit && isFresh(hit.ageMs, ttlSeconds) ? hit.value : null;
 }
 
-async function readStale(file: string): Promise<LiveStatus | null> {
-	try {
-		return JSON.parse(await fs.readFile(file, 'utf8')) as LiveStatus;
-	} catch {
-		return null;
-	}
+/** 只读内容、不看年龄——离线构建与「上游失败退回旧缓存」用。 */
+function readStale(file: string): Promise<LiveStatus | null> {
+	return readRawJson<LiveStatus>(file);
 }
 
-async function writeCache(file: string, status: LiveStatus): Promise<void> {
-	try {
-		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(file, JSON.stringify(status), 'utf8');
-	} catch {
-		// 缓存写不进去不影响构建。
-	}
+function writeCache(file: string, status: LiveStatus): Promise<void> {
+	return writeCacheFile(file, JSON.stringify(status));
 }
 
 // ---------------------------------------------------------------- 单个房间

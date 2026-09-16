@@ -1,7 +1,8 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { TeamRef } from '../data/types';
+import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { fetchHeroList } from './heroApi';
+import { createPace } from './pace';
 
 /**
  * OpenDota 数据层：队伍解析、阵容名单，以及比赛候选与明细。
@@ -28,20 +29,10 @@ export const MATCH_WINDOW_SECONDS = 12 * 3600;
 
 /** OpenDota 未鉴权时限流约 60 次/分钟：只拉开请求间隔，不并发轰炸。 */
 const MIN_INTERVAL_MS = 1100;
-let lastRequestAt = 0;
 /** 一旦被限流就停止后续请求，避免把整个构建拖慢。 */
 let rateLimited = false;
 /** 用队列串行化限速，避免并发调用同时穿过限速窗口。 */
-let paceQueue: Promise<void> = Promise.resolve();
-
-async function pace(): Promise<void> {
-	paceQueue = paceQueue.then(async () => {
-		const wait = lastRequestAt + MIN_INTERVAL_MS - Date.now();
-		if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-		lastRequestAt = Date.now();
-	});
-	return paceQueue;
-}
+const pace = createPace(MIN_INTERVAL_MS);
 
 /** 本轮成功联网请求的次数，供上层判断数据是新抓的还是吃缓存的。 */
 let networkFetches = 0;
@@ -77,22 +68,14 @@ interface CacheEntry<T> {
 }
 
 async function readCache<T>(key: string): Promise<CacheEntry<T> | null> {
-	try {
-		const raw = await fs.readFile(path.join(CACHE_DIR, `${key}.json`), 'utf8');
-		const parsed = JSON.parse(raw) as CacheEntry<T>;
-		return parsed && typeof parsed.at === 'number' ? parsed : null;
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<CacheEntry<T>>(cachePath(CACHE_DIR, `${key}.json`), (value) =>
+		typeof (value as CacheEntry<T>)?.at === 'number',
+	);
+	return hit?.value ?? null;
 }
 
 async function writeCache<T>(key: string, value: T): Promise<void> {
-	try {
-		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(path.join(CACHE_DIR, `${key}.json`), JSON.stringify({ at: Date.now(), value }), 'utf8');
-	} catch {
-		// 缓存写入失败不影响构建。
-	}
+	await writeCacheFile(cachePath(CACHE_DIR, `${key}.json`), JSON.stringify({ at: Date.now(), value }));
 }
 
 /** 缓存优先；请求成功后回写，请求失败时退回过期缓存。 */

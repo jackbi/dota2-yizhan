@@ -1,6 +1,6 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { toArticleContent } from './articleHtml';
+import { isFresh, readCacheText, readRawText, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
 
 /**
@@ -54,31 +54,19 @@ function articleIdFromHref(href: string): string {
 
 // ---------------------------------------------------------------- 缓存
 
+/** 命中新鲜缓存的正文；过期或坏掉返回 null。 */
 async function readCache(file: string, ttlSeconds: number): Promise<string | null> {
-	try {
-		const stat = await fs.stat(file);
-		if (Date.now() - stat.mtimeMs >= ttlSeconds * 1000) return null;
-		return await fs.readFile(file, 'utf8');
-	} catch {
-		return null;
-	}
+	const hit = await readCacheText(file);
+	return hit && isFresh(hit.ageMs, ttlSeconds) ? hit.text : null;
 }
 
-async function readStale(file: string): Promise<string | null> {
-	try {
-		return await fs.readFile(file, 'utf8');
-	} catch {
-		return null;
-	}
+/** 只读内容、不看年龄——离线构建与「上游失败退回旧缓存」用。 */
+function readStale(file: string): Promise<string | null> {
+	return readRawText(file);
 }
 
-async function writeCache(file: string, text: string): Promise<void> {
-	try {
-		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(file, text, 'utf8');
-	} catch {
-		// 缓存写入失败不影响构建。
-	}
+function writeCache(file: string, text: string): Promise<void> {
+	return writeCacheFile(file, text);
 }
 
 /** 本轮联网抓了几次，用来区分"新抓的"和"吃缓存的"。 */

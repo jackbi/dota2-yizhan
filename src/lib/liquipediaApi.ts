@@ -1,6 +1,6 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { EsportsMatch } from '../data/types';
+import { readCacheJson, writeCacheFile } from './buildCache';
 
 /**
  * Liquipedia 赛事日历（MediaWiki `action=parse`）。
@@ -63,21 +63,15 @@ interface CacheEntry {
 }
 
 async function readCache(): Promise<CacheEntry | null> {
-	try {
-		const parsed = JSON.parse(await fs.readFile(CACHE_FILE, 'utf8')) as CacheEntry;
-		return parsed && typeof parsed.at === 'number' && Array.isArray(parsed.value) ? parsed : null;
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<CacheEntry>(CACHE_FILE, (value) => {
+		const entry = value as CacheEntry;
+		return typeof entry?.at === 'number' && Array.isArray(entry.value);
+	});
+	return hit?.value ?? null;
 }
 
-async function writeCache(value: EsportsMatch[]): Promise<void> {
-	try {
-		await fs.mkdir(path.dirname(CACHE_FILE), { recursive: true });
-		await fs.writeFile(CACHE_FILE, JSON.stringify({ at: Date.now(), value }), 'utf8');
-	} catch {
-		// 缓存写入失败不影响构建。
-	}
+function writeCache(value: EsportsMatch[]): Promise<void> {
+	return writeCacheFile(CACHE_FILE, JSON.stringify({ at: Date.now(), value }));
 }
 
 async function fetchPage(): Promise<string | null> {

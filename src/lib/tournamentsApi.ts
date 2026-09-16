@@ -1,6 +1,6 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { seedEvents } from '../data/tournaments';
+import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
 import { LIQUIPEDIA_LABEL, fetchLiquipediaMatches } from './liquipediaApi';
 import type {
@@ -233,22 +233,15 @@ function sortEvents(events: EsportsEvent[]): EsportsEvent[] {
 // ---------------------------------------------------------------- 缓存
 
 async function readCache(): Promise<TournamentsBundle | null> {
-	try {
-		const raw = await fs.readFile(CACHE_FILE, 'utf8');
-		const parsed = JSON.parse(raw) as TournamentsBundle;
-		return Array.isArray(parsed.events) && parsed.events.length > 0 ? parsed : null;
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<TournamentsBundle>(CACHE_FILE, (value) => {
+		const bundle = value as TournamentsBundle;
+		return Array.isArray(bundle?.events) && bundle.events.length > 0;
+	});
+	return hit?.value ?? null;
 }
 
-async function writeCache(bundle: TournamentsBundle): Promise<void> {
-	try {
-		await fs.mkdir(path.dirname(CACHE_FILE), { recursive: true });
-		await fs.writeFile(CACHE_FILE, JSON.stringify(bundle), 'utf8');
-	} catch {
-		// 缓存写入失败不影响构建。
-	}
+function writeCache(bundle: TournamentsBundle): Promise<void> {
+	return writeCacheFile(CACHE_FILE, JSON.stringify(bundle));
 }
 
 // ---------------------------------------------------------------- 缓存刷新

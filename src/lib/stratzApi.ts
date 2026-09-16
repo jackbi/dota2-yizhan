@@ -1,6 +1,7 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
+import { createPace } from './pace';
 
 /**
  * STRATZ 数据层（api.stratz.com/graphql）。
@@ -53,18 +54,8 @@ export const HERO_META_WINDOW_DAYS = 7;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const MIN_INTERVAL_MS = 160;
-let lastRequestAt = 0;
 /** 串行化限速，避免并发调用同时穿过限速窗口。 */
-let paceQueue: Promise<void> = Promise.resolve();
-
-async function pace(): Promise<void> {
-	paceQueue = paceQueue.then(async () => {
-		const wait = lastRequestAt + MIN_INTERVAL_MS - Date.now();
-		if (wait > 0) await sleep(wait);
-		lastRequestAt = Date.now();
-	});
-	return paceQueue;
-}
+const pace = createPace(MIN_INTERVAL_MS);
 
 interface GraphQLBody<T> {
 	data?: T | null;
@@ -124,22 +115,14 @@ interface CacheEntry<T> {
 }
 
 async function readCache<T>(key: string): Promise<CacheEntry<T> | null> {
-	try {
-		const raw = await fs.readFile(path.join(CACHE_DIR, `${key}.json`), 'utf8');
-		const parsed = JSON.parse(raw) as CacheEntry<T>;
-		return parsed && typeof parsed.at === 'number' ? parsed : null;
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<CacheEntry<T>>(cachePath(CACHE_DIR, `${key}.json`), (value) =>
+		typeof (value as CacheEntry<T>)?.at === 'number',
+	);
+	return hit?.value ?? null;
 }
 
 async function writeCache<T>(key: string, value: T): Promise<void> {
-	try {
-		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(path.join(CACHE_DIR, `${key}.json`), JSON.stringify({ at: Date.now(), value }), 'utf8');
-	} catch {
-		// 缓存写入失败不影响构建。
-	}
+	await writeCacheFile(cachePath(CACHE_DIR, `${key}.json`), JSON.stringify({ at: Date.now(), value }));
 }
 
 /** 缓存优先；请求失败时退回过期缓存（离线构建靠它拿到上次的结果）。 */

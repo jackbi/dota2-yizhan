@@ -1,6 +1,6 @@
 import { createDecipheriv, createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { readRawText, writeCacheFile } from './buildCache';
 
 /**
  * 翻译层：构建期把英文内容翻成简体中文。
@@ -56,22 +56,13 @@ function cacheFile(text: string): string {
 
 async function readCached(text: string): Promise<string | null | undefined> {
 	if (memory.has(text)) return memory.get(text);
-	try {
-		return await fs.readFile(cacheFile(text), 'utf8');
-	} catch {
-		return undefined;
-	}
+	return (await readRawText(cacheFile(text))) ?? undefined;
 }
 
 /** 落盘失败只影响下次复用，不该把构建带崩。 */
 async function writeCached(text: string, value: string): Promise<void> {
 	memory.set(text, value);
-	try {
-		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(cacheFile(text), value, 'utf8');
-	} catch {
-		// 缓存写不进去就算了，译文照样返回。
-	}
+	await writeCacheFile(cacheFile(text), value);
 }
 
 // ---------------------------------------------------------------- 分段与限速

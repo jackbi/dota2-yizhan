@@ -1,7 +1,7 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { NewsCardItem } from '../data/types';
 import { decodeEntities, summarizeArticle, toArticleContent } from './articleHtml';
+import { cacheFile as cachePath, readCacheText, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
 
@@ -72,16 +72,7 @@ export interface OfficialNews {
 // ---------------------------------------------------------------- 抓取与缓存
 
 function cacheFile(url: string): string {
-	return path.join(CACHE_DIR, `${url.replace(`${ORIGIN}/`, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}.html`);
-}
-
-async function readCache(file: string): Promise<{ text: string; ageMs: number } | null> {
-	try {
-		const stat = await fs.stat(file);
-		return { text: await fs.readFile(file, 'utf8'), ageMs: Date.now() - stat.mtimeMs };
-	} catch {
-		return null;
-	}
+	return cachePath(CACHE_DIR, `${url.replace(`${ORIGIN}/`, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}.html`);
 }
 
 /** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
@@ -90,7 +81,7 @@ let networkFetches = 0;
 /** 抓取官方页面并落盘；命中新鲜缓存就直接返回，失败时退回过期缓存。 */
 async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null> {
 	const file = cacheFile(url);
-	const cached = await readCache(file);
+	const cached = await readCacheText(file);
 	if (cached && cached.ageMs < ttlSeconds * 1000) return cached.text;
 
 	let fresh: string | null = null;
@@ -111,8 +102,7 @@ async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null
 	}
 	if (fresh === null) return cached?.text ?? null;
 
-	await fs.mkdir(CACHE_DIR, { recursive: true });
-	await fs.writeFile(file, fresh, 'utf8');
+	await writeCacheFile(file, fresh);
 	return fresh;
 }
 

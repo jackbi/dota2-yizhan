@@ -1,5 +1,5 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { isFresh, readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
 import { extractJson, fetchNote, fetchText } from './fetchText';
 import type { RoomRef } from '../data/types';
@@ -115,25 +115,17 @@ function toRefs(rows: Omit<RoomRef, 'key' | 'source'>[]): RoomRef[] {
 	return rows.map((r) => ({ ...r, key: `${r.platform}:${r.roomId}`, source: 'popular' as const }));
 }
 
+/** 命中新鲜缓存、且缓存版本号对得上的房间列表；否则返回 null。 */
 async function readCache(file: string, ttlSeconds: number): Promise<RoomRef[] | null> {
-	try {
-		const stat = await fs.stat(file);
-		if (Date.now() - stat.mtimeMs >= ttlSeconds * 1000) return null;
-		const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as { v?: number; rooms?: RoomRef[] };
-		if (parsed.v !== CACHE_VERSION || !Array.isArray(parsed.rooms)) return null;
-		return parsed.rooms;
-	} catch {
-		return null;
-	}
+	const hit = await readCacheJson<{ v?: number; rooms?: RoomRef[] }>(
+		file,
+		(value) => (value as { v?: number }).v === CACHE_VERSION && Array.isArray((value as { rooms?: RoomRef[] }).rooms),
+	);
+	return hit && isFresh(hit.ageMs, ttlSeconds) ? (hit.value.rooms ?? null) : null;
 }
 
-async function writeCache(file: string, rooms: RoomRef[]): Promise<void> {
-	try {
-		await fs.mkdir(CACHE_DIR, { recursive: true });
-		await fs.writeFile(file, JSON.stringify({ v: CACHE_VERSION, rooms }), 'utf8');
-	} catch {
-		// 缓存写不进去不影响构建。
-	}
+function writeCache(file: string, rooms: RoomRef[]): Promise<void> {
+	return writeCacheFile(file, JSON.stringify({ v: CACHE_VERSION, rooms }));
 }
 
 async function loadOne(file: string, url: string, html: boolean, parse: (text: string) => Omit<RoomRef, 'key' | 'source'>[]): Promise<RoomRef[]> {

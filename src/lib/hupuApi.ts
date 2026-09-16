@@ -1,8 +1,9 @@
-import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { decodeEntities, summarizeArticle } from './articleHtml';
+import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
+import { createPace } from './pace';
 
 /**
  * 虎扑 DOTA2 区（`bbs.hupu.com/dota2`）的社区帖层：列表 + 详情。
@@ -105,18 +106,8 @@ export function hupuThreadUrl(pid: string): string {
 
 // ---------------------------------------------------------------- 请求与缓存
 
-let lastRequestAt = 0;
-let paceQueue: Promise<void> = Promise.resolve();
-
 /** 串行化请求间隔，避免并发同时穿过限速窗口。 */
-function pace(): Promise<void> {
-	paceQueue = paceQueue.then(async () => {
-		const wait = lastRequestAt + MIN_INTERVAL_MS - Date.now();
-		if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-		lastRequestAt = Date.now();
-	});
-	return paceQueue;
-}
+const pace = createPace(MIN_INTERVAL_MS);
 
 /** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
 let networkFetches = 0;
@@ -142,22 +133,15 @@ async function fetchHtml(url: string): Promise<string | null> {
 }
 
 function cacheFile(key: string): string {
-	return path.join(CACHE_DIR, `${key}.json`);
+	return cachePath(CACHE_DIR, `${key}.json`);
 }
 
-async function readCache<T>(key: string): Promise<{ value: T; ageMs: number } | null> {
-	try {
-		const file = cacheFile(key);
-		const stat = await fs.stat(file);
-		return { value: JSON.parse(await fs.readFile(file, 'utf8')) as T, ageMs: Date.now() - stat.mtimeMs };
-	} catch {
-		return null;
-	}
+function readCache<T>(key: string): Promise<{ value: T; ageMs: number } | null> {
+	return readCacheJson<T>(cacheFile(key));
 }
 
 async function writeCache(key: string, value: unknown): Promise<void> {
-	await fs.mkdir(CACHE_DIR, { recursive: true });
-	await fs.writeFile(cacheFile(key), JSON.stringify(value), 'utf8');
+	await writeCacheFile(cacheFile(key), JSON.stringify(value));
 }
 
 // ---------------------------------------------------------------- 列表解析

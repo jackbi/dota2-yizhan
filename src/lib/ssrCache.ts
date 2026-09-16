@@ -8,6 +8,7 @@
  * 缓存是**每实例**的：Serverless 多实例之间不共享，命中率不如集中式缓存，但换来的是
  * 零依赖、零额外服务。上游有速率限制时，单实例内的合并与限速才是主要保护。
  */
+import { createPace } from './pace';
 
 interface Entry {
 	at: number;
@@ -56,17 +57,9 @@ export async function cached<T>(key: string, ttlMs: number, load: () => Promise<
 
 /**
  * 串行限速：STRATZ 的额度按秒/分/时/天四档计，并发打过去只会触发 429。
- * 与构建期同样的思路，这里给运行时留更大间隔（用户感知的是首屏，不是构建总时长）。
+ * 与构建期共用 `pace.ts` 的实现（那个文件不碰 `node:*`，所以 Workers 上也能用），
+ * 这里给运行时留更大间隔（用户感知的是首屏，不是构建总时长）。
  */
 const MIN_INTERVAL_MS = 120;
-let lastRequestAt = 0;
-let queue: Promise<void> = Promise.resolve();
 
-export function pace(): Promise<void> {
-	queue = queue.then(async () => {
-		const wait = lastRequestAt + MIN_INTERVAL_MS - Date.now();
-		if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-		lastRequestAt = Date.now();
-	});
-	return queue;
-}
+export const pace = createPace(MIN_INTERVAL_MS);
