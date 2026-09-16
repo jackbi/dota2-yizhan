@@ -8,7 +8,7 @@ import { readSession } from '../lib/session';
  *
  * **房间**不走服务端：传输是 WebRTC（Trystero 的信令 + P2P 数据通道，见
  * `src/scripts/partyRoom.ts`），服务端不存房间、不存聊天。理由是本站每 5 分钟
- * 重建并重启一次（见 README「部署与重建频率」），任何存在 SSR 内存里的房间都会被
+ * 重建并重启一次（见 docs/deploy.md 的「部署与重建频率」），任何存在 SSR 内存里的房间都会被
  * 那次重启清空。
  *
  * 但**页面本身是 SSR 的**（`prerender = false`），只为一件事：登录状态服务端本来就知道。

@@ -84,8 +84,9 @@
   全部线路都断才判定下播（`:444-495`）。
 - 全程**没有任何 HEAD / Range / 预加载去试探地址**，也没有把地址交给第二个组件。
 
-对照本仓库：早期那个临时诊断端点会拿同一条直链请求三次探 CORS，`README.md` 的「分屏页的画面」一节
-记着这个坑（「诊断脚本在播之前先用同一条地址探了三次 CORS，token 被消耗掉了」）；诊断代码连同端点
+对照本仓库：早期那个临时诊断端点会拿同一条直链请求三次探 CORS，
+[直播](./live.md) 的「分屏页的画面」一节记着这个坑（「诊断脚本在播之前先用同一条地址探了三次
+CORS，token 被消耗掉了」）；诊断代码连同端点
 都已删除，生产上解析直链的只剩 `/api/live/stream-url`。
 **这条经验两边是一致的：地址一旦被消费就作废。**
 
@@ -100,7 +101,7 @@
 | 协议 | RTMP / FLV / HLS 都能吃 | 只剩 MP4/WebM（原生）与 FLV/HLS（MSE，需 CORS） |
 | 虎牙 | TUP 二进制 + md5 anticode + HYSDK UA，全在进程内 | 无路可走，退回 `liveshare.huya.com/iframe/{id}` |
 | 斗鱼 | `homeH5Enc` + QuickJS 跑平台 JS 签名；每 CDN 各一条地址 | 纯 MD5 签名链（不跑 JS）；`/api/live/stream-url` 每次点击解一条 |
-| 断流处理 | 单次取回多线路，重试同路 → 换线 → 判下播 | 每次重播/换清晰度都重新解析（`README.md:572-577`） |
+| 断流处理 | 单次取回多线路，重试同路 → 换线 → 判下播 | 每次重播/换清晰度都重新解析（见 [直播](./live.md) 的「分屏页的画面」） |
 | 弹幕 | `simple_live_core/lib/src/danmaku/*`（含抖音 protobuf） | 无 |
 
 ## 6. 可以平移 / 不能平移
@@ -130,4 +131,4 @@
   `simple_live_app/lib/modules/live_room/live_room_controller.dart`、
   `simple_live_app/lib/modules/live_room/player/player_controller.dart`。
 - 本仓库侧：`src/lib/liveStream.ts`、`src/lib/liveApi.ts`、`src/pages/api/live/stream-url.ts`、
-  `src/data/site.ts`、`src/scripts/liveWall.ts`、`README.md`（「分屏页的画面」一节）。
+  `src/data/site.ts`、`src/scripts/liveWall.ts`、[直播](./live.md)（「分屏页的画面」一节）。

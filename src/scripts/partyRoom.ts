@@ -7,7 +7,7 @@ import type { ChatMessage, Member, RoomState, Team } from '../lib/partyLogic';
  *
  * 传输是 Trystero（WebRTC 数据通道 + 公共信令中继），**没有服务端**：
  * 服务端只提供静态页面和 `/api/me`（Steam 昵称、头像）。房间不落库、不留聊天记录，
- * 关页面就散——这不是偷懒，是因为本站每 5 分钟重建并重启一次（见 README
+ * 关页面就散——这不是偷懒，是因为本站每 5 分钟重建并重启一次（见 docs/deploy.md
  * 「部署与重建频率」），任何存在 SSR 进程内存里的房间都会被那次重启清空。
  *
  * 三条贯穿全文的约定：
@@ -413,7 +413,7 @@ function setNotice(message: string | null, kind: NoticeKind = 'info', sticky = f
  * 的 startup burst），所以新来的人一两秒内就能看到房间，不用等下一个周期。
  *
  * 代价是大厅变成全网状：N 个在线的人两两建连，几十人以内没问题，再多就得另想办法
- * （限制同时在线、或回到被动 + 缩短播报间隔）。README 里记了这一条。
+ * （限制同时在线、或回到被动 + 缩短播报间隔）。docs/party.md 的「已知的取舍」里记了这一条。
  */
 function attachLobbyHandlers(handle: Room): void {
 	const announce = handle.makeAction<LobbyAnnounce>('announce');

@@ -263,7 +263,7 @@ export default defineConfig({
 	 * 的路由：Steam 登录必须在服务端接收 OpenID 回调并向 Steam 反查断言，纯静态做不到。
 	 *
 	 * 两个适配器都装着，用 `DEPLOY_TARGET` 选：默认 Node（本地 dev 与自托管），
-	 * `DEPLOY_TARGET=cloudflare` 出 Workers 产物（步骤见 README「发布到 Cloudflare Workers」）。
+	 * `DEPLOY_TARGET=cloudflare` 出 Workers 产物（步骤见 docs/deploy.md「发布到 Cloudflare Workers」）。
 	 * 前提是 SSR 侧代码只用 Web 标准 API（见 src/lib/session.ts 与 src/lib/stratzPlayer.ts
 	 * 的说明），不碰 node:fs / node:crypto——否则上 Workers 就得重写。
 	 */

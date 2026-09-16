@@ -4,7 +4,7 @@ import type { BiliVideo } from './types';
  * B站 视频清单。
  *
  * 每一条都用 B站 自己的 `api.bilibili.com/x/web-interface/view?bvid=` 核对过，
- * 标题、时长、播放量、投稿人全部来自接口返回值（核对方式见 README 的「视频」一节），
+ * 标题、时长、播放量、投稿人全部来自接口返回值（核对方式见 docs/data-sources.md 的「视频」一节），
  * 不靠搜索结果里的转述。老视频大多是粉丝搬运，所以卡片上会把**投稿人**如实写出来——
  * 搬运者不是原作者。
  *

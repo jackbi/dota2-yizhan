@@ -42,7 +42,7 @@ export function roomUrl(platform: Platform, roomId: string): string {
  * 音量还能每格单独拖——这正是分屏最缺的那件事。
  *
  * 斗鱼没有这种页面（查过开放平台，没有），所以它的格子走另一条路：服务端解一次性直链 +
- * 浏览器用 `mpegts.js` 自播（见 README 的「分屏页的画面：斗鱼直链、虎牙官方播放器、兜底取景」），
+ * 浏览器用 `mpegts.js` 自播（见 docs/live.md 的「分屏页的画面：斗鱼直链、虎牙官方播放器、兜底取景」），
  * 解析不出来时才退回「嵌整个房间页 + 靠 `liveWall.ts` 的 `CROP` 裁到格子里」。
  */
 export function embedUrl(platform: Platform, roomId: string): string {
