@@ -32,11 +32,11 @@ import { md5Hex } from './md5';
  * - **有效期很短**：解析完等 25 秒再拉就已经断（1 秒内没事），所以只能「点了才解析、解析完立刻播」。
  * - **不绑 IP**：代理出口解析、直连出口拉流照样持续推，所以服务器放哪儿都行；斗鱼 CDN 给
  *   `Access-Control-Allow-Origin: *`，浏览器**直连**即可，视频字节不过我们的服务器。
- *   因此也不再需要「服务端转发视频字节」那条路（`/api/live/proxy` 已删），
- *   `openDouyuStream()` 现在只服务于 `sampleStream()`。
+ *   因此也不再需要「服务端转发视频字节」那条路（`/api/live/proxy` 已删）。
  *
- * `probeStreamHeaders()` 同样只留给临时诊断端点 `/api/live/probe`（得显式 `&headers=1`）——
- * 它每探一次就消费掉那条一次性 token，所以默认不开。
+ * 为了验证上面这几条而写的诊断代码（`/api/live/probe` 端点，以及配套的 `probeStreamHeaders()` /
+ * `sampleStream()`）已经删掉：它每探一次就消费掉那条一次性 token，且在生产上等于开放一个
+ * 「查任意房间直链」的入口。结论都记在 README 的「分屏页的画面」一节。
  */
 
 /** 斗鱼的风控对 UA 敏感，用一个真实的桌面 Chrome。 */
@@ -101,16 +101,6 @@ export interface DouyuResolve {
 	/** 逐步执行的记录，失败时用来定位卡在哪一步。 */
 	steps: string[];
 	errors: string[];
-	/** `getH5PlayV1` 的原始 data，排查用（不返回给普通用户）。 */
-	raw?: Record<string, unknown>;
-	/**
-	 * `enc_data` 解出来的 op 字段。
-	 *
-	 * 这里藏着**斗鱼眼里的客户端 IP**（`op.ip`）与 `did`/`ts`/`ua`，签名时它们被一起签进去。
-	 * 如果直链的 token 最终是按这个 IP 绑的，那「服务端解析、浏览器播放」就是天生不成立的
-	 * ——两边 IP 不同。详见 `sampleStream()` 的注释。
-	 */
-	encInfo?: { did?: string; ip?: string; ts?: number; ua?: string; expireAt?: number };
 }
 
 /**
@@ -175,7 +165,6 @@ export async function resolveDouyu(
 		return result;
 	}
 	steps.push(`getEncryption: enc_time=${encTime} is_special=${isSpecial} key=${key.slice(0, 6)}…`);
-	result.encInfo = decodeEncData(encPayload);
 
 	for (const rate of rates) {
 		const ts = Math.floor(Date.now() / 1000);
@@ -234,214 +223,12 @@ export async function resolveDouyu(
 			errors.push(`getH5PlayV1(rate=${rate}) 没给地址：${JSON.stringify(json).slice(0, 300)}`);
 			continue;
 		}
-		result.url = `${rtmpUrl.replace(/\/$/, '')}/${rtmpLive}`;
-		result.kind = result.url.includes('.m3u8') ? 'm3u8' : 'flv';
-		result.quality = result.qualities.find((q) => q.rate === rate)?.name ?? `rate=${rate}`;
-		result.raw = data;
-		steps.push(`直链：${result.kind} ${result.url.slice(0, 120)}…`);
-		return result;
-	}
-
+	result.url = `${rtmpUrl.replace(/\/$/, '')}/${rtmpLive}`;
+	result.kind = result.url.includes('.m3u8') ? 'm3u8' : 'flv';
+	result.quality = result.qualities.find((q) => q.rate === rate)?.name ?? `rate=${rate}`;
+	steps.push(`直链：${result.kind} ${result.url.slice(0, 120)}…`);
 	return result;
 }
 
-/**
- * `enc_data` 是 base64 的 JSON，里面除了密钥信息还有 `op`（did / **客户端 IP** / ts / ua）。
- * 用 `atob`，不碰 `Buffer`——SSR 侧保持 Web 标准 API，换运行时不用重写。
- */
-function decodeEncData(payload: string): DouyuResolve['encInfo'] {
-	try {
-		const json = JSON.parse(atob(payload)) as Record<string, unknown>;
-		const op = (json.op ?? {}) as Record<string, unknown>;
-		return {
-			did: typeof op.did === 'string' ? op.did : undefined,
-			ip: typeof op.ip === 'string' ? op.ip : undefined,
-			ts: typeof op.ts === 'number' ? op.ts : undefined,
-			ua: typeof op.ua === 'string' ? op.ua : undefined,
-			expireAt: typeof json.expire_at === 'number' ? json.expire_at : undefined,
-		};
-	} catch {
-		return undefined;
-	}
-}
-
-/**
- * 带着「平台自己那套头」去拉流，返回上游响应本体（不读 body）。
- *
- * 只给 `sampleStream()` 用，省得两处各写一份头——斗鱼对 `Referer`/`Origin`/UA 这一组很敏感，
- * 散开写迟早会漂。（原同源转发路由 `/api/live/proxy` 已删：直链不绑 IP，浏览器直连就够。）
- */
-export async function openDouyuStream(url: string, signal?: AbortSignal): Promise<Response> {
-	return fetch(url, {
-		headers: {
-			'user-agent': UA,
-			referer: 'https://www.douyu.com/',
-			origin: 'https://www.douyu.com',
-		},
-		redirect: 'follow',
-		signal,
-	});
-}
-
-export interface StreamSample {
-	status: number;
-	contentType?: string;
-	allowOrigin?: string | null;
-	finalHost?: string;
-	/** 采样窗口内收到的字节数。 */
-	bytes: number;
-	chunks: number;
-	/** 采样窗口还没走完、流就被服务端关掉了。 */
-	ended: boolean;
-	ms: number;
-	error?: string;
-}
-
-/**
- * 把一条直链真拉一段时间，看它**能不能持续推**——这是「试看」和「真流」的唯一区分办法。
- *
- * 起因：斗鱼那条直链曾无论从 Node 还是浏览器、无论带什么 Referer/Origin/参数，都只给约
- * 400KB（一秒左右）就断；而斗鱼页面自己的播放器在**同一条地址**上能连续推 9.6MB/11 秒。
- * 当时的假设是「token 绑了 `enc_data` 里那个 IP」（见 `encInfo`），于是写了这个函数，
- * **在同一个进程里解析并采样**，用来验证这个假设。
- *
- * 假设已被推翻：实测在代理出口解析、再从另一个出口（直连）拉流照样持续推，直链**不绑 IP**；
- * 那批「只推一秒」的真正原因是**同一条地址被前面的诊断请求提前消费掉了**。它现在只服务于临时
- * 诊断端点 `/api/live/probe?sample=8000`：量一条地址到底能推多久。
- */
-export async function sampleStream(url: string, ms = 8000): Promise<StreamSample> {
-	const started = Date.now();
-	try {
-		const res = await openDouyuStream(url, AbortSignal.timeout(ms + 15_000));
-		let bytes = 0;
-		let chunks = 0;
-		let ended = false;
-		if (res.body) {
-			const reader = res.body.getReader();
-			while (Date.now() - started < ms) {
-				const { value, done } = await Promise.race([
-					reader.read(),
-					new Promise<{ value: undefined; done: false }>((r) => setTimeout(() => r({ value: undefined, done: false }), 2000)),
-				]);
-				if (done) {
-					ended = true;
-					break;
-				}
-				if (value) {
-					bytes += value.byteLength;
-					chunks += 1;
-				}
-			}
-			try {
-				await reader.cancel();
-			} catch {
-				// cancel 失败无所谓，采样窗口已经到了。
-			}
-		}
-		return {
-			status: res.status,
-			contentType: res.headers.get('content-type') ?? undefined,
-			allowOrigin: res.headers.get('access-control-allow-origin'),
-			finalHost: new URL(res.url).host,
-			bytes,
-			chunks,
-			ended,
-			ms: Date.now() - started,
-		};
-	} catch (e) {
-		return {
-			status: 0,
-			bytes: 0,
-			chunks: 0,
-			ended: false,
-			ms: Date.now() - started,
-			error: e instanceof Error ? e.message : String(e),
-		};
-	}
-}
-
-/** 探针用：本进程看到的公网出口 IP（走代理时它和「直连」不是一个地址）。失败就算了。 */
-export async function exitIp(): Promise<string | null> {
-	for (const url of ['https://api.ipify.org/?format=json', 'https://ifconfig.me/ip']) {
-		try {
-			const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-			if (!res.ok) continue;
-			const text = (await res.text()).trim();
-			const match = /"ip":"([^"]+)"/.exec(text) ?? [null, text];
-			return match[1] ?? null;
-		} catch {
-			// 换下一个。
-		}
-	}
-	return null;
-}
-
-export interface HeaderProbe {
-	label: string;
-	referer: string | null;
-	status?: number;
-	contentType?: string;
-	/** 跨域能不能拉，全看这个头。 */
-	allowOrigin?: string | null;
-	contentRange?: string | null;
-	/** 实测：斗鱼 CDN 第一跳是 302，得跟到最后一跳才算数（`finalHost` 会变）。 */
-	finalHost?: string;
-	redirected?: boolean;
-	/** 真读回来的字节数——状态码 200 但 0 字节是另一回事。 */
-	bytes?: number;
-	error?: string;
-}
-
-/**
- * 拿真实直链去问 CDN 三个问题：**认不认别的 Referer、认不认空 Referer、给不给 CORS**。
- *
- * 三条变体各请求一次（只取 1KB，`Range` 头），把状态码和响应头原样带回来。
- * 这是「浏览器能不能直连」唯一的判据——`Access-Control-Allow-Origin` 存在且能匹配我们的源，
- * 浏览器直连才成立；否则只剩服务端转发（吃带宽）。
- *
- * 顺带一提：浏览器里这些头只有 `Origin`/`Referer` 相关能影响，而 `Referer` 属于禁用头
- * （改不了也伪造不了，只能靠 `referrerPolicy` 完全不发），所以这里模拟的就是
- * 「浏览器会发什么」：我们的源 + 正常 Referer、空 Referer（`no-referrer` 的效果），
- * 以及平台自己的 Referer（答「CDN 是否只认斗鱼」）。
- *
- * **必须跟完重定向**：实测斗鱼返回的第一跳是 302（`huos3.douyucdn2.cn` → 另一个 CDN 节点），
- * 只看第一跳会误判成「没给 206」。所以这里 `redirect: 'follow'`，并把最后一跳的 host 也报出来。
- */
-export async function probeStreamHeaders(url: string, selfOrigin: string): Promise<HeaderProbe[]> {
-	const variants: { label: string; referer: string | null }[] = [
-		{ label: '平台 Referer（斗鱼自己）', referer: 'https://www.douyu.com/' },
-		{ label: '我们的源 Referer（浏览器默认行为）', referer: `${selfOrigin}/` },
-		{ label: '不带 Referer（no-referrer）', referer: null },
-	];
-	const out: HeaderProbe[] = [];
-	for (const variant of variants) {
-		const headers: Record<string, string> = {
-			'user-agent': UA,
-			origin: selfOrigin,
-			range: 'bytes=0-1023',
-		};
-		if (variant.referer) headers.referer = variant.referer;
-		try {
-			const res = await fetch(url, { headers, redirect: 'follow', signal: AbortSignal.timeout(15_000) });
-			const bytes = await res.arrayBuffer();
-			out.push({
-				label: variant.label,
-				referer: variant.referer,
-				status: res.status,
-				contentType: res.headers.get('content-type') ?? undefined,
-				allowOrigin: res.headers.get('access-control-allow-origin'),
-				contentRange: res.headers.get('content-range'),
-				finalHost: new URL(res.url).host,
-				redirected: res.redirected,
-				bytes: bytes.byteLength,
-			});
-		} catch (e) {
-			out.push({
-				label: variant.label,
-				referer: variant.referer,
-				error: e instanceof Error ? e.message : String(e),
-			});
-		}
-	}
-	return out;
+	return result;
 }
