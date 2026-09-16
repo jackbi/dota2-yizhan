@@ -4,14 +4,13 @@ import Panel from '../../components/player/Panel.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
 import { gameModeLabel, laneLabel, lobbyLabel, positionLabel, regionLabel } from '../../lib/dotaLabels';
-import { loadPlayer, noticeProps, thousands, type BreakdownRow } from '../../lib/playerContext';
-import { readSession } from '../../lib/session';
+import { loadPlayer, noticeProps, requirePlayer, thousands, type BreakdownRow } from '../../lib/playerContext';
 import { loadPlayerBreakdown, loadRegionNames, type GroupRow } from '../../lib/stratzPlayer';
 
 export const prerender = false;
 
-const session = await readSession(Astro.cookies);
-if (!session) return Astro.redirect('/login');
+const session = await requirePlayer(Astro.cookies);
+if (session instanceof Response) return session;
 
 const loaded = await loadPlayer(session.accountId);
 

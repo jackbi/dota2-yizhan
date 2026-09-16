@@ -5,14 +5,13 @@ import PlayerNotice from '../../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../../layouts/PlayerLayout.astro';
 import { gameModeLabel, lobbyLabel, rankInfo } from '../../../lib/dotaLabels';
 import { formatClock, formatDayWithWeekday } from '../../../lib/format';
-import { loadPlayer, loadRefs, noticeProps, thousands } from '../../../lib/playerContext';
-import { readSession } from '../../../lib/session';
+import { loadPlayer, loadRefs, noticeProps, requirePlayer, thousands } from '../../../lib/playerContext';
 import { loadMatchDetail, StratzError, stratzPlayerConfigured, type MatchDetail } from '../../../lib/stratzPlayer';
 
 export const prerender = false;
 
-const session = await readSession(Astro.cookies);
-if (!session) return Astro.redirect('/login');
+const session = await requirePlayer(Astro.cookies);
+if (session instanceof Response) return session;
 
 /** 只接受正整数：`/me/matches/abc` 之类直接回列表，不去上游浪费一次请求。 */
 const matchId = Number(Astro.params.id);

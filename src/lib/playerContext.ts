@@ -1,5 +1,24 @@
+import type { AstroCookies } from 'astro';
 import { heroRefMap, itemRefMap, type HeroRef, type ItemRef } from './gameRefs';
+import { readSession, type SessionUser } from './session';
 import { loadPlayerProfile, stratzPlayerConfigured, StratzError, type PlayerProfile } from './stratzPlayer';
+
+/**
+ * 七个 `/me` 路由共用的登录守卫。
+ *
+ * 返回 `SessionUser` 表示已登录；返回 `Response` 表示这份响应应当直接交给浏览器
+ * （目前只有 302 到登录页），调用方写成：
+ *
+ *     const session = await requirePlayer(Astro.cookies);
+ *     if (session instanceof Response) return session;
+ *
+ * 抽出来是因为这两行原先在七个页面里一字不差地抄了七遍——以后改重定向目标（比如带上
+ * `?next=` 回跳）一定会漏掉几个。
+ */
+export async function requirePlayer(cookies: AstroCookies): Promise<SessionUser | Response> {
+	const session = await readSession(cookies);
+	return session ?? new Response(null, { status: 302, headers: { Location: '/login' } });
+}
 
 /**
  * 六个个人页共用的「取资料 + 分清失败原因」逻辑。

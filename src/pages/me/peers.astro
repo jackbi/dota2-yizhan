@@ -4,14 +4,13 @@ import Panel from '../../components/player/Panel.astro';
 import PeersTable from '../../components/player/PeersTable.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
-import { loadPlayer, loadSecondary, noticeProps } from '../../lib/playerContext';
-import { readSession } from '../../lib/session';
+import { loadPlayer, loadSecondary, noticeProps, requirePlayer } from '../../lib/playerContext';
 import { loadPlayerPeers } from '../../lib/stratzPlayer';
 
 export const prerender = false;
 
-const session = await readSession(Astro.cookies);
-if (!session) return Astro.redirect('/login');
+const session = await requirePlayer(Astro.cookies);
+if (session instanceof Response) return session;
 
 const loaded = await loadPlayer(session.accountId);
 

@@ -4,14 +4,13 @@ import LoadError from '../../components/player/LoadError.astro';
 import Panel from '../../components/player/Panel.astro';
 import PlayerNotice from '../../components/player/PlayerNotice.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
-import { emptyRefs, loadPlayer, loadRefs, loadSecondary, noticeProps } from '../../lib/playerContext';
-import { readSession } from '../../lib/session';
+import { emptyRefs, loadPlayer, loadRefs, loadSecondary, noticeProps, requirePlayer } from '../../lib/playerContext';
 import { loadPlayerHeroes } from '../../lib/stratzPlayer';
 
 export const prerender = false;
 
-const session = await readSession(Astro.cookies);
-if (!session) return Astro.redirect('/login');
+const session = await requirePlayer(Astro.cookies);
+if (session instanceof Response) return session;
 
 const loaded = await loadPlayer(session.accountId);
 

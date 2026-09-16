@@ -6,14 +6,13 @@ import WinRateChart from '../../components/player/WinRateChart.astro';
 import PlayerLayout from '../../layouts/PlayerLayout.astro';
 import { rankInfo } from '../../lib/dotaLabels';
 import { formatDay } from '../../lib/format';
-import { loadPlayer, loadSecondary, noticeProps } from '../../lib/playerContext';
-import { readSession } from '../../lib/session';
+import { loadPlayer, loadSecondary, noticeProps, requirePlayer } from '../../lib/playerContext';
 import { loadPlayerMatches, loadPlayerProgression, type GroupRow } from '../../lib/stratzPlayer';
 
 export const prerender = false;
 
-const session = await readSession(Astro.cookies);
-if (!session) return Astro.redirect('/login');
+const session = await requirePlayer(Astro.cookies);
+if (session instanceof Response) return session;
 
 const loaded = await loadPlayer(session.accountId);
 
