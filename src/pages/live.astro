@@ -4,7 +4,6 @@ import { OB_MEMBERS } from '../data/ob';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { fetchPopularRooms } from '../lib/roomList';
 import { localizeAvatars } from '../lib/avatars';
-import { formatIso } from '../lib/format';
 import { roomUrl } from '../data/site';
 import type { RoomRef } from '../data/types';
 
@@ -59,38 +58,46 @@ const STATS = [
 ---
 
 <Layout
-	title="分屏直播 · DOTA2 驿站"
+	title="监控室 · DOTA2 驿站"
 	description="网页端分屏监控室：左侧按热度与 OB 名单挑直播间，拖到右侧按格播放，支持搜索与按房间号添加。"
 >
-	<section class="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8">
-		<div class="mb-6">
-			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">DOTA2 驿站 · 分屏直播</p>
-			<h1 class="mt-2 font-display text-3xl sm:text-4xl">监控室</h1>
-			<p class="mt-3 max-w-3xl text-muted">
-				左边挑房间，右边按格播放。可以搜索、按平台筛选，也可以直接填房间号或用平台链接添加——
-				添加后的房间会留在浏览器里，下次打开还在。
-			</p>
+	{/* 监控区优先：容器放宽、左右留白收窄、标题区压扁，把高度和宽度都让给墙。 */}
+	<section class="mx-auto max-w-[1920px] px-3 py-5 sm:px-4 lg:px-6">
+		{/*
+			标题区和统计并成一块（xl 上统计靠右），少占一行——每省下 40px，格子就多 40px 高。
+		*/}
+		<div class="mb-4 flex flex-wrap items-end gap-x-6 gap-y-3">
+			<div class="min-w-0">
+				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">DOTA2 驿站 · 监控室</p>
+				<h1 class="mt-1.5 font-display text-2xl sm:text-3xl">监控室</h1>
+				<p class="mt-1.5 max-w-2xl text-sm text-muted">
+					左边挑房间，右边按格播放。可以搜索、按平台筛选，也可以直接填房间号或用平台链接添加——
+					添加后的房间会留在浏览器里，下次打开还在。
+				</p>
+			</div>
+
+			<div class="flex flex-wrap items-center gap-2.5 text-sm xl:ml-auto">
+				{
+					STATS.map((s) => (
+						<span
+							class:list={[
+								'inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5',
+								s.accent ? 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#4ade80]' : 'border-line bg-surface',
+							]}
+						>
+							{s.accent && <span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]" />}
+							<span class:list={['text-faint', s.accent && 'text-[#4ade80]/80']}>{s.label}</span>
+							<span class:list={['font-display', !s.accent && 'text-cream']}>{s.value}</span>
+						</span>
+					))
+				}
+			</div>
 		</div>
 
-		<div class="mb-6 flex flex-wrap items-center gap-2.5 text-sm">
-			{
-				STATS.map((s) => (
-					<span
-						class:list={[
-							'inline-flex items-center gap-2 rounded-full border px-4 py-2',
-							s.accent ? 'border-[#22c55e]/40 bg-[#22c55e]/10 text-[#4ade80]' : 'border-line bg-surface',
-						]}
-					>
-						{s.accent && <span class="h-2 w-2 animate-pulse rounded-full bg-[#22c55e]" />}
-						<span class:list={['text-faint', s.accent && 'text-[#4ade80]/80']}>{s.label}</span>
-						<span class:list={['font-display', !s.accent && 'text-cream']}>{s.value}</span>
-					</span>
-				))
-			}
-		</div>
-
-		<div class="grid gap-5 lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,380px)_minmax(0,1fr)]">
+		{/* 侧栏收到 300/340px：挑房间够用，省下的宽度全给监控区。 */}
+		<div class="grid gap-4 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)] xl:grid-cols-[minmax(0,340px)_minmax(0,1fr)]">
 			<aside
+				id="room-panel"
 				class="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)]"
 				aria-label="直播间列表"
 			>
@@ -163,7 +170,7 @@ const STATS = [
 				<div id="wall-panel" class="space-y-4">
 					<div
 						id="wall-toolbar"
-						class="flex flex-wrap items-center gap-x-3 gap-y-3 rounded-2xl border border-line bg-surface p-4"
+						class="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-line bg-surface p-3.5"
 					>
 						<div id="wall-layout" class="flex items-center gap-1 rounded-lg border border-line p-1" role="group" aria-label="分屏格数">
 							{
@@ -210,7 +217,7 @@ const STATS = [
 								id="wall-crop"
 								type="button"
 								aria-pressed="false"
-								title="只显示平台播放器区域，把页面其余部分裁掉（切换会重新加载画面）"
+								title="只在「嵌平台整页」这条兜底路上用：把斗鱼的播放器区域裁出来（正常走直链时用不到；切换会重新加载画面）"
 								class="inline-flex items-center gap-1.5 rounded-lg border border-line px-3 py-2 text-xs font-medium text-muted transition hover:border-dota hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
 							>
 								<svg
@@ -281,11 +288,16 @@ const STATS = [
 							</button>
 						</div>
 
-						<p class="w-full text-[11px] leading-relaxed text-faint sm:w-auto sm:flex-1">
+						{/*
+							这一段**必须整行（w-full）**。曾经给它写 `sm:flex-1`，结果它和按钮挤在同一行里，
+							在 1100px 宽的右栏里被压成十几行、把工具栏撑到 270px 高，墙面被顶下去、
+							格子只剩 195px——监控区要的是高度，说明文字不能抢。
+						*/}
+						<p class="w-full text-[11px] leading-relaxed text-faint">
 							<span id="wall-status" class="text-cream/70">墙上 0 / 4 格</span> ·
 							<span class="wall-hint-long">
-								每个格子都是一个完整的直播间页面，开太多会卡，建议 4 格以内；切换格数会重新排布并停掉已加载的画面。
-								想给某一路更大的画面，拖格子之间的分隔条改列宽 / 行高（分隔条可用方向键微调），尺寸按格数分别记住，点「均分」还原。
+								斗鱼走直链（本站只取一条一次性地址，画面由浏览器直连斗鱼 CDN），每格默认静音、点左下角喇叭出声；
+								虎牙用虎牙官方播放器。建议 4 格以内；拖格子之间的分隔条可改列宽 / 行高（方向键微调），点「均分」还原。
 							</span>
 						</p>
 						<p
@@ -316,60 +328,6 @@ const STATS = [
 						}
 					</p>
 				</noscript>
-
-				<section class="rounded-2xl border border-line bg-surface p-5">
-					<h2 class="font-display text-lg">关于「能不能直接在页面里播」</h2>
-					<ul class="mt-3 space-y-2.5 text-sm leading-relaxed text-muted">
-						<li>
-							<span class="text-cream">结论：能嵌，但平台随时可能变。</span>
-							构建期查过两家的响应头：斗鱼房间页<strong class="text-cream/80">没有</strong>
-							<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">X-Frame-Options</code>，
-							虎牙的 CSP 里<strong class="text-cream/80">没有</strong>
-							<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">frame-ancestors</code>，
-							两家的页面内联脚本里也没有防嵌逻辑。也就是说这里放的是各家的官方页面，
-							能不能出画面由平台说了算，本站不转码、不代理视频流。
-						</li>
-						<li>
-							<span class="text-cream">所以每格都留了「打开直播间」。</span>
-							如果某一格空白、停在验证页或提示要登录，就是平台这次不让嵌了，点右下角跳官方页即可。
-						</li>
-						<li>
-							<span class="text-cream">音量没法从这边控制。</span>
-							iframe 是跨域的，父页面读不到它的音量，也没有静音按钮——
-							要安静就少开几格，或者在各格播放器里各自调。
-						</li>
-						<li>
-							<span class="text-cream">「只显示画面」是裁出来的，不是把流抽出来。</span>
-							每格嵌的仍然是平台自己的直播间页面，只是用 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]"
-								>transform</code
-							> 把它放大错位，让播放器正好落在格子里，其余部分被裁掉。定位靠 URL 片段锚点
-							（斗鱼 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">#js-player-video</code>、
-							虎牙 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">#J_playerMain</code>），
-							并且要等页面渲染完再补一次——平台页面里播放器的位置会被广告和推荐位顶来顶去。
-							广告是后到的，个别房间仍会偏，所以每格左下角留了上下按钮自己对齐。
-							视频上盖着的弹幕层属于播放器本身，去不掉。
-						</li>
-						<li>
-							<span class="text-cream">B站 嵌不进来。</span>
-							<code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">live.bilibili.com</code>
-							的响应头带 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]">X-Frame-Options: SAMEORIGIN</code>，
-							浏览器会直接拒绝（控制台报 <code class="rounded bg-surface-3 px-1 py-0.5 text-[11px]"
-								>ERR_BLOCKED_BY_RESPONSE</code
-							>），格子里只会是黑的。这是 B站 自己的策略，绕不过去，所以只支持斗鱼与虎牙。
-						</li>
-						<li>
-							<span class="text-cream">热度不可横向比较。</span>
-							斗鱼取的是房间 `ol`、虎牙取的是 `totalCount`，两套口径不一样，
-							所以只在同平台内看看谁更热，不拿它做跨平台排序。
-						</li>
-						<li>
-							<span class="text-cream">热门榜的快照。</span>
-							榜单抓取于 <span class="text-cream/80">{formatIso(snapshot.at)}</span>，
-							只列当时正在开播的房间；OB 成员的状态同样是构建期快照，
-							两者都不随时间刷新。左边的绿点只代表 OB 成员，热门榜的房间一律标「榜单」。
-						</li>
-					</ul>
-				</section>
 			</div>
 		</div>
 	</section>
