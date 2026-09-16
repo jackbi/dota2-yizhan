@@ -480,6 +480,35 @@ body::before {
 }
 
 /*
+ * 弹幕：斗鱼直链格子里自己画的那层（见 liveWall.ts 的 pushDanmaku）。
+ *
+ * 只有「铺在画面上、不换行、不吃点击」这三件事写在 CSS 里；位置和移动全在 JS 里算
+ * （每条弹幕的速度跟着字数变，用 keyframes 反而要给每条写一次 animation-duration）。
+ * 白字压在亮画面上会糊，所以描边用双层 text-shadow——比给每条弹幕加背景块干净。
+ *
+ * **不写 `will-change`**：`translateX` 的 WAAPI 动画本来就交给合成器，而一屏最多挂 40 条、
+ * 9 格同开就是 ~360 个元素，常驻的 `will-change` 等于让每个元素从头到尾占着一个合成层。
+ */
+.tile-danmaku {
+	height: 100%;
+	left: 0;
+	overflow: hidden;
+	pointer-events: none;
+	position: absolute;
+	top: 0;
+	width: 100%;
+}
+.tile-danmaku-item {
+	color: #fff;
+	font-size: 12px;
+	left: 0;
+	line-height: 1.35;
+	position: absolute;
+	text-shadow: 0 1px 2px rgb(0 0 0 / 0.9), 0 0 6px rgb(0 0 0 / 0.7);
+	white-space: nowrap;
+}
+
+/*
  * 分隔条：拖动改每列宽度 / 每行高度，位置由 JS 按格子实测坐标写在内联样式里。
  *
  * 平时完全透明（只在 gap 那 12px 上，不挡画面），hover / 聚焦 / 拖动时才亮一条线。

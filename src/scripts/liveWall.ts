@@ -1,5 +1,6 @@
 import { PLATFORM_META, embedUrl, roomUrl } from '../data/site';
 import type { Platform, RoomRef } from '../data/types';
+import { createDouyuDanmaku } from '../lib/douyuDanmaku';
 
 /**
  * 分屏直播页（监控室）的客户端逻辑。
@@ -821,12 +822,18 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		frame.style.transform = `scale(${s}) translate(${-cx}px, ${-cy}px)`;
 	}
 
-	/** 窗口或格子尺寸变了要重算，否则画面会错位。 */
+	/**
+	 * 窗口或格子尺寸变了要重算，否则画面会错位。
+	 *
+	 * 这里同时管两件浮在画面上的东西：取景的 iframe（`transform` 错位）和斗鱼的弹幕层
+	 * （收进画面矩形，见 `fitDanmaku`）。所以它其实是「格子尺寸变了」的统一入口。
+	 */
 	function refitCrops(): void {
 		wallEl!.querySelectorAll<HTMLIFrameElement>('iframe[data-crop]').forEach((frame) => {
 			const spec = cropSpecOf(frame.dataset.platform ?? '');
 			if (spec && frame.dataset.key) fitCrop(frame, spec, frame.dataset.key);
 		});
+		refitDanmaku();
 	}
 
 	function cropSpecOf(platform: string): CropSpec | undefined {
@@ -867,8 +874,10 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			detachMediaElement(): void;
 			destroy(): void;
 		};
-		video: HTMLVideoElement;
-	}
+	video: HTMLVideoElement;
+	/** 弹幕那条长连接。和播放器是两码事，但生命周期绑定在同一格里（见 `destroyDouyuTile`）。 */
+	danmaku: DanmakuHandle;
+}
 	const douyuTiles = new Map<number, DouyuTile>();
 	/** 每格已重试几次（重新解析算一次）。轮播房间放完会 ended，允许自动续一次。 */
 	const retries = new Map<number, number>();
@@ -890,6 +899,8 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		} catch {
 			// 已经坏掉的播放器，销毁失败无所谓。
 		}
+		// 弹幕是另一条连接，播放器销毁失败也得关掉——不然换格之后它还在往一个不存在的格子里塞。
+		entry.danmaku.close();
 		entry.video.remove();
 	}
 
@@ -908,12 +919,145 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		playSlot(index);
 	}
 
+	// ------------------------------------------------------------ 斗鱼的弹幕
+
+	/** 弹幕车道数。4 条在 4/6/9 格里也不会糊成一片；再多就变成刷屏。 */
+	const DANMAKU_LANES = 4;
+	/** 滚动速度（px/s）。比平台自己那层慢一点——观众看的是比赛，不是弹幕。 */
+	const DANMAKU_SPEED = 110;
+	/** 一条弹幕最多几个字。斗鱼的长弹幕很少，截掉比让一条占满整屏强。 */
+	const DANMAKU_MAX_CHARS = 60;
+	/** 每条车道「上一次占用的尾巴什么时候离开右边缘」，跟着格子存（格子换了就没了）。 */
+	const danmakuLanes = new WeakMap<HTMLElement, number[]>();
+
+	interface DanmakuHandle {
+		close(): void;
+		overlay: HTMLElement;
+	}
+
+	/**
+	 * 往格子里推一条弹幕。
+	 *
+	 * 车道「谁先空谁接」：每条车道记着上一条的尾巴离开右边缘的时刻，新弹幕走最早空出来的那条；
+	 * 全满就直接叠在最早空的那条上——直播弹幕晚几秒就没人看了，宁可重叠也别排队。
+	 *
+	 * 动画交给 Web Animations API 而不是 CSS：时长得按字数算（长弹幕走久一点），用 CSS 就得给每条
+	 * 弹幕写一次 `animation-duration` 内联样式，还得让 keyframes 知道格子宽度，绕一圈不如这里直接
+	 * 给两个 `translateX`。`oncancel` 也得收尾——格子被换掉时动画会停在半路。
+	 */
+	function pushDanmaku(overlay: HTMLElement, raw: string): void {
+		const width = overlay.clientWidth;
+		if (width < 2) return;
+		// 大主播一秒十几条，不设上限浏览器会被 DOM 拖住（9 格同开时尤其）。
+		if (overlay.childElementCount > 40) return;
+
+		const text = raw.slice(0, DANMAKU_MAX_CHARS);
+		const el = document.createElement('span');
+		el.className = 'tile-danmaku-item';
+		el.textContent = text;
+		overlay.append(el);
+
+		/*
+		 * 宽度**估**出来，不去 `getBoundingClientRect()`：那会强制一次重排，而弹幕是按每条来的，
+		 * 9 格同开时一秒上百次重排、代价比这点偏差大得多。中日韩字符按 13px、其余按 7px 估，
+		 * 估偏了只影响「车道多久算空出来」，不影响文字本身。
+		 */
+		let laneWidth = 0;
+		for (const ch of text) laneWidth += ch.codePointAt(0)! > 0x2e80 ? 13 : 7;
+		const distance = width + laneWidth;
+		const duration = (distance / DANMAKU_SPEED) * 1000;
+
+		const lanes = danmakuLanes.get(overlay) ?? new Array<number>(DANMAKU_LANES).fill(0);
+		danmakuLanes.set(overlay, lanes);
+		const now = performance.now();
+		let lane = 0;
+		for (let i = 1; i < lanes.length; i++) if (lanes[i] < lanes[lane]) lane = i;
+		lanes[lane] = now + (laneWidth / distance) * duration + 200;
+		el.style.top = `${(lane * 100) / DANMAKU_LANES}%`;
+
+		const animation = el.animate(
+			[{ transform: `translateX(${width}px)` }, { transform: `translateX(${-laneWidth}px)` }],
+			{ duration, easing: 'linear' },
+		);
+		const drop = (): void => el.remove();
+		animation.onfinish = drop;
+		animation.oncancel = drop;
+	}
+
+	/**
+	 * 把弹幕层收进**画面本身**的范围。
+	 *
+	 * 画面是 `object-fit: contain` 的：格子比 16:9 宽时左右会留黑边，弹幕铺满整格就会跑到黑边上，
+	 * 白字飘在画面外的黑底上看着像 bug。这里按视频自己的比例算出画面矩形（浏览器就是这么摆的），
+	 * 把弹幕层缩进去。
+	 *
+	 * 拿不到尺寸就保持原样（`loadedmetadata` 之前 `videoWidth` 是 0），所以起播后还要再调一次；
+	 * 格子尺寸变了由 `refitOverlays()` 负责。
+	 */
+	function fitDanmaku(video: HTMLVideoElement, overlay: HTMLElement): void {
+		const body = overlay.parentElement;
+		const vw = video.videoWidth;
+		const vh = video.videoHeight;
+		if (!body || !vw || !vh) return;
+		const w = body.clientWidth;
+		const h = body.clientHeight;
+		if (w < 2 || h < 2) return;
+		const scale = Math.min(w / vw, h / vh);
+		const width = vw * scale;
+		const height = vh * scale;
+		overlay.style.left = `${(w - width) / 2}px`;
+		overlay.style.top = `${(h - height) / 2}px`;
+		overlay.style.width = `${width}px`;
+		overlay.style.height = `${height}px`;
+	}
+
+	/** 格子尺寸变了重算弹幕范围（和 `refitCrops()` 一起被调）。 */
+	function refitDanmaku(): void {
+		for (const entry of douyuTiles.values()) fitDanmaku(entry.video, entry.danmaku.overlay);
+	}
+
+	/**
+	 * 开一条弹幕连接，把 `chatmsg` 画到这个格子上。
+	 *
+	 * 斗鱼的弹幕是**另一条长连接**（不进视频流，也不经过我们的服务器，见 `lib/douyuDanmaku.ts`），
+	 * 所以它和播放器是两条命：播放器被销毁时这里必须跟着 `close()`，否则换格之后它还在收。
+	 *
+	 * 显示层在这里建（而不是在 `playDouyu` 摆 `<video>` 那几行里）：弹幕要盖在画面上，
+	 * 得等 `<video>` 先进 DOM 才有得盖，而「建层 → 挂连接 → 登记进 `douyuTiles`」本来就该是一处的事。
+	 */
+	function startDanmaku(r: RoomRef, video: HTMLVideoElement): DanmakuHandle {
+		const body = video.parentElement;
+		// 弹幕浮在画面上。左下角那排按钮在 `.tile-body` 外面，所以这层不吃点击。
+		const overlay = document.createElement('div');
+		overlay.className = 'tile-danmaku';
+		// 一屏几十条、一直在变的聊天文字，对读屏只是噪音（和头像底、播放图标一样是装饰）。
+		overlay.setAttribute('aria-hidden', 'true');
+		body?.append(overlay);
+		// 起播前 `videoWidth` 是 0，`fitDanmaku()` 算不出来，所以拿到尺寸后补一次。
+		video.addEventListener('loadedmetadata', () => fitDanmaku(video, overlay));
+		// 连上之前给按钮留个说法：斗鱼有时会无视新连接，那时格子里一条弹幕都不来，光看画面
+		// 分不出「没连上」和「没人说话」。
+		const toggle = overlay.closest<HTMLElement>('[data-slot]')?.querySelector<HTMLElement>('.tile-danmaku-toggle');
+		const client = createDouyuDanmaku({
+			roomId: r.roomId,
+			onStatus: (status) => {
+				if (toggle) toggle.title = status === 'live' ? '这一格的弹幕开关' : '弹幕还没连上（斗鱼有时会无视新连接，会自动重试）';
+			},
+			onPacket: (packet) => {
+				// 只要聊天的。进场/礼物/在线列表（`uenter` / `dgb` / `oul` …）画上去只会更乱。
+				if (packet.type === 'chatmsg' && packet.fields.txt) pushDanmaku(overlay, packet.fields.txt);
+			},
+		});
+		return { close: () => client.close(), overlay };
+	}
+
 	/** 每格左下角那组控制：静音开关 + 停止 + 当前清晰度。 */
 	function douyuControls(index: number, quality: string, muted: boolean): string {
 		const btn =
 			'flex h-6 items-center justify-center rounded bg-ink/80 px-1.5 text-cream/80 backdrop-blur transition hover:bg-dota hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold';
 		return `<span class="absolute bottom-2 left-2 z-10 flex items-center gap-1" role="group" aria-label="这一格的声音与播放">
 			<button type="button" class="tile-mute ${btn}" data-tile="${index}" aria-pressed="${muted ? 'true' : 'false'}" aria-label="${muted ? '让这一格出声' : '把这一格静音'}">${muted ? '🔇' : '🔊'}</button>
+			<button type="button" class="tile-danmaku-toggle ${btn}" data-tile="${index}" aria-pressed="true" aria-label="把这一格的弹幕隐藏">弹</button>
 			<button type="button" class="tile-stop ${btn}" data-tile="${index}" aria-label="停掉这一格（房间留在格子里）">■</button>
 			<span class="rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-cream/60 backdrop-blur">${esc(quality)}</span>
 		</span>`;
@@ -1007,9 +1151,10 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		 * `useIframeFallback()` → `destroyDouyuTile()` 会在表里查不到条目、直接 return：
 		 * pause / unload / detachMediaElement / destroy 一个都不执行，而 `resetTile()` 已经把这个
 		 * `<video>` 换出 DOM。结果是格子上显示兜底页面、后台仍挂着一个 mpegts loader 在拉流，
-		 * 它的 ERROR handler 还会再触发一次重新解析，等于多叠一个 player。
+		 * 它的 ERROR handler 还会再触发一次重新解析，等于多叠一个 player。弹幕连接同理：
+		 * 得有人在表里负责关它。
 		 */
-		douyuTiles.set(index, { player, video });
+		douyuTiles.set(index, { player, video, danmaku: startDanmaku(r, video) });
 		player.load();
 		try {
 			await player.play();
@@ -1416,9 +1561,22 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				mute.setAttribute('aria-pressed', String(entry.video.muted));
 				mute.setAttribute('aria-label', entry.video.muted ? '让这一格出声' : '把这一格静音');
 			}
-			return;
+		return;
+	}
+	// 弹幕开关：只切这一格的显示，连接照收——关了再开要重连一次，还得重新等 `loginres`。
+	const danmakuToggle = target.closest<HTMLButtonElement>('.tile-danmaku-toggle');
+	if (danmakuToggle?.dataset.tile) {
+		const entry = douyuTiles.get(Number(danmakuToggle.dataset.tile));
+		if (entry) {
+			const show = entry.danmaku.overlay.style.display === 'none';
+			entry.danmaku.overlay.style.display = show ? '' : 'none';
+			danmakuToggle.setAttribute('aria-pressed', String(show));
+			danmakuToggle.setAttribute('aria-label', show ? '把这一格的弹幕隐藏' : '把这一格的弹幕显示出来');
+			danmakuToggle.classList.toggle('opacity-40', !show);
 		}
-		const stopTile = target.closest<HTMLElement>('.tile-stop');
+		return;
+	}
+	const stopTile = target.closest<HTMLElement>('.tile-stop');
 		if (stopTile?.dataset.tile) {
 			resetTile(Number(stopTile.dataset.tile));
 			return;
