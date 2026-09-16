@@ -855,8 +855,9 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	 * 顺带一提：这两条也解释了「为什么之前怎么试都只出一秒画面」——诊断脚本在播放前先用这条地址
 	 * 探了三次 CORS，token 被消耗掉了。
 	 *
-	 * 好处是实打实的：画面 `object-fit: cover` 铺满格子（不用再裁平台的页面）、
-	 * **音量归父页面管**（默认静音，想让哪一格出声就点哪一格）、内存比嵌整页小得多。
+	 * 好处是实打实的：画面 `object-fit: contain` **整幅**落在格子里（不必再去裁平台的页面，
+	 * 格子和 16:9 不合时留黑边）、**音量归父页面管**（默认静音，想让哪一格出声就点哪一格）、
+	 * 内存比嵌整页小得多。
 	 * 代价是每次播放要一次解析往返（约 1～4 秒），以及斗鱼改接口时这一块会先坏。
 	 */
 	interface DouyuTile {
@@ -955,9 +956,15 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		video.autoplay = true;
 		video.playsInline = true;
 		video.className = 'h-full w-full';
-		// 分屏里「铺满格子」才是常态：格子不是 16:9 时（比如全屏下被拉高）按多的那头裁，
-		// 而不是留两条黑边。平台的清晰度不够时画面会糊，但不会缩成一小块。
-		video.style.objectFit = 'cover';
+		/*
+		 * **整幅显示，不裁画面**（`contain`，不是 `cover`）。
+		 *
+		 * 格子的长宽比跟着格数走：4/6/9 格时行高被压得比 16:9 矮（见 `wallTargetHeight`），
+		 * 宽出来的那一截用 `cover` 就是从左右把画面切掉——比赛里贴边的血条、比分板正好在那儿。
+		 * 所以宁可留两条黑边（`.tile-body` 本来就是 `bg-black`），让画面按原始比例完整落在格子里。
+		 * 代价是画面比格子小一圈，平台的清晰度不够时更明显。
+		 */
+		video.style.objectFit = 'contain';
 		body.append(video);
 
 		const quality = payload.quality ?? '';

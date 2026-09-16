@@ -557,7 +557,8 @@ iframe 里的文档请求直接被拒（同样是 `net::ERR_BLOCKED_BY_RESPONSE`
 
 1. **斗鱼自己播流**（默认）。`/api/live/stream-url` 在服务端解出一条直链，浏览器用 `mpegts.js`
    把 `<video>` 播起来。**视频字节不过服务器**——接口只回一条 URL，其余流量由访客直连斗鱼 CDN
-   （实测 CDN 给 `Access-Control-Allow-Origin: *`）。画面 `object-fit: cover` 铺满格子，
+   （实测 CDN 给 `Access-Control-Allow-Origin: *`）。画面用 `object-fit: contain` **整幅**铺在格子里：
+   格子不是 16:9 时留黑边，不裁画面（比赛里贴边的血条、比分板不该被切掉）。
    **音量归父页面管**：默认静音，想让哪一格出声就点哪一格左下角的喇叭。代价是每次播放一次
    解析往返（约 1~4 秒）。
 2. **虎牙用官方纯播放器页** `liveshare.huya.com/iframe/{房间号}`（见 `data/site.ts` 的 `embedUrl()`），
