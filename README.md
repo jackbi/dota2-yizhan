@@ -1,4 +1,8 @@
-# DOTA2 驿站
+<p align="center">
+	<img src="public/logo.webp" alt="DOTA2 驿站" width="128" height="128">
+</p>
+
+<h1 align="center">DOTA2 驿站</h1>
 
 面向中文玩家的 DOTA2 门户：OB 开播状态与网页端分屏直播、官方新闻与 Reddit 热帖、社区热帖
 （NGA / 虎扑）、赛事赛程与战报、版本更新日志、英雄与装备资料，外加 Steam 登录的个人战绩，
