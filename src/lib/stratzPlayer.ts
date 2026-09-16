@@ -1,5 +1,6 @@
-import { STRATZ_TOKEN } from 'astro:env/server';
+import { STRATZ_RELAY_TOKEN, STRATZ_RELAY_URL, STRATZ_TOKEN } from 'astro:env/server';
 import { cached, pace } from './ssrCache';
+import { resolveStratzEndpoint } from './stratzEndpoint';
 
 /**
  * 运行时（SSR）个人战绩数据层。
@@ -15,17 +16,22 @@ import { cached, pace } from './ssrCache';
  * 间隔在这种「一页几十场」的场景下不可接受。
  *
  * 鉴权用站点自己的 `STRATZ_TOKEN`（不需要用户授权）：读的是公开比赛数据，
- * 用户身份来自 Steam OpenID，两者互不相干。
+ * 用户身份来自 Steam OpenID，两者互不相干。这个 token 绑 IP，而 Workers 的边缘出口会漂，
+ * 所以生产上多半要配 `STRATZ_RELAY_URL` 走固定出口的中转（见 `stratzEndpoint.ts`）。
  */
 
-const API = 'https://api.stratz.com/graphql';
-/** 与构建期一致：Cloudflare 只放行官方文档指定的这个 UA，改了会随机被挑战页拦。 */
-const USER_AGENT = 'STRATZ_API';
-
-const TOKEN = (STRATZ_TOKEN ?? '').trim();
+/**
+ * 直连官方，或走固定出口的中转——**为什么需要中转**写在 `stratzEndpoint.ts` 的注释里。
+ * 这里只负责把两个来源拼起来：命中中转时，本进程手里根本没有 STRATZ token。
+ */
+const ENDPOINT = resolveStratzEndpoint({
+	relayUrl: STRATZ_RELAY_URL,
+	relayToken: STRATZ_RELAY_TOKEN,
+	token: STRATZ_TOKEN,
+});
 
 export function stratzPlayerConfigured(): boolean {
-	return TOKEN.length > 0;
+	return ENDPOINT.mode !== 'none';
 }
 
 /** 上游故障时抛错，调用方据此区分「取不到」与「此人没有数据」。 */
@@ -41,23 +47,20 @@ interface GraphQLBody<T> {
  * 重试耗尽后抛错——**不返回 null**，免得把上游故障当成「这个玩家不存在」缓存起来。
  */
 async function gql<T>(document: string, variables: Record<string, unknown>): Promise<T> {
-	// 没配 token 是「没开这个功能」，与请求失败不是一回事，交给调用方按未配置处理。
-	if (!TOKEN) throw new StratzError('未配置 STRATZ_TOKEN');
+	// 没配 token 也没配中转是「没开这个功能」，与请求失败不是一回事，交给调用方按未配置处理。
+	if (ENDPOINT.mode === 'none') {
+		throw new StratzError(ENDPOINT.problem ?? '未配置 STRATZ_TOKEN');
+	}
 
 	let lastError = '请求失败';
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
 		await pace();
 		try {
-			const res = await fetch(API, {
+			const res = await fetch(ENDPOINT.url, {
 				method: 'POST',
 				signal: AbortSignal.timeout(20_000),
-				headers: {
-					'Content-Type': 'application/json',
-					Accept: 'application/json',
-					'User-Agent': USER_AGENT,
-					Authorization: `Bearer ${TOKEN}`,
-				},
+				headers: ENDPOINT.headers,
 				body: JSON.stringify({ query: document, variables }),
 			});
 			// 429 与 5xx 值得重试；403 要读完 body 才能分辨原因（见下）。
@@ -78,6 +81,10 @@ async function gql<T>(document: string, variables: Record<string, unknown>): Pro
 				// 不能统一说成挑战页——否则 token 失效这类硬失败会被描述成「稍后再试」。
 				lastError = (res.headers.get('content-type') ?? '').includes('text/html') ? 'Cloudflare 挑战页' : `HTTP ${res.status}`;
 				continue;
+			}
+			// 中转这一层自己拒绝：说明两边口令不一致，跟 STRATZ 无关，重试也没用。
+			if (res.status === 401 && ENDPOINT.mode === 'relay') {
+				throw new StratzError('STRATZ 中转拒绝了这次请求：STRATZ_RELAY_TOKEN 与中转机器上的 RELAY_TOKEN 不一致');
 			}
 			if (!res.ok) throw new StratzError(`STRATZ 返回 HTTP ${res.status}`);
 			const body = (await res.json()) as GraphQLBody<T>;

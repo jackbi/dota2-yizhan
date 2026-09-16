@@ -300,6 +300,12 @@ export default defineConfig({
 		schema: {
 			/** 与构建期共用：SSR 取个人战绩时也要用它。 */
 			STRATZ_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
+			/**
+			 * 固定出口中转（`scripts/stratz-relay.mjs`）的地址与口令，两个都配才会生效。
+			 * 配了就一律走中转：token 绑 IP，而 Workers 的边缘出口会漂。
+			 */
+			STRATZ_RELAY_URL: envField.string({ context: 'server', access: 'public', optional: true }),
+			STRATZ_RELAY_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
 			/** 给会话 Cookie 签名。没配时登录直接报错，不会退化成一个可伪造的默认密钥。 */
 			SESSION_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
 			/**

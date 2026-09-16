@@ -145,6 +145,86 @@ wrangler 上传资产走 `check-missing`，没变的文件不会重传。
   里实测是 `Network connection lost.`（本机直连斗鱼会被重置，平时靠 `LIVE_PROXY` 走代理）。
   这条只在部署后能验；解析不到只会退回取景兜底，不会白屏。
 
+## STRATZ 走固定出口中转
+
+STRATZ 的 token **绑定调用方 IP**，换了出口就 403（纯文本 `You cannot use different IP
+Addresses when using the API.`）。而站点的两条取数路径都没有稳定出口：运行时的个人战绩跑在
+Workers 上，边缘出口按 colo 漂；构建期跑在开发机上，平时挂着代理，代理组一自动选节点出口就变。
+
+所以 token 交给一台**出口固定**的机器（你自己的服务器）持有，其它地方只带一个中转口令跟它说话。
+中转本体是 `scripts/stratz-relay.mjs`，没有任何依赖，只用 `node:http` 和一个 `fetch`。
+
+### 服务器上：跑起中转
+
+```sh
+# 1) 密钥文件（只有这台机器需要真正的 token）
+openssl rand -hex 32          # 生成 RELAY_TOKEN，记下来，客户端也要填这个
+sudo tee /etc/stratz-relay.env >/dev/null <<'EOF'
+STRATZ_TOKEN=<stratz.com/api 新生成的 token>
+RELAY_TOKEN=<上面那串>
+EOF
+sudo chmod 600 /etc/stratz-relay.env
+
+# 2) 直接跑一下（确认能启动；HOST 默认只监听 127.0.0.1，外面交给反代）
+node /srv/dota2-news/scripts/stratz-relay.mjs
+```
+
+交给 systemd：
+
+```ini
+# /etc/systemd/system/stratz-relay.service
+[Unit]
+Description=STRATZ 固定出口中转
+After=network-online.target
+
+[Service]
+WorkingDirectory=/srv/dota2-news
+EnvironmentFile=/etc/stratz-relay.env
+Environment=HOST=127.0.0.1
+Environment=PORT=8788
+ExecStart=/usr/bin/node scripts/stratz-relay.mjs
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+再给反代加一个前缀（nginx 为例；TLS 证书照你现有站点的做法挂上）：
+
+```nginx
+location /stratz/ {
+    proxy_pass http://127.0.0.1:8788/;
+    proxy_set_header Host $host;
+    client_max_body_size 256k;
+}
+```
+
+**绑定 token**——这是整件事的目的，新 token 的第一次调用要从中转发出去：
+
+```sh
+curl -s http://127.0.0.1:8788/probe -H "x-relay-token: $RELAY_TOKEN"
+# {"status":200,...}  → 绑定成功，STRATZ 认的就是这台机器的出口 IP
+# {"status":403,...}  → token 已经绑在别处了，去 stratz.com 重新生成一个再来
+```
+
+`GET /healthz` 不需要口令（监控用），`POST /graphql` 与 `GET /probe` 都要
+`x-relay-token`，body 上限 256 KB，只认这两个路径——它不是一个通用代理。
+
+### 客户端：两边都改成走中转
+
+| 位置 | 要配的东西 |
+| --- | --- |
+| Worker | `wrangler.jsonc` 的 `vars` 里加 `STRATZ_RELAY_URL`（`https://<你的域名>/stratz/graphql`），再 `pnpm exec wrangler secret put STRATZ_RELAY_TOKEN` |
+| 本机构建 | `.env` 里加同样的两条（`STRATZ_RELAY_URL` + `STRATZ_RELAY_TOKEN`） |
+
+两个都配才生效，**配了就一律走中转**；只配一半时按「没开这个功能」处理并把原因写进日志，不会
+偷偷退回直连（那样你以为走的是固定出口，其实没有）。这条分支有 `scripts/stratzEndpoint.check.ts`
+盯着，改动时 `pnpm check` 会拦住。
+
+走中转之后，`STRATZ_TOKEN` 就不该再出现在 Worker 与本机的环境变量里——那份 token 只属于服务器。
+Runtime 侧遇到中转自己回的 401（两边口令不一致）会直接说清楚，不会含糊成「HTTP 401」。
+
 ## 部署与重建频率
 
 内容页都是构建期抓取 + 预渲染，所以**内容的新鲜度 = 你多久重建一次**。`.cache/` 的 TTL

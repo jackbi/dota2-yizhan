@@ -72,6 +72,7 @@ node --env-file=.env dist/server/entry.mjs   # 监听 PORT / HOST，默认 4321
 | `SESSION_SECRET` ★ | 登录必需 | 会话 Cookie 的签名密钥，随便一串足够长的随机值即可（`openssl rand -hex 32`）。**不配置时登录直接报错，不会退回默认密钥** |
 | `SITE_URL` ★ | 建议 | 站点对外地址（如 `https://example.com`），用于拼 Steam OpenID 的 `realm` / `return_to`。不配时按请求的 Host 推断，本地开发无需配置；生产挂在反向代理后面时建议显式配上 |
 | `STRATZ_TOKEN` | 否 | [stratz.com/api](https://stratz.com/api) 生成。构建期用于取 BP/选手明细与近一周英雄数据；运行时用于个人战绩，以及开黑房间里按手填 Steam ID 查昵称头像。**该 token 绑定调用方 IP**，换 IP 会 403。缺失时构建期回落到 OpenDota（更慢）或整块不展示，个人战绩页与 Steam ID 查询提示「未启用」 |
+| `STRATZ_RELAY_URL` / `STRATZ_RELAY_TOKEN` | 否 | **推荐用它代替 `STRATZ_TOKEN`**：token 绑 IP 而 Cloudflare 的边缘出口会漂，所以把 token 交给一台出口固定的机器（`scripts/stratz-relay.mjs`），两边只带口令。两个都配才生效，配了就走中转。步骤见 [构建、缓存与部署](./docs/deploy.md#stratz-走固定出口中转) |
 | `YOUDAO_COOKIE` | 否 | 覆盖有道翻译的默认访客 cookie |
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |

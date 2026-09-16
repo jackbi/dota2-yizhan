@@ -2,6 +2,7 @@ import path from 'node:path';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
 import { createPace } from './pace';
+import { resolveStratzEndpoint } from './stratzEndpoint';
 
 /**
  * STRATZ 数据层（api.stratz.com/graphql）。
@@ -19,23 +20,27 @@ import { createPace } from './pace';
  *
  * 请求头：接口前面挂着 Cloudflare，只对 `User-Agent: STRATZ_API`（官方文档指定的值）
  * 放行。实测浏览器 UA 与不带 UA 一律返回 "Just a moment..." 挑战页（HTTP 403），
- * 自造的应用名时好时坏——所以这里的 UA 不能改。
+ * 自造的应用名时好时坏——所以这个 UA 由 `stratzEndpoint.ts` 固定带上，不能改。
  */
 
-const API = 'https://api.stratz.com/graphql';
-/**
- * 必须原样使用官方指定的 `STRATZ_API`：换成应用名或浏览器 UA 会被 Cloudflare 拦，
- * 而且失败是随机的，症状表现为"英雄数据偶尔整块消失"。
- */
-const USER_AGENT = 'STRATZ_API';
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'stratz');
 /** 离线构建只读缓存，不联网。 */
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
-const TOKEN = (process.env.STRATZ_TOKEN ?? '').trim();
+
+/**
+ * 直连官方，或走固定出口的中转——为什么需要中转写在 `stratzEndpoint.ts` 的注释里。
+ * 构建机平时挂着代理，出口跟着代理组漂，所以这里的 token 与运行时的 token 最好都从中转走，
+ * 只在确实有固定出口的机器上才直接用 `STRATZ_TOKEN`。
+ */
+const ENDPOINT = resolveStratzEndpoint({
+	relayUrl: process.env.STRATZ_RELAY_URL,
+	relayToken: process.env.STRATZ_RELAY_TOKEN,
+	token: process.env.STRATZ_TOKEN,
+});
 
 /** 配了 token 才算"该有数据"：没有 token 时英雄区块是有意不展示，不是故障。 */
 export function stratzConfigured(): boolean {
-	return TOKEN.length > 0;
+	return ENDPOINT.mode !== 'none';
 }
 
 /** 已结束的比赛与历史统计不会变，只有英雄数据需要定期刷新。 */
@@ -71,22 +76,17 @@ export function stratzFetchCount(): number {
 
 /** 查询失败返回 null：对构建来说"这个区块没有数据"永远是可接受的降级。 */
 async function query<T>(document: string, variables: Record<string, unknown>): Promise<T | null> {
-	if (OFFLINE || !TOKEN) return null;
+	if (OFFLINE || ENDPOINT.mode === 'none') return null;
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		if (attempt > 0) await sleep(500 * attempt);
 		await pace();
 		const controller = new AbortController();
 		const timer = setTimeout(() => controller.abort(), 20_000);
 		try {
-			const res = await fetch(API, {
+			const res = await fetch(ENDPOINT.url, {
 				method: 'POST',
 				signal: controller.signal,
-				headers: {
-					'Content-Type': 'application/json',
-					Accept: 'application/json',
-					'User-Agent': USER_AGENT,
-					Authorization: `Bearer ${TOKEN}`,
-				},
+				headers: ENDPOINT.headers,
 				body: JSON.stringify({ query: document, variables }),
 			});
 			// 429、5xx，以及 Cloudflare 的挑战页都值得重试；挑战页是随机的，
@@ -454,7 +454,7 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 				'stratz-hero',
 				'STRATZ 英雄数据',
 				'empty',
-				TOKEN ? '请求未拿到数据（限流、挑战页或接口异常）' : '未配置 STRATZ_TOKEN',
+				ENDPOINT.mode !== 'none' ? '请求未拿到数据（限流、挑战页或接口异常）' : '未配置 STRATZ_TOKEN / STRATZ_RELAY_URL',
 			);
 			return null;
 		}
