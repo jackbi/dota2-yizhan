@@ -78,10 +78,24 @@ function cacheFile(url: string): string {
 /** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
 let networkFetches = 0;
 
+/**
+ * 正文缓存是不是一份完整的页面。
+ *
+ * 判据只有两条：**长度够**、**结尾是 `</html>`**（实测抓下来的正文 14~41 KB，都以此收尾）。
+ * 这是给「写入被打断留下的半截文件」兜底的：正文的 TTL 是「永久」（见 `ARTICLE_TTL_SECONDS`），
+ * 半截内容一旦被当成新鲜命中就再也不会重抓，所以宁可当没命中重抓一次。
+ *
+ * 它**不是**正文正确性的判据——上游换成一张错误页时，两条都过得去。那种情况靠 `networkFetches`
+ * 与构建汇总里的抓取次数看出来。
+ */
+function isCompleteHtml(text: string): boolean {
+	return text.length > 2000 && text.trimEnd().endsWith('</html>');
+}
+
 /** 抓取官方页面并落盘；命中新鲜缓存就直接返回，失败时退回过期缓存。 */
 async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null> {
 	const file = cacheFile(url);
-	const cached = await readCacheText(file);
+	const cached = await readCacheText(file, isCompleteHtml);
 	if (cached && cached.ageMs < ttlSeconds * 1000) return cached.text;
 
 	let fresh: string | null = null;

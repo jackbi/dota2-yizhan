@@ -35,11 +35,19 @@ export async function readCacheJson<T>(
 	}
 }
 
-/** 读一个文本缓存（HTML 等），连带它的年龄。 */
-export async function readCacheText(file: string): Promise<{ text: string; ageMs: number } | null> {
+/**
+ * 读一个文本缓存（HTML 等），连带它的年龄。
+ * 文件不存在、或 `validate` 不通过，都算没命中。
+ */
+export async function readCacheText(
+	file: string,
+	validate?: (text: string) => boolean,
+): Promise<{ text: string; ageMs: number } | null> {
 	try {
 		const stat = await fs.stat(file);
-		return { text: await fs.readFile(file, 'utf8'), ageMs: Date.now() - stat.mtimeMs };
+		const text = await fs.readFile(file, 'utf8');
+		if (validate && !validate(text)) return null;
+		return { text, ageMs: Date.now() - stat.mtimeMs };
 	} catch {
 		return null;
 	}
@@ -67,17 +75,40 @@ export async function readRawJson<T>(file: string): Promise<T | null> {
 
 /**
  * 写缓存。失败只吞掉——缓存写不进去不该让构建挂掉（原先只有一半的调用点这么做）。
+ *
+ * **先写临时文件，再 `rename` 换上去**：`writeFile` 是「先截断再写」，而 Astro 会并行开多个
+ * 渲染进程、它们同时读写同一个 `.cache/`（见 `localImages.ts` 的多进程说明），中间态会被读到。
+ * JSON 读坏只算没命中，但文本缓存不是——新闻正文那份缓存的 TTL 是「永久」，半截 HTML 一旦被
+ * 当成新鲜命中就再也不会重抓。同目录的 `rename` 是原子的：读者看到的要么是旧内容、要么是新内容。
+ *
+ * 临时文件名带 pid 与序号：多进程、以及同进程内的并发写，都不能互相踩掉对方的临时文件。
  */
+let writeSeq = 0;
+
 export async function writeCacheFile(file: string, data: string): Promise<void> {
+	const temp = `${file}.${process.pid}.${writeSeq++}.tmp`;
 	try {
 		await fs.mkdir(path.dirname(file), { recursive: true });
-		await fs.writeFile(file, data, 'utf8');
+		await fs.writeFile(temp, data, 'utf8');
+		await fs.rename(temp, file);
 	} catch {
-		// 缓存写不进去不影响构建。
+		// 缓存写不进去不影响构建；顺手把可能留下的临时文件清掉（清不掉也没人读它）。
+		try {
+			await fs.rm(temp, { force: true });
+		} catch {
+			// 同上。
+		}
 	}
 }
 
-/** 年龄是否还在 TTL 内。 */
+/**
+ * 年龄是否还在 TTL 内。
+ *
+ * 年龄来自文件 `mtime`，有两个要知道的性质：`mtimeMs` 的精度比 `Date.now()` 高，刚写完的文件
+ * 可能算出 -0.3ms 这种极小负数（照样算新鲜，无所谓）；而时钟回拨、或把 `.cache/` 从时钟更快的
+ * 机器上恢复过来，会让文件**永远新鲜**。要挡住后一种，得让缓存自己记下写入时刻——`opendota` 与
+ * `liquipedia` 用的就是那种写法（内容里存 `at`），这里的几个来源没那个必要。
+ */
 export function isFresh(ageMs: number, ttlSeconds: number): boolean {
 	return ageMs < ttlSeconds * 1000;
 }
