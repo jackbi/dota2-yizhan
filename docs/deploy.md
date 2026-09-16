@@ -211,6 +211,54 @@ curl -s http://127.0.0.1:8788/probe -H "x-relay-token: $RELAY_TOKEN"
 `GET /healthz` 不需要口令（监控用），`POST /graphql` 与 `GET /probe` 都要
 `x-relay-token`，body 上限 256 KB，只认这两个路径——它不是一个通用代理。
 
+### 没有 Node？用 nginx 直接中转
+
+中转不必是一个常驻进程：nginx 自己就能补上那个 `Authorization` 头，把这台机器变成固定出口。
+实测部署的那台 OpenCloudOS 9 上根本没装 Node，直接走的这条路。密钥单独放一个 600 的文件、
+由 location `include` 进来，别混进主配置：
+
+```nginx
+# /etc/nginx/stratz-relay-secrets.conf（chmod 600，只有 nginx master 读得到）
+set $stratz_relay_token "<RELAY_TOKEN>";
+set $stratz_upstream_auth "Bearer <STRATZ_TOKEN>";
+```
+
+```nginx
+location = /stratz/graphql {
+  include /etc/nginx/stratz-relay-secrets.conf;
+  if ($http_x_relay_token != $stratz_relay_token) { return 401; }
+  limit_except POST { deny all; }
+  client_max_body_size 256k;
+
+  proxy_pass https://api.stratz.com/graphql;
+  proxy_ssl_server_name on;                  # 少了这句 SNI 对不上，Cloudflare 直接拒
+  proxy_set_header Host api.stratz.com;
+  proxy_set_header User-Agent STRATZ_API;    # STRATZ 只放行这个 UA
+  proxy_set_header Accept application/json;
+  proxy_set_header Content-Type application/json;
+  proxy_set_header Authorization $stratz_upstream_auth;
+  proxy_pass_request_headers off;            # 调用方自己的头一律不带上去
+  proxy_http_version 1.1;
+  proxy_connect_timeout 10s;
+  proxy_read_timeout 30s;
+}
+
+# 监控用，不需要口令
+location = /stratz/healthz { return 200 "ok\n"; }
+```
+
+改完 `nginx -t && nginx -s reload`。上游域名是在启动/重载时解析的，STRATZ 换了 IP 要再 reload 一次。
+
+绑定与验证（和 Node 版等价，只是没有 `/probe`，直接打一条最小查询）：
+
+```sh
+curl -s -X POST https://<你的域名>/stratz/graphql \
+  -H "x-relay-token: $RELAY_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"query":"{ __typename }"}'
+# {"data":{"__typename":"DotaQuery"}}       → 绑定成功
+# You cannot use different IP Addresses…   → token 已绑在别处，去 stratz.com 重新生成
+```
+
 ### 客户端：两边都改成走中转
 
 | 位置 | 要配的东西 |

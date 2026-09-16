@@ -18,9 +18,11 @@
    * 所以这里写的是 Astro 的 outDir，不是它最终读的那个目录。
    */
   "assets": { "binding": "ASSETS", "directory": "./dist" },
-  "vars": {
-    // 换成真实域名。Steam 登录的 realm / return_to 由它拼出来，配错会在回调那一步失败。
-    "SITE_URL": "https://dota2.hiwenbin.com",
-  },
+	"vars": {
+		// 换成真实域名。Steam 登录的 realm / return_to 由它拼出来，配错会在回调那一步失败。
+		"SITE_URL": "https://dota2.hiwenbin.com",
+		// STRATZ 固定出口中转（新加坡那台机器上的 nginx）。口令走 `wrangler secret put STRATZ_RELAY_TOKEN`。
+		"STRATZ_RELAY_URL": "https://proxy3000.hiwenbin.com/stratz/graphql",
+	},
   "observability": { "enabled": true },
 }
