@@ -1,0 +1,26 @@
+{
+	// Worker 名。适配器默认取 package.json 的 name，这里显式写一份，改包名时别忘了一起改。
+	"name": "dota2-yizhan",
+	"compatibility_date": "2026-09-16",
+	/*
+	 * 跑分屏页那条 `/api/live/stream-url` 时会向斗鱼发请求，这个 flag 保证全局 fetch 只打公网
+	 * （挡掉指向内网/本机的地址）。SSR 侧只用 Web 标准 API，不需要 nodejs_compat。
+	 */
+	"compatibility_flags": ["global_fetch_strictly_public"],
+	/*
+	 * `main` 必须写这个包名，**不能写构建产物路径**：Cloudflare 的 Vite 插件在配置阶段就要求
+	 * `main` 指向一个已存在的文件，写 `dist/server/entry.mjs` 会直接以
+	 * "doesn't point to an existing file" 中止构建。真正的产物布局由适配器接管。
+	 */
+	"main": "@astrojs/cloudflare/entrypoints/server",
+	/*
+	 * 静态资源就是构建产物。构建结束时适配器会把这里改写成 `../client`（相对 `dist/server/`），
+	 * 所以这里写的是 Astro 的 outDir，不是它最终读的那个目录。
+	 */
+	"assets": { "binding": "ASSETS", "directory": "./dist" },
+	"vars": {
+		// 换成真实域名。Steam 登录的 realm / return_to 由它拼出来，配错会在回调那一步失败。
+		"SITE_URL": "https://example.com"
+	},
+	"observability": { "enabled": true }
+}

@@ -11,6 +11,10 @@ dist-next.lock/
 # generated types
 .astro/
 
+# Cloudflare：构建时生成的部署配置与本地状态；.dev.vars 里放的是开发用密钥
+.wrangler/
+.dev.vars
+
 # dependencies
 node_modules/
 

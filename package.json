@@ -10,6 +10,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "rebuild": "sh scripts/rebuild.sh",
+    "deploy": "DEPLOY_TARGET=cloudflare astro build && wrangler deploy",
     "fonts": "node scripts/fonts.mjs",
     "check": "node --experimental-strip-types scripts/md5.check.ts && node --experimental-strip-types scripts/danmaku.check.ts && node --experimental-strip-types scripts/buildCache.check.ts && node --experimental-strip-types scripts/cachePrune.check.ts && node --experimental-strip-types scripts/fonts.check.ts && node --experimental-strip-types scripts/patchNotes.check.ts && node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/lobbyRoom.check.ts && node --experimental-strip-types scripts/partyVisibility.check.ts && node --experimental-strip-types scripts/partyDrag.check.ts",
     "astro": "astro"
@@ -27,6 +28,8 @@
     "esbuild": true
   },
   "devDependencies": {
-    "@types/node": "^22.20.2"
+    "@astrojs/cloudflare": "^14.3.1",
+    "@types/node": "^22.20.2",
+    "wrangler": "^4.131.2"
   }
 }

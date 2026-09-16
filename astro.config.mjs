@@ -3,6 +3,7 @@ import { existsSync, promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, envField } from 'astro/config';
+import cloudflare from '@astrojs/cloudflare';
 import node from '@astrojs/node';
 import tailwindcss from '@tailwindcss/vite';
 import { CACHE_KEEP_DAYS, pruneCacheDirs } from './src/lib/cachePrune.ts';
@@ -261,11 +262,35 @@ export default defineConfig({
 	 * 部署与性能跟以前一样。适配器只是为了那几条 `export const prerender = false`
 	 * 的路由：Steam 登录必须在服务端接收 OpenID 回调并向 Steam 反查断言，纯静态做不到。
 	 *
-	 * 换平台只动这一处：装 @astrojs/{vercel,netlify,cloudflare} 并把下面的 node(...) 换掉。
+	 * 两个适配器都装着，用 `DEPLOY_TARGET` 选：默认 Node（本地 dev 与自托管），
+	 * `DEPLOY_TARGET=cloudflare` 出 Workers 产物（步骤见 README「发布到 Cloudflare Workers」）。
 	 * 前提是 SSR 侧代码只用 Web 标准 API（见 src/lib/session.ts 与 src/lib/stratzPlayer.ts
 	 * 的说明），不碰 node:fs / node:crypto——否则上 Workers 就得重写。
 	 */
-	adapter: node({ mode: 'standalone' }),
+	adapter:
+		process.env.DEPLOY_TARGET === 'cloudflare'
+			? cloudflare({
+					/*
+					 * 预渲染（也就是所有内容页）必须留在 Node 进程里跑。这些页面在构建期要抓斗鱼、
+					 * 虎牙、NGA、Reddit，本机直连会被重置、得靠 HTTP_PROXY 走代理；而 workerd 里的
+					 * `fetch` 不认代理环境变量——实测默认值（workerd）下构建到 `/live` 直接
+					 * `TypeError: fetch failed`，改回 node 后 14 个数据源全部正常。
+					 */
+					prerenderEnvironment: 'node',
+					/*
+					 * 站点不用 Astro 的图片服务：图片是构建期自己下载、由 `astro:build:done`
+					 * 发布到 `/avatars` 等目录的静态文件（见 src/lib/localImages.ts）。
+					 */
+					imageService: 'passthrough',
+				})
+			: node({ mode: 'standalone' }),
+
+	/*
+	 * 会话是我们自己签名的 Cookie（src/lib/session.ts），没用 Astro 的 sessions。
+	 * 关掉之后 Cloudflare 适配器不会再自动 provisioning 一个 KV 命名空间——
+	 * 生成的 `dist/server/wrangler.json` 里 `kv_namespaces` 从 `[{binding:"SESSION"}]` 变空。
+	 */
+	session: false,
 
 	/*
 	 * 用 `astro:env` 而不是直接读 `process.env`：Node 下两者等价，但换到

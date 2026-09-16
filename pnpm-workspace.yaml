@@ -1,3 +1,5 @@
 allowBuilds:
   esbuild: true
   sharp: true
+  # @astrojs/cloudflare 靠 workerd 跑预渲染与本地 dev，它的 postinstall 要下二进制。
+  workerd: true
