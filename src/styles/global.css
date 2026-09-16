@@ -49,6 +49,23 @@ html {
 
 body {
 	@apply bg-ink text-cream font-body antialiased;
+}
+
+/*
+ * 背景的两组径向渐变与网格线挂在 fixed 伪元素上，而不是写在 `body` 上再配
+ * `background-attachment: fixed`。
+ *
+ * 画面一样是「背景固定、内容滚动」，但移动端浏览器对 `background-attachment: fixed`
+ * 走不了合成层，滚动时每帧都要重绘整页背景——这几层几乎看不见（网格线只有 1.5% 白），
+ * 代价却是持续的。换成 fixed 定位的伪元素后它就是一个普通的合成层，只画一次。
+ * `z-index: -1` 让它待在内容后面：body 的背景色已经铺在画布上，这几层盖在它上面。
+ */
+body::before {
+	content: '';
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	pointer-events: none;
 	background-image:
 		radial-gradient(60rem 40rem at 80% -10%, rgb(198 82 44 / 0.14), transparent 60%),
 		radial-gradient(50rem 34rem at 0% 0%, rgb(140 76 35 / 0.12), transparent 55%),
@@ -59,7 +76,6 @@ body {
 		100% 100%,
 		64px 64px,
 		64px 64px;
-	background-attachment: fixed;
 }
 
 ::selection {
