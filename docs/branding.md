@@ -26,6 +26,11 @@ Google Fonts」——这三件事坏掉时页面不会报错，只会静默回�
 `unicode-range` 是省流量的关键：中文走 PingFang SC / 微软雅黑，这两个拉丁字体只在页面真的
 出现拉丁字符时才下载对应的那一片（19 个分片共 133 KB，一个页面通常只取 1～5 个）。
 
+**字体的许可证不放 `public/fonts/`。** 两个家族都是 SIL OFL 1.1，要求再分发时随附许可证，
+所以它们放在 `public/licenses/OFL-RussoOne.txt` 与 `OFL-ChakraPetch.txt`（`public/` 会原样
+进发布产物，跟字体一起发出去）。放 `public/fonts/` 会坏两件事：`fonts.check.ts` 要求那个目录里
+每个文件都被 CSS 引用，而 `pnpm fonts` 会把不认识的旧文件清掉——许可证会被脚本删掉。
+
 ## 主题色板
 
 颜色定义在 `src/styles/global.css` 的 `@theme` 里，是一条约定的「余烬」梯度：

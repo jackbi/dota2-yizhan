@@ -103,6 +103,20 @@ NGA / 虎扑 / Reddit（社区）、Liquipedia（赛程）、斗鱼 / 虎牙 / B
 [API 条款](https://liquipedia.net/api-terms-of-use)使用：带能识别调用方的 User-Agent、
 控制请求频率、署名并回链。**改动这块时请一并保留页面上的署名与外链。**
 
+## 授权
+
+代码按 [Apache License 2.0](./LICENSE) 授权，Copyright 2026 jackbi。随附的第三方素材与数据
+各自遵守自己的条款，清单在 [NOTICE](./NOTICE) 里，其中三点容易误会，单独说明：
+
+- **自托管字体**是 SIL OFL 1.1（Russo One、Chakra Petch），许可证全文随站点一起发布在
+  `public/licenses/`，再分发时请与字体一并保留；
+- **站名与 logo 不在授权范围内**：「DOTA2 驿站」、`src/assets/logo.png` 与
+  `public/hero-filters/universal.png` 属于品牌与游戏素材，DOTA2 及相关素材的版权与商标归 Valve，
+  本站是非官方粉丝项目，与 Valve 没有隶属或背书关系；
+- **聚合展示的第三方内容**（社区帖子、直播画面、视频）版权归原平台与作者，本站只做展示与外链。
+
+想自建一个同样的站点，代码可以直接拿去用，但请换掉站名与 logo，并保留页面上对 Liquipedia 的署名。
+
 ## 提交规范
 
 见 `AGENTS.md`。

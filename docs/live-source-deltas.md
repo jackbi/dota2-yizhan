@@ -4,6 +4,11 @@
 做的一次源码核对，以及它和本仓库直播接入（`src/lib/liveStream.ts`、`src/lib/liveApi.ts`、
 `src/scripts/liveWall.ts`）的差异。**每条结论都指向具体文件**，没有凭印象的推断。
 
+这是一篇**对照阅读笔记，不是代码来源**：本仓库没有搬运它的代码。斗鱼那条签名链是按 streamlink
+现在的实现思路自己写的（streamlink 是 BSD-2-Clause），而 dart_simple_live 走的是另一条路
+（跑平台 JS 的 `homeH5Enc` + QuickJS）。它自己是 **GPL-3.0**——将来若要抄它的代码，得连同
+GPL 一起接受，不能只挂 Apache-2.0。
+
 ## 0. 一句话结论
 
 它不是「接入方式更聪明」，而是**形态不同**：解析请求和播放请求都不经过浏览器，所以斗鱼的
