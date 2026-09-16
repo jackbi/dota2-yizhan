@@ -40,5 +40,8 @@ __pycache__/
 
 # 本地工具产物：编辑器插件设置、浏览器自动化（截图 / 快照）留下的目录。
 # 这些是个人环境的东西，不进仓库，也别一直挂在 git status 里。
-.vscode/settings.json
+.vscode/
+.agents/
+# 代码索引（codegraph）：本地生成的，换台机器重新索引即可。
+.codegraph/
 .playwright-mcp/
