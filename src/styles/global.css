@@ -173,17 +173,17 @@ body {
 	color: var(--color-cream);
 	font-weight: 600;
 }
-.nga-post,
+.nga-post del,
 .hupu-post del {
 	color: var(--color-faint);
 }
-.nga-post,
+.nga-post a,
 .hupu-post a {
 	color: var(--color-dota-light);
 	text-decoration: underline;
 	text-underline-offset: 2px;
 }
-.nga-post,
+.nga-post img,
 .hupu-post img {
 	max-width: 100%;
 	height: auto;
@@ -191,7 +191,7 @@ body {
 	border: 1px solid var(--color-line);
 	margin: 0.5rem 0;
 }
-.nga-post,
+.nga-post blockquote,
 .hupu-post blockquote {
 	background: var(--color-surface-2);
 	border-left: 3px solid var(--color-line);
