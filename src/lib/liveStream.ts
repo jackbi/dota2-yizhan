@@ -43,8 +43,19 @@ import { md5Hex } from './md5';
 const UA =
 	'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
-/** 签名里要带的设备号。streamlink 每次进程起一个随机的，这里照做。 */
-const DID = randomDid();
+/**
+ * 签名里要带的设备号。streamlink 每次进程起一个随机的，这里照做。
+ *
+ * **必须懒算，不能写成 `const DID = randomDid()`**：Cloudflare Workers 禁止在全局作用域里
+ * 生成随机数、起定时器、发请求，模块顶层算一次会让整个 `/api/live/stream-url` 在 workerd 上
+ * 直接 `Disallowed operation called within global scope` 报 500（Node 上则完全看不出来）。
+ * 挪进函数后，第一次解析房间时才生成，进程内复用。
+ */
+let did: string | null = null;
+function deviceId(): string {
+	did ??= randomDid();
+	return did;
+}
 
 function randomDid(): string {
 	const bytes = new Uint8Array(16);
@@ -147,7 +158,7 @@ export async function resolveDouyu(
 	}
 
 	const enc = await getJson(
-		`https://www.douyu.com/wgapi/livenc/liveweb/websec/getEncryption?did=${DID}`,
+		`https://www.douyu.com/wgapi/livenc/liveweb/websec/getEncryption?did=${deviceId()}`,
 		douyuHeaders(roomId),
 	);
 	if (enc.error) {
@@ -172,7 +183,7 @@ export async function resolveDouyu(
 		const body = new URLSearchParams({
 			enc_data: encPayload,
 			tt: String(ts),
-			did: DID,
+			did: deviceId(),
 			auth,
 			cdn,
 			ver,
