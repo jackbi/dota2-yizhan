@@ -177,6 +177,160 @@ body::before {
 	max-width: 100%;
 }
 
+/*
+ * 更新日志（由 `patchNotes.ts` 渲染成 HTML，走 set:html 注入）。
+ *
+ * 结构和官方文章不同：它是一层层的「实体 → 若干行改动」，所以不复用 `.article-content`
+ * 的标题/段落规则。缩进用 `--pn-indent` 变量而不是按层级写四套 class——
+ * 数据里的 `indent_level` 是 1..4，写死 class 就得四份几乎一样的规则。
+ */
+.patch-notes {
+	color: var(--color-cream);
+	overflow-wrap: break-word;
+}
+.patch-notes > .pn-section + .pn-section {
+	margin-top: 2.5rem;
+}
+.patch-notes .pn-heading {
+	font-family: var(--font-display);
+	color: var(--color-gold);
+	font-size: 1.35rem;
+	line-height: 1.4;
+	margin: 0 0 1rem;
+	padding-bottom: 0.5rem;
+	border-bottom: 1px solid var(--color-line);
+}
+.patch-notes .pn-entity {
+	display: flex;
+	gap: 0.75rem;
+	padding: 0.75rem 0;
+	border-top: 1px solid var(--color-line);
+}
+/* 第一行不描边：紧跟分组小标题时那条线会变成多余的分隔感。 */
+.patch-notes .pn-section > .pn-entity:first-of-type {
+	border-top: 0;
+}
+.patch-notes .pn-body {
+	min-width: 0;
+	flex: 1;
+}
+.patch-notes .pn-icon {
+	width: 1.75rem;
+	height: 1.75rem;
+	flex-shrink: 0;
+	border-radius: 0.375rem;
+	border: 1px solid var(--color-line);
+	background: var(--color-surface-2);
+	object-fit: cover;
+}
+.patch-notes .pn-icon-empty {
+	display: block;
+}
+.patch-notes .pn-name {
+	color: var(--color-cream);
+	font-size: 1rem;
+	font-weight: 600;
+	margin-bottom: 0.25rem;
+}
+/* 分组小标题（「技能」「天赋」「先天技能」）与实体名区分开，别抢注意力。 */
+.patch-notes .pn-group {
+	color: var(--color-muted);
+	font-size: 0.75rem;
+	font-weight: 600;
+	letter-spacing: 0.08em;
+	margin: 0.75rem 0 0.25rem;
+}
+.patch-notes .pn-subtitle {
+	color: var(--color-cream);
+	font-size: 0.95rem;
+	font-weight: 600;
+	margin: 0.9rem 0 0.25rem;
+}
+.patch-notes .pn-badge {
+	display: inline-block;
+	margin-right: 0.4rem;
+	padding: 0.05rem 0.4rem;
+	border-radius: 0.25rem;
+	background: color-mix(in srgb, var(--color-dota) 18%, transparent);
+	color: var(--color-dota-light);
+	font-size: 0.7rem;
+	font-weight: 600;
+	vertical-align: 0.05em;
+}
+.patch-notes .pn-lines {
+	margin: 0.15rem 0 0;
+	padding: 0;
+	list-style: none;
+}
+.patch-notes .pn-line {
+	position: relative;
+	color: var(--color-cream);
+	font-size: 0.9rem;
+	line-height: 1.75;
+	/*
+	 * 缩进直接吃数据里的层级：`--pn-indent` 是 0..3（见 patchNotes.ts），
+	 * 子弹点跟着一起右移，层级差一眼能看出来。
+	 */
+	padding-left: calc(0.9rem + var(--pn-indent, 0) * 1.1rem);
+	margin: 0.1rem 0;
+}
+.patch-notes .pn-line::before {
+	content: "";
+	position: absolute;
+	left: calc(var(--pn-indent, 0) * 1.1rem + 0.3rem);
+	top: 0.72em;
+	width: 0.25rem;
+	height: 0.25rem;
+	border-radius: 9999px;
+	background: var(--color-gold-deep);
+}
+.patch-notes .pn-line.pn-nodot {
+	padding-left: calc(var(--pn-indent, 0) * 1.1rem);
+}
+.patch-notes .pn-line.pn-nodot::before {
+	content: none;
+}
+.patch-notes .pn-blank {
+	height: 0.35rem;
+	margin: 0;
+}
+.patch-notes .pn-info {
+	display: block;
+	color: var(--color-faint);
+	font-size: 0.8rem;
+	line-height: 1.6;
+}
+.patch-notes .pn-tag {
+	display: inline-block;
+	margin-right: 0.35rem;
+	padding: 0 0.35rem;
+	border-radius: 0.25rem;
+	border: 1px solid var(--color-line);
+	color: var(--color-gold);
+	font-size: 0.7rem;
+	vertical-align: 0.05em;
+}
+.patch-notes .pn-inline-title,
+.patch-notes .pn-new {
+	color: var(--color-dota-light);
+	font-weight: 600;
+}
+.patch-notes .pn-ability-name {
+	color: var(--color-cream);
+	font-size: 0.85rem;
+	font-weight: 600;
+	margin-top: 0.35rem;
+}
+.patch-notes .pn-anon + .pn-entity {
+	border-top: 1px solid var(--color-line);
+}
+.patch-notes .pn-anon > .pn-group {
+	color: var(--color-gold);
+	font-size: 0.85rem;
+	letter-spacing: 0;
+	margin-top: 1.25rem;
+}
+
 /* 帖子正文（NGA 的 BBCode 渲染结果与虎扑的 HTML 共用一套），由 set:html 注入，规则必须放在全局样式里。 */
 .nga-post,
 .hupu-post {

@@ -73,6 +73,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | 目录 | 内容 | 缓存时长 |
 | --- | --- | --- |
 | `.cache/news/` | dota2.com.cn 官方新闻列表与正文 | 列表 30 分钟，正文永久 |
+| `.cache/patches/` | dota2.com 版本列表、每个版本的更新日志、英雄/物品/技能名字表 | 列表 30 分钟，其余 7 天 |
 | `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与帖子详情 | 列表 30 分钟，帖子 2 小时 – 7 天 |
 | `.cache/reddit/` | r/DotA2 热帖 | 1 小时 |
 | `.cache/opendota/` | 队伍索引、职业比赛、阵容名单 | 6 小时 – 7 天 |
@@ -83,6 +84,8 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
 | `.cache/avatars/` | 主播头像的字节（构建结束拷进 `dist/avatars/`） | 永久，30 天没用到就清理 |
 | `.cache/covers/` | B站视频封面的字节（构建结束拷进 `dist/covers/`） | 永久，30 天没用到就清理 |
+| `.cache/patch-heroes/` | 更新日志里的英雄图标（构建结束拷进 `dist/patch-heroes/`） | 永久，30 天没用到就清理 |
+| `.cache/patch-items/` | 更新日志里的物品图标（构建结束拷进 `dist/patch-items/`） | 永久，30 天没用到就清理 |
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
 | `.cache/health/` | 各数据源本轮的抓取结果 | 每次构建开始时清空 |
 
@@ -106,7 +109,7 @@ B站 / YouTube）、英雄属性色与生命魔法条（`src/lib/heroApi.ts`）�
 ```
 [data-source-report] 数据源（8）：
 [data-source-report]   直播开播状态 — 联网抓取：11 个房间：直播中 5、轮播中 1、未开播 4、房间已关闭 1，联网抓取 11 次
-[data-source-report]   官方更新日志 — 联网抓取：8 条，最新 7.41d（2026-06-05），联网抓取 1 次
+[data-source-report]   官方更新日志 — 联网抓取：118 个版本，最新 7.41f（2026-09-15），联网抓取 1 次
 [data-source-report]   赛事日历 — 联网抓取：7 个赛事，1 场进行中；来源：Liquipedia / OpenDota
 ```
 
@@ -769,6 +772,44 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 对局（「7 分钟 3800」「给我幽鬼，不赢砍手」），再次是本人频道发的切片。**找不到可靠对应视频的
 成员就不凑数**，不拿主题相近的视频硬套。
 
+## 版本数据来自 dota2.com 的 datafeed
+
+`/patches` 与 `/patches/<版本号>` 的数据取自 `https://www.dota2.com/datafeed/`（带上
+`language=schinese`，官方直接给中文），一共四个接口：
+
+| 接口 | 内容 |
+| --- | --- |
+| `patchnoteslist` | 版本列表：`patch_number` + `patch_timestamp`，从 7.08 到最新共 118 个 |
+| `patchnotes?version=<版本>` | 某个版本的改动，按 `general_notes` / `items` / `neutral_items` / `neutral_creeps` / `heroes` 分层 |
+| `herolist` / `itemlist` / `abilitylist` | 名字表：改动里只有 `hero_id` / `ability_id`，名字得回来查 |
+
+### 为什么不再用中文站的「游戏性更新」
+
+原来抓的是 `www.dota2.com.cn/news/gamepost`（和官网新闻同一套模板）。它有两个问题：
+**只发到 7.41d**，再往前就断了；而且给的是排好版的 HTML，正文只能整段塞进页面。
+datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺，而且是结构化的——
+所以现在能按「英雄 → 技能 / 天赋 / 命石」分层排版，也能在列表页按大版本分组。
+
+三个坑记在这里：
+
+- **正文要消毒。** 改动文本里夹着 `<br>`、`<b>`、`<font color='#e03e2e'>`、
+  `<span class="Subtitle">`，这份字符串最后要过 `set:html`，所以 `sanitizeNote()`
+  走白名单：认得出的标签保留（颜色只接受十六进制），认不出的连标签带属性一起丢掉。
+  规则在 `scripts/patchNotes.check.ts` 里逐条钉住了。
+- **7.23「世外之争」和 7.28「林渊秘境」没有正文。** 官方把这两个大版本的日志做成了
+  独立专题站，datafeed 里只有 `patch_website`；页面据此改成一个跳转按钮，
+  而不是渲染空的正文框。列表页对应的小格子上有「专题」角标。
+- **名字表会缺人。** 熊灵（`hero_id: 1961`）占着一个英雄位但没有名字和图标，
+  在 `patchNotes.ts` 里补了别名，图标则退化成占位方块。
+
+### 图标是构建期取回来的
+
+英雄图标（`heroes/icons/<内部名>.png`，4.8KB）与物品图标（`items/<内部名>.png`，12.7KB）
+都在 `cdn.steamstatic.com` 上，国内直连会被重置，所以和头像、封面走同一套本地化流程
+（见「头像与封面：取回来自已发」）：落到 `.cache/patch-heroes/`、`.cache/patch-items/`，
+构建结束拷进 `dist/`。**只下这一页真正用到的图**——8 年下来全部英雄加物品有 400 多张，
+一次下完既慢又没必要。技能图标一张 24KB、760 个，为了配个名字不值当，所以技能只有文字。
+
 ## 环境变量
 
 放在项目根目录的 `.env`（已 gitignore），dev 与 build 都会读取。
@@ -784,7 +825,7 @@ NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），虎扑走 `src
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
-| `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与图片本地化（头像、B站封面）的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
+| `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与图片本地化（头像、B站封面、更新日志图标）的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
 | `IMAGE_DEBUG` | 否 | 图片本地化的调试开关（原名 `AVATAR_DEBUG`，拆出 `localImages.ts` 时一并改名）。设为 `1` 时构建日志里逐个频道打印「发布 N 张 / 新下载 N / 命中缓存 N / 拿不到 N」 |
 | `TOURNAMENTS_OFFLINE` | 否 | 设为 `1` 时完全不联网，只用 `.cache/` 里的数据构建 |
 

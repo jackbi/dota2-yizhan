@@ -1,8 +1,9 @@
 /**
  * 官方站点（dota2.com.cn）文章正文的抽取与清洗。
  *
- * 更新日志与新闻的详情页用的是同一套官方模板，正文都是 <div class="content">，
- * 所以把 HTML 处理集中在这里，避免两处各写一遍正则。
+ * 新闻详情页的正文是 `<div class="content">`，这里把 HTML 处理集中在一处。
+ * 更新日志曾经也走这条路，现在改成了 dota2.com 的结构化 datafeed
+ * （渲染在 `patchNotes.ts` 里），和这套正则无关了。
  */
 
 const SITE_ORIGIN = 'https://www.dota2.com.cn';

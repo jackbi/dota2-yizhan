@@ -27,10 +27,13 @@ try {
 } catch {
 	hotThreads = [];
 }
-/** 最新版本取官方「更新日志」列表的第一条（列表按时间倒序）；取不到就不展示。 */
+/** 最新版本取官方版本列表的第一条（列表按时间倒序）；取不到就不展示。 */
 let latestPatch: import('../lib/patchesApi').PatchUpdate | null = null;
+let patchCount = 0;
 try {
-	latestPatch = (await fetchPatchUpdates(1))[0] ?? null;
+	const patches = await fetchPatchUpdates();
+	latestPatch = patches[0] ?? null;
+	patchCount = patches.length;
 } catch {
 	latestPatch = null;
 }
@@ -53,7 +56,7 @@ const FEATURES = [
 	{ href: '/news', title: '官方新闻', desc: 'DOTA2 官网资讯与赛事动态，正文在站内直接阅读。', icon: 'news' },
 	{ href: '/community', title: '社区热帖', desc: '汇总 NGA 刀塔版块的热帖榜，跟着社区追当前最热的讨论。', icon: 'chat' },
 	{ href: '/tournaments', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
-	{ href: '/patches', title: '版本信息', desc: '跟踪最新版本号、平衡性改动与后续更新前瞻。', icon: 'patch' },
+	{ href: '/patches', title: '版本信息', desc: '从 7.08 到最新的官方更新日志完整存档，改动按英雄与物品分好类。', icon: 'patch' },
 	{ href: '/heroes', title: '英雄与装备', desc: '查阅英雄属性、定位与主流出装思路。', icon: 'sword' },
 ] as const;
 ---
@@ -198,25 +201,17 @@ const FEATURES = [
 					href={`/patches/${latestPatch.id}`}
 					class="group flex items-center gap-5 overflow-hidden rounded-2xl border border-line bg-surface p-6 transition hover:border-dota/50 hover:bg-surface-2"
 				>
-					{latestPatch.img ? (
-						<img
-							src={latestPatch.img}
-							alt=""
-							loading="lazy"
-							referrerpolicy="no-referrer"
-							class="h-24 w-24 shrink-0 rounded-xl border border-line object-cover"
-						/>
-					) : (
-						<span class="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-surface-2 font-display text-lg text-gold">
-							{latestPatch.version}
-						</span>
-					)}
+					<span class="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 px-2 text-center font-display text-lg leading-tight text-gold">
+						{latestPatch.version}
+					</span>
 					<span class="min-w-0 flex-1">
 						<span class="flex flex-wrap items-center gap-2">
-							<span class="font-display text-3xl text-gold">{latestPatch.version || '版本更新'}</span>
+							<span class="font-display text-3xl text-gold">{latestPatch.version}</span>
 							<span class="rounded-md bg-dota/15 px-2 py-0.5 text-xs font-semibold text-dota-light">最新更新日志</span>
 						</span>
-						<span class="mt-1.5 block truncate text-sm text-cream">{latestPatch.title}</span>
+						<span class="mt-1.5 block truncate text-sm text-cream">
+							官方更新日志已收录 {patchCount} 个版本
+						</span>
 						<span class="mt-0.5 block text-xs text-muted">{latestPatch.date} · 来源：DOTA2 官网</span>
 					</span>
 					<svg

@@ -1,57 +1,184 @@
 ---
 import Layout from '../../layouts/Layout.astro';
-import { fetchPatchUpdates, fetchArticle } from '../../lib/patchesApi';
+import {
+	fetchPatchNotes,
+	fetchPatchNames,
+	fetchPatchUpdates,
+	groupByMajor,
+	prefetchPatchNotes,
+	type PatchUpdate,
+} from '../../lib/patchesApi';
+import { localizePatchIcons } from '../../lib/patchIcons';
+import { hasPatchContent, referencedEntities, renderPatchNotes, summarizePatch } from '../../lib/patchNotes';
 
 export async function getStaticPaths() {
-	const updates = await fetchPatchUpdates(3);
-	return updates.map((update) => ({ params: { id: update.id }, props: { update } }));
+	const updates = await fetchPatchUpdates();
+	// 一百多个版本各建一页，正文却是逐个抓的。先并发把 JSON 落到 `.cache/` 里，
+	// 后面渲染时命中的就是本地文件——直接开渲染会把同一批请求拆到各进程里，
+	// 并发数不好控，也容易撞上游限速。dev 下不预热：那边每次请求都会重跑这个函数。
+	if (import.meta.env.PROD) await prefetchPatchNotes(updates);
+	const groups = groupByMajor(updates);
+	const order = new Map(updates.map((update, index) => [update.id, index]));
+	return groups.flatMap((group) =>
+		group.items.map((update) => ({
+			params: { id: update.id },
+			props: {
+				update,
+				// 同大版本的兄弟版本，用来在 7.41f/e/d 之间直接跳；顺序沿用「新 → 旧」。
+				siblings: group.items,
+				// 全量列表里的位置，用来给上/下一条翻页（0 是最新）。
+				index: order.get(update.id) ?? 0,
+				total: updates.length,
+			},
+		})),
+	);
 }
 
-const { update } = Astro.props;
+const { update, siblings, index, total } = Astro.props as {
+	update: PatchUpdate;
+	siblings: PatchUpdate[];
+	index: number;
+	total: number;
+};
 
+const all = await fetchPatchUpdates();
+const newer = index > 0 ? all[index - 1] : null;
+const older = index < total - 1 ? all[index + 1] : null;
+
+const notes = await fetchPatchNotes(update.id);
+// 数据接口里没有正文的两个大版本（7.23 / 7.28）会拿到一份只有 patch_website 的空壳，
+// 这时要改去官方专题站，而不是渲染一个空框。
+const hasContent = notes ? hasPatchContent(notes) : false;
 let content = '';
-let failed = false;
-try {
-	content = await fetchArticle(update.href);
-	if (!content) failed = true;
-} catch {
-	failed = true;
+let summary = '';
+if (notes && hasContent) {
+	const names = await fetchPatchNames();
+	const icons = await localizePatchIcons(referencedEntities(notes, names));
+	content = renderPatchNotes(notes, names, icons);
+	summary = summarizePatch(notes);
 }
 ---
 
-<Layout title={`${update.title} · 版本信息 · DOTA2 驿站`} description={`${update.title}（${update.date}）官方更新日志正文。`}>
+<Layout
+	title={`${update.version} 更新日志 · 版本信息 · DOTA2 驿站`}
+	description={`DOTA2 ${update.version} 官方更新日志（${update.date}）：${summary || '完整改动列表'}。`}
+>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 		<a href="/patches" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
-			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
 			返回版本页
 		</a>
 
 		<header class="mt-5 border-b border-line pb-6">
-			<div class="flex flex-wrap items-center gap-3">
-				<span class="font-display text-3xl text-gold">{update.version || '版本更新'}</span>
-				<span class="rounded-md bg-dota/15 px-2 py-1 text-xs font-semibold text-dota-light">更新日志</span>
+			<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+				<h1 class="font-display text-4xl text-gold">{update.version}</h1>
+				<span class="text-sm text-muted">{update.date}</span>
+				<a
+					href={update.href}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="ml-auto text-sm text-dota-light underline-offset-2 hover:underline"
+				>
+					官网原文
+				</a>
 			</div>
-			<h1 class="mt-3 font-display text-2xl leading-tight text-cream sm:text-3xl">{update.title}</h1>
-			<p class="mt-2 text-sm text-muted">{update.date} · 官方更新日志</p>
+			<p class="mt-2 text-sm text-muted">
+				{hasContent ? summary : update.siteUrl ? '官方把这次更新的日志做成了专题站' : '本次更新日志'}
+			</p>
+
+			{
+				siblings.length > 1 ? (
+					<div class="mt-4 flex flex-wrap items-center gap-1.5">
+						<span class="mr-1 text-xs text-faint">{update.major} 系列</span>
+						{siblings.map((sibling) => (
+							<a
+								href={`/patches/${sibling.id}`}
+								aria-current={sibling.id === update.id ? 'page' : undefined}
+								class={
+									sibling.id === update.id
+										? 'rounded-lg border border-dota/60 bg-dota/15 px-2 py-0.5 text-sm font-semibold text-dota-light'
+										: 'rounded-lg border border-line bg-surface-2 px-2 py-0.5 text-sm text-muted transition hover:border-dota/50 hover:text-gold'
+								}
+							>
+								{sibling.version}
+							</a>
+						))}
+					</div>
+				) : null
+			}
 		</header>
 
-		<div class="mt-6 rounded-2xl border border-line bg-surface p-6 sm:p-8">
+		<div class="mt-6 rounded-2xl border border-line bg-surface p-5 sm:p-8">
 			{
 				content ? (
-					<div class="article-content" set:html={content} />
+					<Fragment set:html={content} />
+				) : update.siteUrl ? (
+					<div class="text-center">
+						<p class="text-muted">
+							{update.version} 是大版本更新，官方把完整的更新日志做成了独立的专题站，不在通用的日志接口里。
+						</p>
+						<a
+							href={update.siteUrl}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="mt-4 inline-flex items-center gap-2 rounded-lg border border-dota/60 bg-dota/15 px-4 py-2 text-sm font-semibold text-dota-light transition hover:bg-dota/25"
+						>
+							打开 {update.version} 官方专题站
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+								<path d="M7 17L17 7M17 7H9M17 7v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+							</svg>
+						</a>
+					</div>
 				) : (
 					<p class="text-muted">
-						正文加载失败，
+						这一版的正文没取到，
 						<a href={update.href} target="_blank" rel="noopener noreferrer" class="text-dota-light underline-offset-2 hover:underline">
-							前往官方查看原文
+							前往官网查看
 						</a>
 						。
 					</p>
 				)
 			}
 		</div>
+
+		<nav class="mt-8 flex items-stretch justify-between gap-3 text-sm">
+			{
+				newer ? (
+					<a
+						href={`/patches/${newer.id}`}
+						class="group flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/50"
+					>
+						<span class="text-faint transition group-hover:text-gold">←</span>
+						<span class="min-w-0">
+							<span class="block text-xs text-faint">更新的版本</span>
+							<span class="block font-display text-gold">{newer.version}</span>
+						</span>
+					</a>
+				) : (
+					<span class="flex-1"></span>
+				)
+			}
+			{
+				older ? (
+					<a
+						href={`/patches/${older.id}`}
+						class="group flex min-w-0 flex-1 items-center justify-end gap-2 rounded-xl border border-line bg-surface px-4 py-3 text-right transition hover:border-dota/50"
+					>
+						<span class="min-w-0">
+							<span class="block text-xs text-faint">更早的版本</span>
+							<span class="block font-display text-gold">{older.version}</span>
+						</span>
+						<span class="text-faint transition group-hover:text-gold">→</span>
+					</a>
+				) : (
+					<span class="flex-1"></span>
+				)
+			}
+		</nav>
 	</section>
 </Layout>
