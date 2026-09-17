@@ -67,6 +67,8 @@ interface Stored {
 	theirTeam?: string;
 	key?: string;
 	model?: string;
+	/** 对面是不是交给 AI（默认是）。 */
+	aiSide?: boolean;
 }
 
 function loadStored(): Stored {
@@ -89,11 +91,20 @@ if (data) {
 	let ourTeam = typeof stored.ourTeam === 'string' ? stored.ourTeam : '';
 	let theirTeam = typeof stored.theirTeam === 'string' ? stored.theirTeam : '';
 	let model = typeof stored.model === 'string' && stored.model ? stored.model : DEFAULT_DEEPSEEK_MODEL;
+	let aiSide = stored.aiSide !== false;
 	let attrFilter = 'all';
 	let positionFilter = 'all';
 	let query = '';
 	let adviceOpen = false;
 	let aiResult: { picks: { heroId: number; position: number; reason: string; risk: string }[]; summary: string } | null = null;
+	/** AI 正在替对面决策，避免自动出招被重复触发。 */
+	let aiBusy = false;
+	/** 自动出招的定时器；撤销、清空、关掉开关都要能取消它。 */
+	let aiTimer: number | null = null;
+	/** 某一步没有可用候选时记下手号，避免自动出招在同一手上反复重试。 */
+	let aiStallStep = -1;
+	/** 对面上一手的决定，轮到它时显示。 */
+	let lastAiMove = '';
 
 	const firstPickerSide = (): TeamSide => (firstPick === 'ours' ? ourSide : otherSide(ourSide));
 	const otherTeamSide = (): TeamSide => otherSide(ourSide);
@@ -119,6 +130,11 @@ if (data) {
 	const ourTeamInput = element<HTMLInputElement>('draft-our-team');
 	const theirTeamInput = element<HTMLInputElement>('draft-their-team');
 	const matchSelect = element<HTMLSelectElement>('draft-match');
+	const aiSideInput = element<HTMLInputElement>('draft-ai-side');
+	const aiMoveBox = element<HTMLDivElement>('draft-ai-move');
+	const aiWho = element<HTMLSpanElement>('draft-ai-who');
+	const aiStatus = element<HTMLSpanElement>('draft-ai-status');
+	const aiPlay = element<HTMLButtonElement>('draft-ai-play');
 
 	if (!poolRoot || !bannerStep || !adviceToggle) {
 		// 页面结构被人改过，宁可不工作也不要抛一堆空引用错误。
@@ -140,11 +156,19 @@ if (data) {
 			try {
 				localStorage.setItem(
 					STORE_KEY,
-					JSON.stringify({ recorded, ourSide, firstPick, ourTeam, theirTeam, key: keyInput?.value ?? '', model }),
+					JSON.stringify({ recorded, ourSide, firstPick, ourTeam, theirTeam, key: keyInput?.value ?? '', model, aiSide }),
 				);
 			} catch {
 				// 隐私模式下写不进去，不影响使用。
 			}
+		};
+
+		/** 对面这一手轮到谁在动、动的是禁用还是挑选。 */
+		const currentTurn = (): { ours: boolean; action: 'ban' | 'pick'; side: TeamSide } | null => {
+			const state = snapshotNow();
+			if (state.done || !state.owner || !state.action) return null;
+			const side = sideOfOwner(state.owner, firstPickerSide());
+			return { ours: side === ourSide, action: state.action, side };
 		};
 
 		const setHint = (message: string): void => {
@@ -392,6 +416,134 @@ if (data) {
 
 		// ------------------------------------------------------------ 交互
 
+		// ------------------------------------------------------------ 对面交给 AI
+
+		function cancelAutoMove(): void {
+			if (aiTimer !== null) {
+				window.clearTimeout(aiTimer);
+				aiTimer = null;
+			}
+		}
+
+		/**
+		 * 轮到对面时这块就是主界面：默认自动出招，取消勾选之后由人代打（露出手动按钮）。
+		 * 延迟 700ms 再落子，让人先看清"现在轮到对面了"。
+		 */
+		function syncAiBlock(): void {
+			const turn = currentTurn();
+			const opponentTurn = Boolean(turn && !turn.ours);
+			// 轮到我们时也留着这一行：对面刚禁/刚选了什么、为什么，是这一手要参考的信息。
+			if (aiMoveBox) aiMoveBox.style.display = opponentTurn || lastAiMove ? '' : 'none';
+			if (adviceToggle) adviceToggle.style.display = turn && turn.ours ? '' : 'none';
+			// 轮不到我们时把建议收起来，避免看到一半"对面那一手"的解释。
+			if (adviceBody && opponentTurn) adviceBody.style.display = 'none';
+			if (!opponentTurn || !turn) {
+				cancelAutoMove();
+				if (aiWho) aiWho.textContent = '对面刚才';
+				if (aiStatus) aiStatus.textContent = lastAiMove;
+				if (aiPlay) aiPlay.style.display = 'none';
+				return;
+			}
+
+			const actionText = turn.action === 'ban' ? '禁用' : '挑选';
+			if (aiWho) aiWho.textContent = `${sideLabel(turn.side)}（AI）${actionText}`;
+			if (aiBusy) {
+				if (aiStatus) aiStatus.textContent = '正在看数据…';
+				if (aiPlay) aiPlay.style.display = 'none';
+				return;
+			}
+
+			const stalled = aiStallStep === snapshotNow().nextStep;
+			if (aiSide && !stalled) {
+				if (aiStatus) aiStatus.textContent = lastAiMove || '自动出招中…';
+				if (aiPlay) aiPlay.style.display = 'none';
+				if (aiTimer === null) {
+					aiTimer = window.setTimeout(() => {
+						aiTimer = null;
+						void playOpponentMove();
+					}, 700);
+				}
+				return;
+			}
+
+			cancelAutoMove();
+			if (aiStatus) aiStatus.textContent = lastAiMove || '这一手由你代打，直接点英雄池';
+			if (aiPlay) aiPlay.style.display = aiSide ? 'none' : '';
+		}
+
+		/**
+		 * 对面这一手怎么走。**数据先算、模型后挑**：先用对面的视角算出候选，
+		 * 有 key 就让模型在里面挑一个并说明，没有 key（或调用失败）就直接取数据里的第一顺位。
+		 * 所以不配 key 也能和 AI 对着打，只是它不会说话。
+		 */
+		async function playOpponentMove(): Promise<void> {
+			const turn = currentTurn();
+			if (aiBusy || !turn || turn.ours) return;
+			aiBusy = true;
+			syncAiBlock();
+			try {
+				const enemyAdvice = advise({ data: data!, recorded, ourSide: turn.side, firstPicker: firstPickerSide(), limit: 5 });
+				if (!enemyAdvice || enemyAdvice.candidates.length === 0) {
+					lastAiMove = '这一步没有可用候选，撤销或跳过后再来';
+					aiStallStep = snapshotNow().nextStep;
+					return;
+				}
+
+				let heroId = enemyAdvice.candidates[0].heroId;
+				let reason = '';
+				if ((keyInput?.value ?? '').trim()) {
+					const decided = await askModelForOpponentMove(enemyAdvice, turn.side);
+					if (decided) {
+						heroId = decided.heroId;
+						reason = decided.reason;
+					}
+				}
+
+				recorded = play(recorded, heroId);
+				const hero = heroById.get(heroId);
+				const actionText = turn.action === 'ban' ? '禁用' : '挑选';
+				const why = reason || '按号位胜率与剩余手数判断';
+				lastAiMove = `${sideLabel(turn.side)}${actionText}了 ${hero?.name ?? ''} · ${why}`;
+				aiResult = null;
+				save();
+			} finally {
+				aiBusy = false;
+				renderAll();
+			}
+		}
+
+		/** 让模型替对面做决定。返回 null 时调用方退回数据里的第一顺位。 */
+		async function askModelForOpponentMove(enemyAdvice: Advice, enemy: TeamSide): Promise<{ heroId: number; reason: string } | null> {
+			try {
+				const messages = buildAdviceMessages(
+					{
+						advice: enemyAdvice,
+						data: data!,
+						// 视角翻转：从对面看，它自己是"我方"，屏幕前的人是"对面"。
+						selfTeam: theirTeam,
+						foeTeam: ourTeam,
+						recorded,
+						ourSide: enemy,
+						firstPicker: firstPickerSide(),
+					},
+					'theirs',
+				);
+				const response = await fetch(DEEPSEEK_ENDPOINT, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(keyInput?.value ?? '').trim()}` },
+					body: JSON.stringify(buildChatRequest({ model, messages })),
+				});
+				if (!response.ok) return null;
+				const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+				const parsed = parseAdviceReply(body.choices?.[0]?.message?.content ?? '', enemyAdvice.candidates.map((c) => c.heroId));
+				if (!parsed) return null;
+				return { heroId: parsed.picks[0].heroId, reason: parsed.picks[0].reason };
+			} catch {
+				// 网络、限流、解析失败都退回数据决策，别让对战卡在这里。
+				return null;
+			}
+		}
+
 		function onHeroClick(heroId: number): void {
 			const check = canPlay(recorded, heroId);
 			if (!check.ok) {
@@ -411,10 +563,14 @@ if (data) {
 			syncBoard();
 			syncBanner();
 			renderAdvice();
+			syncAiBlock();
 		}
 
 		function bindControls(): void {
 			element<HTMLButtonElement>('draft-undo')?.addEventListener('click', () => {
+				cancelAutoMove();
+				lastAiMove = '';
+				aiStallStep = -1;
 				recorded = undo(recorded);
 				aiResult = null;
 				setHint('撤销了一手');
@@ -422,6 +578,8 @@ if (data) {
 				renderAll();
 			});
 			element<HTMLButtonElement>('draft-skip')?.addEventListener('click', () => {
+				cancelAutoMove();
+				aiStallStep = -1;
 				recorded = skip(recorded);
 				aiResult = null;
 				setHint('这一手跳过了');
@@ -430,6 +588,9 @@ if (data) {
 			});
 			element<HTMLButtonElement>('draft-reset')?.addEventListener('click', () => {
 				if (recorded.length > 0 && !window.confirm('清空这一局录进去的 BP？')) return;
+				cancelAutoMove();
+				lastAiMove = '';
+				aiStallStep = -1;
 				recorded = [];
 				aiResult = null;
 				setHint('');
@@ -510,6 +671,18 @@ if (data) {
 			});
 			adviceAi?.addEventListener('click', () => {
 				void explainWithModel();
+			});
+
+			aiSideInput?.addEventListener('change', () => {
+				aiSide = Boolean(aiSideInput.checked);
+				cancelAutoMove();
+				aiStallStep = -1;
+				save();
+				syncAiBlock();
+			});
+			aiPlay?.addEventListener('click', () => {
+				cancelAutoMove();
+				void playOpponentMove();
 			});
 
 			keyInput?.addEventListener('change', () => {
@@ -655,6 +828,7 @@ if (data) {
 		if (theirTeamInput) theirTeamInput.value = theirTeam;
 		if (keyInput) keyInput.value = typeof stored.key === 'string' ? stored.key : '';
 		if (modelSelect) modelSelect.value = model;
+		if (aiSideInput) aiSideInput.checked = aiSide;
 		buildPool();
 		buildBoard();
 		bindControls();

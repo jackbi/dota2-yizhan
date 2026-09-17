@@ -58,8 +58,8 @@ assert.ok(started, '需要一份可用的建议作为输入');
 const messages = buildAdviceMessages({
 	advice: started,
 	data,
-	ourTeam: 'Team XG',
-	theirTeam: 'Team Spirit',
+	selfTeam: 'Team XG',
+	foeTeam: 'Team Spirit',
 	recorded: [],
 	ourSide: 'radiant',
 	firstPicker: 'radiant',
@@ -98,13 +98,35 @@ assert.ok(!user.includes('NaN'), '提示词里出现了 NaN');
 const straddling = buildAdviceMessages({
 	advice: started,
 	data: { ...data, patch: { version: '7.41f', date: '2026-09-15', straddles: true } },
-	ourTeam: 'Team XG',
-	theirTeam: 'Team Spirit',
+	selfTeam: 'Team XG',
+	foeTeam: 'Team Spirit',
 	recorded: [],
 	ourSide: 'radiant',
 	firstPicker: 'radiant',
 });
 assert.match(straddling[1]?.content ?? '', /跨了这次版本更新/, '跨版本时提示词里要有这条提醒');
+
+// 替对面落子：提示词要交代人称（数据是从它的角度算的），并且只要一个决定。
+const asOpponent = buildAdviceMessages(
+	{
+		advice: started,
+		data,
+		selfTeam: 'Team Spirit',
+		foeTeam: 'Team XG',
+		recorded: [],
+		ourSide: 'dire',
+		firstPicker: 'radiant',
+	},
+	'theirs',
+);
+const opponentSystem = asOpponent[0]?.content ?? '';
+const opponentUser = asOpponent[1]?.content ?? '';
+assert.match(opponentSystem, /代表对面/, '对手模式下要说明它代表对面');
+assert.match(opponentSystem, /只从用户给出的候选里挑 1 个/, '对手模式只要一个决定');
+assert.ok(!opponentSystem.includes('挑 3 个'), '对手模式不该要三个候选');
+assert.match(opponentSystem, /第二人称/, '理由要用第二人称写，界面上才读得通');
+assert.match(opponentUser, /文中的"我方"指你自己/, '对手模式要交代人称，免得它把两方搞反');
+assert.match(opponentUser, /Team Spirit/, '对手模式下队名按它的视角写');
 
 // ---------------------------------------------------------------- 请求体
 

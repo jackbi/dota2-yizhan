@@ -71,6 +71,21 @@ assert.match(page, /\[1, 2, 3, 4, 5\]\.map/, '号位筛选要覆盖 1 到 5');
 assert.ok(page.includes('id="draft-data"'), '页面要带上构建期数据');
 assert.ok(page.includes("import '../scripts/draftBoard'"), '页面要加载客户端脚本');
 
+// ---------------------------------------------------------------- 人机对战
+
+/**
+ * 这块是"和 AI 对着打"的入口，几个点缺一个就退化成只能看建议：
+ * 总开关、AI 的落子区块、自动出招的定时器，以及**调用失败要退回数据决策**的兜底。
+ */
+assert.ok(page.includes('id="draft-ai-side"'), '要有"对面交给 AI"的开关');
+assert.ok(page.includes('id="draft-ai-move"'), '要有 AI 落子的区块');
+assert.ok(page.includes('id="draft-ai-play"'), '关掉自动时要能手动让它出招');
+assert.match(script, /window\.setTimeout\([\s\S]{0,80}playOpponentMove/, '自动出招要有定时器');
+assert.match(script, /ourSide: turn\.side/, 'AI 要走对面那一手，就得用对面的视角算候选');
+assert.match(script, /'theirs'/, '替对面落子要用对手模式的提示词');
+assert.match(script, /const why = reason \|\| '按号位胜率与剩余手数判断'/, '模型没给理由时要退回数据决策的说明');
+assert.match(script, /async function askModelForOpponentMove[\s\S]*?catch \{[\s\S]*?return null;/, '模型调用失败要返回 null，由调用方退回数据决策');
+
 // ---------------------------------------------------------------- 布局约束
 
 /**

@@ -20,6 +20,15 @@ import { CM_STEPS, sideOfOwner } from './draftOrder.ts';
 /** 让模型给几个候选。三个够用了：多了反而是噪声，观赛时也不会去读第五条。 */
 export const ADVICE_TARGET_COUNT = 3;
 
+/**
+ * 这次是给谁出主意。
+ *
+ * `ours` 是给屏幕前的人当教练，给 3 个候选让他挑；`theirs` 是让模型**替对面落子**，
+ * 只要一个决定。同一份数据两边都能算：把 `ourSide` 换成对面，打分层给出的就是
+ * "对面该怎么走"（挑自己缺的位置、禁我们最想要的人）。
+ */
+export type PromptRole = 'ours' | 'theirs';
+
 /** DeepSeek 的模型名。两个都走 OpenAI 兼容的 chat/completions。 */
 export const DEEPSEEK_MODELS = ['deepseek-flash', 'deepseek-v4-pro'] as const;
 export type DeepseekModel = (typeof DEEPSEEK_MODELS)[number];
@@ -34,18 +43,19 @@ export interface PromptMessage {
 export interface PromptInput {
 	advice: Advice;
 	data: DraftData;
-	/** 我方队名，没填就传空串。 */
-	ourTeam: string;
-	theirTeam: string;
+	/**
+	 * 队名。这里的「自己 / 对面」指的是**这份建议的视角**：
+	 * 给我方出主意时自己就是屏幕前的人，替对面落子时自己就是对面。
+	 * 调用方按视角传，提示词里的人称才不会翻。
+	 */
+	selfTeam: string;
+	foeTeam: string;
 	/** 已经录进去的 BP，用来告诉模型场上都发生过什么。 */
 	recorded: readonly RecordedHand[];
 	/** 我方阵营与先选方阵营，用来把每一手翻成"我方/对面"。 */
 	ourSide: 'radiant' | 'dire';
 	firstPicker: 'radiant' | 'dire';
 }
-
-const sideLabel = (ours: boolean, ourTeam: string, theirTeam: string): string =>
-	ours ? ourTeam.trim() || '我方' : theirTeam.trim() || '对面';
 
 /** 把候选摆成表格样式的纯文本，模型对不齐的 JSON 反而更容易漏读字段。 */
 function renderCandidates(input: PromptInput): string {
@@ -110,7 +120,27 @@ function renderPatch(data: DraftData): string {
  * 系统提示词。写死在这里而不是让页面拼，是为了让它可被自检脚本检查：
  * 提示词改坏了不会报错，只会让建议悄悄变差，所以关键约束必须在测试里盯住。
  */
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(role: PromptRole = 'ours'): string {
+	if (role === 'theirs') {
+		return [
+			'你是 DOTA2 职业战队的教练，这一局你代表对面，正在和坐在屏幕前的人对抗。',
+			'',
+			'规则背景：7.40 起一共 24 手，每队 7 禁 5 选，先选方与后选方交替；后选方握着最后一手禁用和最后一手挑选。',
+			'',
+			'你必须遵守：',
+			'1. 只从用户给出的候选里挑 1 个，输出里的 heroId 必须是候选列表里出现过的数字。',
+			'2. 理由里的数字只能来自用户给出的字段（号位胜率、样本场次、职业出场与被禁次数、估值）。',
+			'   你不知道这些数据之外的任何统计，也不要去回忆版本强弱，绝对不要编造数字。',
+			'3. 你要选的是对自己最有利的那一手：挑选补自己的阵容缺口，禁用掐掉对面最想要的人。',
+			'4. 理由是给对手看的，用第二人称写：用"你们"指对手（屏幕前的人），用"我"指你自己。',
+			'   例如"禁掉你们的四号位高胜率点，把你们的阵容估值压下来"。就算数据里出现"对面"这个词，',
+			'   那也是从你的角度算的，写进理由时要改成人话。',
+			'',
+			'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
+			'{"picks":[{"heroId":1,"position":2,"reason":"…","risk":"…"}],"summary":"…"}',
+			'picks 只给 1 条，就是你决定的这一手；summary 一句话说你的打算。',
+		].join('\n');
+	}
 	return [
 		'你是 DOTA2 职业战队的教练，在队长模式（Captain\'s Mode）的 BP 阶段给我方出主意。',
 		'',
@@ -130,14 +160,16 @@ export function buildSystemPrompt(): string {
 	].join('\n');
 }
 
-export function buildUserPrompt(input: PromptInput): string {
+export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): string {
 	const { advice } = input;
-	const ours = sideLabel(true, input.ourTeam, input.theirTeam);
-	const theirs = sideLabel(false, input.ourTeam, input.theirTeam);
+	const ours = input.selfTeam.trim() || '我方';
+	const theirs = input.foeTeam.trim() || '对面';
 	const action = advice.action === 'ban' ? '禁用' : '挑选';
 	const turn = advice.ours ? `轮到${ours}${action}` : `轮到${theirs}${action}（我方要预判对面会怎么动）`;
 
 	return [
+		// 替对面落子时，数据是从对面的角度算的，先把人称交代清楚，免得模型把两方搞反。
+		...(role === 'theirs' ? ['（以下数据是从你的角度算的：文中的"我方"指你自己，"对面"指坐在屏幕前的人。）'] : []),
 		`对局：${ours} vs ${theirs}`,
 		`当前：第 ${advice.step} 手，${turn}`,
 		`我方还剩 ${advice.remaining.ours.bans} 禁 ${advice.remaining.ours.picks} 选；对方还剩 ${advice.remaining.theirs.bans} 禁 ${advice.remaining.theirs.picks} 选。`,
@@ -155,10 +187,10 @@ export function buildUserPrompt(input: PromptInput): string {
 	].join('\n');
 }
 
-export function buildAdviceMessages(input: PromptInput): PromptMessage[] {
+export function buildAdviceMessages(input: PromptInput, role: PromptRole = 'ours'): PromptMessage[] {
 	return [
-		{ role: 'system', content: buildSystemPrompt() },
-		{ role: 'user', content: buildUserPrompt(input) },
+		{ role: 'system', content: buildSystemPrompt(role) },
+		{ role: 'user', content: buildUserPrompt(input, role) },
 	];
 }
 
