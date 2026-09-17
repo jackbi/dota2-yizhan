@@ -2,6 +2,7 @@ import * as L from '../lib/partyLogic';
 import type { ChatMessage, Member, RoomState, Team } from '../lib/partyLogic';
 import type { ClientMessage, LobbyRoom, TeamOp } from '../lib/partyProtocol';
 import { decodeLobbyMessage, decodeServerMessage, encodeMessage } from '../lib/partyProtocol';
+import { CHAT_EMOJI, type ChatEmoji } from '../data/chatEmoji';
 
 /**
  * 开黑房间的客户端逻辑。
@@ -133,6 +134,9 @@ const dom = {
 	chatLog: $<HTMLOListElement>('#chat-log'),
 	chatForm: $<HTMLFormElement>('#chat-form'),
 	chatInput: $<HTMLInputElement>('#chat-input'),
+	emojiToggle: $<HTMLButtonElement>('#chat-emoji'),
+	emojiPanel: $('#chat-emoji-panel'),
+	emojiGrid: $('#chat-emoji-grid'),
 };
 
 /**
@@ -1193,6 +1197,73 @@ function exitStageFullscreen(): void {
 	if (stagePageFullscreen()) setPageFullscreen(false);
 }
 
+// ---------------------------------------------------------------- 表情选择器
+
+/**
+ * 表情面板只生成一次（分组、按钮都在这里建），之后只有显隐变化。
+ *
+ * 没用任何 emoji 选择器库：这批字符系统字体自带，一个面板几十个按钮而已，
+ * 为它引一个几十 KB 的依赖不值（见 `src/data/chatEmoji.ts` 顶部）。
+ */
+function renderEmojiPicker(): void {
+	dom.emojiGrid.replaceChildren(
+		...CHAT_EMOJI.map((group) => {
+			const row = h('div', 'flex flex-wrap items-center gap-1');
+			row.append(h('span', 'w-8 shrink-0 text-[10px] text-faint', group.title));
+			for (const item of group.items) row.append(emojiButton(item));
+			return row;
+		}),
+	);
+}
+
+function emojiButton(item: ChatEmoji): HTMLButtonElement {
+	const button = h(
+		'button',
+		'h-7 w-7 shrink-0 rounded text-base leading-none transition hover:bg-surface-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold',
+		item.char,
+	);
+	button.type = 'button';
+	// 光一个 😂 对读屏没有意义，而按钮上塞不下说明文字，所以信息走 title + aria-label。
+	button.title = item.label;
+	button.setAttribute('aria-label', `插入表情：${item.label}`);
+	button.addEventListener('click', () => insertEmoji(item.char));
+	return button;
+}
+
+/**
+ * 插到**光标处**而不是末尾：常见用法是先打半句、再回来补个表情。
+ *
+ * `setRangeText` 会绕过 `maxlength`，所以插完自己裁一次，而且是**按码点**裁
+ * （`clampChatText` 用 `[...input]`）——直接 `slice` 会把 emoji 的代理对劈成两半，
+ * 聊天记录里就是两个乱码方块。
+ */
+function insertEmoji(char: string): void {
+	const input = dom.chatInput;
+	const start = input.selectionStart ?? input.value.length;
+	const end = input.selectionEnd ?? start;
+	if (typeof input.setRangeText === 'function') input.setRangeText(char, start, end, 'end');
+	else input.value = `${input.value.slice(0, start)}${char}${input.value.slice(end)}`;
+	input.value = L.clampChatText(input.value);
+	input.focus();
+}
+
+/**
+ * 面板开着没有。
+ *
+ * **不能读 `dom.emojiPanel.hidden`**：初始隐藏用的是内联 `style="display:none"`
+ * （本文件顶部与自检都禁止用 `hidden` 属性/类），所以那个属性一直是 `false`，
+ * 读它等于把「第一次点击」判成「关闭」。这里自己记一个布尔值。
+ */
+let emojiPanelOpen = false;
+
+function setEmojiPanel(open: boolean): void {
+	emojiPanelOpen = open;
+	setVisible(dom.emojiPanel, open);
+	dom.emojiToggle.setAttribute('aria-expanded', String(open));
+	dom.emojiToggle.classList.toggle('border-dota', open);
+	dom.emojiToggle.classList.toggle('bg-surface-2', open);
+}
+
 // ---------------------------------------------------------------- 事件
 
 function bindEvents(): void {
@@ -1225,6 +1296,28 @@ function bindEvents(): void {
 		dom.chatInput.value = '';
 		// 不本地先画：消息会随服务端推回来的快照一起到，本地插一条反而要处理「重发了怎么办」。
 		sendToRoom({ t: 'chat', text });
+	});
+
+	/*
+	 * 表情面板：按钮开关、点面板之外收起、Esc 收起。
+	 *
+	 * 插完**不收起**——连着挑几个表情是常事；焦点留在输入框里，键盘用户可以直接接着打。
+	 */
+	dom.emojiToggle.addEventListener('click', () => setEmojiPanel(!emojiPanelOpen));
+	document.addEventListener('click', (event) => {
+		if (!emojiPanelOpen) return;
+		const target = event.target as HTMLElement | null;
+		/*
+		 * 聊天表单里的任何点击都不算「点别处」：面板、输入框、发送按钮（按回车是隐式提交，
+		 * 浏览器会在发送按钮上补一次 click 冒泡到 document）——不然发一条表情，面板就自己关了。
+		 */
+		if (target?.closest('#chat-form')) return;
+		setEmojiPanel(false);
+	});
+	document.addEventListener('keydown', (event) => {
+		if (event.key !== 'Escape' || !emojiPanelOpen) return;
+		setEmojiPanel(false);
+		dom.chatInput.focus();
 	});
 
 	dom.rollBtn.addEventListener('click', () => {
@@ -1443,6 +1536,7 @@ function restoreNickname(): void {
 
 function boot(): void {
 	restoreNickname();
+	renderEmojiPicker();
 	bindEvents();
 	startTicker();
 	// 大厅连接只在这里建一次，之后断了会自动重连。

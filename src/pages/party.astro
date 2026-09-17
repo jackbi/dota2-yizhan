@@ -407,22 +407,48 @@ const me = session ? { name: displayName(session), avatar: session.avatar } : nu
 					<section class="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface" aria-labelledby="chat-title">
 						<h2 id="chat-title" class="border-b border-line px-4 py-3 font-display text-sm">聊天</h2>
 						<ol id="chat-log" class="max-h-[26rem] min-h-[12rem] flex-1 space-y-2.5 overflow-y-auto p-4 text-sm"></ol>
-						<form id="chat-form" class="flex gap-2 border-t border-line p-3" novalidate>
-							<label class="sr-only" for="chat-input">聊天内容</label>
-							<input
-								id="chat-input"
-								type="text"
-								maxlength="300"
-								autocomplete="off"
-								placeholder="说点什么…"
-								class="min-w-0 flex-1 rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
-							/>
-							<button
-								type="submit"
-								class="shrink-0 rounded-lg border border-dota bg-dota/15 px-3 py-2 text-sm text-dota-light transition hover:bg-dota/25"
+						<form id="chat-form" class="flex flex-col gap-2 border-t border-line p-3" novalidate>
+							{/*
+								表情面板：初始用 style="display:none"（不能用 hidden 属性/类，见本文件顶部与
+								scripts/partyVisibility.check.ts），显隐由脚本的 setVisible() 接管。
+								里面的按钮由 partyRoom.ts 按 src/data/chatEmoji.ts 生成。
+							*/}
+							<div
+								id="chat-emoji-panel"
+								style="display:none"
+								class="flex flex-col gap-1.5 rounded-lg border border-line bg-ink-2 p-2"
 							>
-								发送
-							</button>
+								<div id="chat-emoji-grid" class="flex flex-col gap-1.5"></div>
+								<p class="text-[10px] text-faint">点一下插到光标处；Esc 或点别处收起。</p>
+							</div>
+							<div class="flex gap-2">
+								<label class="sr-only" for="chat-input">聊天内容</label>
+								<input
+									id="chat-input"
+									type="text"
+									maxlength="300"
+									autocomplete="off"
+									placeholder="说点什么…"
+									class="min-w-0 flex-1 rounded-lg border border-line bg-ink-2 px-3 py-2 text-sm text-cream placeholder:text-faint focus:border-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+								/>
+								<button
+									id="chat-emoji"
+									type="button"
+									aria-expanded="false"
+									aria-controls="chat-emoji-panel"
+									title="插入表情"
+									aria-label="插入表情"
+									class="shrink-0 rounded-lg border border-line px-2.5 py-2 text-base leading-none transition hover:border-dota hover:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
+								>
+									😀
+								</button>
+								<button
+									type="submit"
+									class="shrink-0 rounded-lg border border-dota bg-dota/15 px-3 py-2 text-sm text-dota-light transition hover:bg-dota/25"
+								>
+									发送
+								</button>
+							</div>
 						</form>
 					</section>
 				</aside>

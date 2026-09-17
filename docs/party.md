@@ -28,10 +28,12 @@
 | `src/scripts/partyRoom.ts` | 客户端：两条 WebSocket（大厅 / 房间）、渲染、事件、断线重连 |
 | `src/lib/partyProtocol.ts` | 消息协议与解析（**信任边界**：来自别人浏览器的输入一律先验形状） |
 | `src/lib/partyLogic.ts` | 成员/队伍/roll 的**纯状态变换**，不碰 DOM 也不碰网络 |
+| `src/data/chatEmoji.ts` | 聊天室的表情表（分组 + 中文 label，不引第三方选择器） |
 | `src/worker/index.ts` | Worker 入口：在 Astro 的 handler 外面包一层，把 `/api/party/*` 转到 DO |
 | `src/worker/partyRoom.ts` | 两个 Durable Object：`PartyRoom`（一个房间一个）与 `PartyLobby`（大厅列表） |
 | `scripts/partyLogic.check.ts` | 分队 / roll 那层的自检（队伍重排最容易写错） |
 | `scripts/partyProtocol.check.ts` | 协议解析的自检：该收的收、该拒的拒 |
+| `scripts/partyEmoji.check.ts` | 表情表的自检：字符不重复、label 齐全，以及面板的显隐与插入方式 |
 | `scripts/steamId.check.ts` | 手填 Steam ID 的解析自检（错一位就查到别人头上） |
 | `scripts/partyVisibility.check.ts` | 静态可见性自检：标记里不许有脚本摘不掉的隐藏手法 |
 | `scripts/partyDrag.check.ts` | 拖拽归队的自检：拖拽写错全是静默失效，见下文「归队有两条路」 |
