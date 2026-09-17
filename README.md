@@ -4,6 +4,10 @@
 
 <h1 align="center">DOTA2 驿站</h1>
 
+<p align="center">
+	<a href="https://dota2.hiwenbin.com/"><b>🌐 在线预览：dota2.hiwenbin.com</b></a>
+</p>
+
 面向中文玩家的 DOTA2 门户：OB 开播状态与网页端分屏直播、官方新闻与 Reddit 热帖、社区热帖
 （NGA / 虎扑）、赛事赛程与战报、版本更新日志、英雄与装备资料，外加 Steam 登录的个人战绩，
 以及一间开黑房间（房间状态放在 Cloudflare Durable Object 里，浏览器一条 WebSocket 连过去）。
@@ -35,6 +39,8 @@
   （空置 10 分钟即删）
 
 ## 快速开始
+
+不想本地跑的话，线上已经挂着：<https://dota2.hiwenbin.com/>
 
 ```sh
 pnpm install
