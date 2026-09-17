@@ -223,10 +223,40 @@ set $stratz_relay_token "<RELAY_TOKEN>";
 set $stratz_upstream_auth "Bearer <STRATZ_TOKEN>";
 ```
 
+这个入口的处境是「域名公开 + 唯一门锁是一个静态口令」，所以还得补两件基础设施的事，
+缺了等于没有防护。**限流**属于 `http` 块（`include /etc/nginx/conf.d/*.conf` 就在该块里，
+写在 conf 文件顶部即 http 级）：
+
 ```nginx
+limit_req_zone $binary_remote_addr zone=stratz_relay:1m rate=20r/s;
+```
+
+**真实 IP**：机器前面挂着 Cloudflare 时 `$remote_addr` 是 CF 边缘 IP，照它限流等于把同一个
+CF 节点的所有访客塞进一个桶。按官方网段信任 `CF-Connecting-IP`（网段取自
+https://www.cloudflare.com/ips/ 逐条列出；直连源站的请求不在名单里，伪造这个头不会被接受）：
+
+```nginx
+# /etc/nginx/conf.d/00-cloudflare-realip.conf，v4 15 条 + v6 7 条
+set_real_ip_from 173.245.48.0/20;
+# …
+real_ip_header CF-Connecting-IP;
+```
+
+```nginx
+# 口令校验放在子请求里，不要写成 `if (...) { return 401; }`：if 在 rewrite 阶段就返回，
+# 而 limit_req 在 preaccess 阶段执行——没口令的洪水正好绕过限流。
+location = /stratz/authz {
+  include /etc/nginx/stratz-relay-secrets.conf;
+  internal;                                  # 只接受内部子请求
+  if ($http_x_relay_token != $stratz_relay_token) { return 401; }
+  return 204;
+}
+
 location = /stratz/graphql {
   include /etc/nginx/stratz-relay-secrets.conf;
-  if ($http_x_relay_token != $stratz_relay_token) { return 401; }
+  limit_req zone=stratz_relay burst=60 nodelay;
+  limit_req_status 429;
+  auth_request /stratz/authz;
   limit_except POST { deny all; }
   client_max_body_size 256k;
 
@@ -247,6 +277,14 @@ location = /stratz/graphql {
 location = /stratz/healthz { return 200 "ok\n"; }
 ```
 
+两处阈值与写法的来历，都是实测出来的：
+
+- 把口令校验挪进 `auth_request`，是为了让**没口令的洪水也受限流约束**。实测用错口令并发
+  打 200 发：169 个 401、31 个 429；洪水停下、桶回满后正常请求立刻恢复 200。
+- `burst=60` 而不给紧值，是因为 Worker 打这个入口时服务器看到的源地址是 Cloudflare 自己的
+  （实测 `2a06:98c0:3600::103`），**全站 Worker 共用一条限流桶**，`rate=20r/s` 是合计上限，
+  不是单个访客的上限。访客那侧有真实 IP，按人分桶。
+
 改完 `nginx -t && nginx -s reload`。上游域名是在启动/重载时解析的，STRATZ 换了 IP 要再 reload 一次。
 
 绑定与验证（和 Node 版等价，只是没有 `/probe`，直接打一条最小查询）：
@@ -258,6 +296,18 @@ curl -s -X POST https://<你的域名>/stratz/graphql \
 # {"data":{"__typename":"DotaQuery"}}       → 绑定成功
 # You cannot use different IP Addresses…   → token 已绑在别处，去 stratz.com 重新生成
 ```
+
+### 轮换中转口令
+
+地址是公开的，口令是静态共享的，那「它有没有见过光」就是唯一的防线。一旦怀疑泄漏（贴进 issue、
+截过图、进过日志），**两头一起换**，只换一头就是全线 401：
+
+1. 服务器：改 `/etc/nginx/stratz-relay-secrets.conf` 里的 `$stratz_relay_token`（Node 版改
+   `/etc/stratz-relay.env`），再 `nginx -t && nginx -s reload`（Node 版 `systemctl restart stratz-relay`）。
+2. 客户端：`pnpm exec wrangler secret put STRATZ_RELAY_TOKEN` 填同一个新值，本机 `.env` 同步。
+
+STRATZ 那份 token 不必跟着换——它绑在这台机器的出口 IP 上，换地方调用会被官方 403 挡掉。真要作废
+它，去 stratz.com 重新生成，替换 `$stratz_upstream_auth` 即可。
 
 ### 客户端：两边都改成走中转
 
