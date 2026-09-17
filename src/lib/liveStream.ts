@@ -240,12 +240,12 @@ export async function resolveDouyu(
 			errors.push(`getH5PlayV1(rate=${rate}) 没给地址：${JSON.stringify(json).slice(0, 300)}`);
 			continue;
 		}
-	result.url = `${rtmpUrl.replace(/\/$/, '')}/${rtmpLive}`;
-	result.kind = result.url.includes('.m3u8') ? 'm3u8' : 'flv';
-	result.quality = result.qualities.find((q) => q.rate === rate)?.name ?? `rate=${rate}`;
-	steps.push(`直链：${result.kind} ${result.url.slice(0, 120)}…`);
-	return result;
-}
+		result.url = `${rtmpUrl.replace(/\/$/, '')}/${rtmpLive}`;
+		result.kind = result.url.includes('.m3u8') ? 'm3u8' : 'flv';
+		result.quality = result.qualities.find((q) => q.rate === rate)?.name ?? `rate=${rate}`;
+		steps.push(`直链：${result.kind} ${result.url.slice(0, 120)}…`);
+		return result;
+	}
 
 	return result;
 }
