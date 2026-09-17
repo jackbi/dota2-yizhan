@@ -122,16 +122,36 @@ interface GapSlot {
  *
  * 这一条是"现在拿"能不能体现出收益的前提。如果选项不够时仍按最好的那个估，就等于假设
  * 最强的英雄一定留得到后面，于是每个候选的收益都趋近于零，建议也就没有意义了。
+ *
+ * 五个号位**一起**填，已经填过的英雄不再参与后面的号位：分开算的话，同一个英雄会同时出现在
+ * 四号位和五号位的"预计能补到"里，界面上看起来像多了一个人。
  */
-function expectedPick(pool: readonly PoolHero[], position: number, used: ReadonlySet<number>, contested: number): GapSlot {
-	const options = pool
-		.filter((entry) => !used.has(entry.hero.id))
-		.map((entry) => ({ entry, rate: entry.rates[position - 1] }))
-		.filter((row): row is { entry: PoolHero; rate: number } => typeof row.rate === 'number')
-		.sort((a, b) => b.rate - a.rate);
-	if (contested >= options.length) return { position, hero: null, rate: 0 };
-	const picked = options[contested];
-	return { position, hero: picked.entry.hero, rate: picked.rate };
+function fillGaps(pool: readonly PoolHero[], hasOwner: ReadonlySet<number>, used: ReadonlySet<number>, contested: number): Map<number, GapSlot> {
+	const optionsAt = (position: number, taken: ReadonlySet<number>) =>
+		pool
+			.filter((entry) => !taken.has(entry.hero.id))
+			.map((entry) => ({ entry, rate: entry.rates[position - 1] }))
+			.filter((row): row is { entry: PoolHero; rate: number } => typeof row.rate === 'number')
+			.sort((a, b) => b.rate - a.rate);
+
+	const gaps = new Map<number, GapSlot>();
+	const taken = new Set(used);
+	/** 先填选择最少的号位：这类位置最容易"没得补"，留给后面会低估。 */
+	const positions = [1, 2, 3, 4, 5]
+		.filter((position) => !hasOwner.has(position))
+		.sort((a, b) => optionsAt(a, taken).length - optionsAt(b, taken).length);
+
+	for (const position of positions) {
+		const options = optionsAt(position, taken);
+		if (contested >= options.length) {
+			gaps.set(position, { position, hero: null, rate: 0 });
+			continue;
+		}
+		const picked = options[contested];
+		gaps.set(position, { position, hero: picked.entry.hero, rate: picked.rate });
+		taken.add(picked.entry.hero.id);
+	}
+	return gaps;
 }
 
 interface Estimate {
@@ -155,6 +175,8 @@ function estimate(pool: readonly PoolHero[], ownedIds: readonly number[], byId: 
 	const owned = idsToPool(byId, ownedIds);
 	const assignment = bestAssignment(owned);
 	const used = new Set(ownedIds);
+	const hasOwner = new Set(assignment.positions);
+	const gaps = fillGaps(pool, hasOwner, used, contested);
 	const slots: LineupSlot[] = [];
 
 	for (let position = 1; position <= 5; position += 1) {
@@ -164,7 +186,7 @@ function estimate(pool: readonly PoolHero[], ownedIds: readonly number[], byId: 
 			slots.push({ position, hero: entry.hero, rate: rateAt(entry, position), settled: true });
 			continue;
 		}
-		const gap = expectedPick(pool, position, used, contested);
+		const gap = gaps.get(position) ?? { position, hero: null, rate: 0 };
 		slots.push({ position, hero: gap.hero, rate: gap.rate, settled: false });
 	}
 
