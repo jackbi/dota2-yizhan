@@ -8,10 +8,10 @@ import { isSecureOrigin } from '../lib/siteOrigin';
 /**
  * 开黑房间。
  *
- * **房间**不走服务端：传输是 WebRTC（Trystero 的信令 + P2P 数据通道，见
- * `src/scripts/partyRoom.ts`），服务端不存房间、不存聊天。理由是本站每 5 分钟
- * 重建并重启一次（见 docs/deploy.md 的「部署与重建频率」），任何存在 SSR 内存里的房间都会被
- * 那次重启清空。
+ * **房间在服务端**：一个房间一个 Durable Object（`src/worker/partyRoom.ts`），页面用一条
+ * WebSocket 连过去，分队、roll、权限判断都在那边算。早先试过 WebRTC 的 P2P，跨网络要靠打洞，
+ * 国内手机流量大量是对称 NAT，打不通就只能上 TURN；那条链上每一环坏了，页面上都只表现为
+ * 「房间里没人」，所以整个换掉了（见 docs/party.md）。
  *
  * 但**页面本身是 SSR 的**（`prerender = false`），只为一件事：登录状态服务端本来就知道。
  * 之前这里是静态页，「你是谁」那块要先等客户端 `/api/me` 回来才敢把「用 Steam 登录」
@@ -41,15 +41,15 @@ const me = session ? { name: displayName(session), avatar: session.avatar } : nu
 
 <Layout
 	title="开黑房间 · DOTA2 驿站"
-	description="纯前端的开黑房间：建房、分队伍、roll 点、聊天，打开同一个链接就在同一个房间。"
+	description="开了就能用的开黑房间：建房、分队伍、roll 点、聊天，手机流量也能进，打开同一个链接就在同一个房间。"
 >
 	<section class="mx-auto max-w-[1500px] px-4 py-8 sm:px-6 lg:px-8">
 		<div class="mb-6">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">DOTA2 驿站 · 开黑房间</p>
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">开黑房间</h1>
 			<p class="mt-3 max-w-3xl text-muted">
-				建房、拉人、分队、roll 点、边聊边排。房间走浏览器之间的点对点连接，
-				本站不存房间、不存聊天记录——关掉页面房间就散了。
+				建房、拉人、分队、roll 点、边聊边排。房间在服务端，一条 WebSocket 连着，
+				手机流量、公司网都能进；房间空置十分钟之后，连聊天记录一起删掉。
 			</p>
 		</div>
 
@@ -457,8 +457,8 @@ const me = session ? { name: displayName(session), avatar: session.avatar } : nu
 
 		<noscript>
 			<p class="rounded-2xl border border-line bg-surface p-4 text-sm leading-relaxed text-muted">
-				开黑房间完全靠浏览器的点对点连接（WebRTC）跑，没有 JavaScript 就没有房间。
-				要一起玩的话先用语音或群聊约好，页面上其它内容不受影响。
+				开黑房间要靠 JavaScript 连到服务端才能建房、聊天。要一起玩的话先用语音或群聊约好，
+				页面上其它内容不受影响。
 			</p>
 		</noscript>
 	</section>
