@@ -1,7 +1,7 @@
 import { fetchHeroList } from './heroApi';
 import { reportSource } from './dataHealth';
-import { fetchProHeroStats, getHeroMap } from './opendota';
-import { HERO_META_BRACKET_LABEL, HERO_META_WINDOW_DAYS, fetchHeroMeta } from './stratzApi';
+import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
+import { HERO_META_BRACKET_LABEL, HERO_META_WINDOW_DAYS, fetchHeroMeta, stratzFetchCount } from './stratzApi';
 
 /**
  * 阵容分析要用的一份数据。
@@ -63,6 +63,8 @@ let dataPromise: Promise<DraftData> | null = null;
  */
 export function loadDraftData(): Promise<DraftData> {
 	dataPromise ??= (async () => {
+		// 起点的联网计数：末尾拿它判断这一轮到底是新抓的还是吃缓存。
+		const before = stratzFetchCount() + openDotaFetchCount();
 		const [heroList, meta, proStats] = await Promise.all([
 			fetchHeroList().catch(() => []),
 			fetchHeroMeta(),
@@ -110,11 +112,14 @@ export function loadDraftData(): Promise<DraftData> {
 
 		const hasPositionData = heroes.some((hero) => hero.positions.some((cell) => cell !== null));
 		const hasProData = proPicks > 0 || proBans > 0;
+		const fetched = stratzFetchCount() + openDotaFetchCount() > before;
 
 		await reportSource(
 			'draft-data',
 			'阵容分析数据',
-			heroes.length === 0 ? 'empty' : hasPositionData ? 'fresh' : 'cache',
+			// 一份英雄都拿不到才算空；其余按"这轮有没有真的联网抓过"区分新数据与缓存，
+			// 不按有没有号位样本来判断——那会把"吃了缓存"说成"新抓的"。
+			heroes.length === 0 ? 'empty' : fetched ? 'fresh' : 'cache',
 			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；职业样本 ${proPicks} 出场 / ${proBans} 被禁`,
 		);
 
