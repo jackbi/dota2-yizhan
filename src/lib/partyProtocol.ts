@@ -68,7 +68,16 @@ export type LobbyMessage = { t: 'rooms'; rooms: LobbyRoom[] };
 
 export const encodeMessage = (message: ClientMessage | ServerMessage | LobbyMessage): string => JSON.stringify(message);
 
-const asString = (value: unknown, max: number): string => (typeof value === 'string' ? value.slice(0, max) : '');
+/**
+ * 裁剪到上限，**按码点**而不是按 UTF-16 码元：`slice()` 会把 emoji 的代理对劈成两半，
+ * 存进房间之后就是两个乱码方块（聊天里插表情之后这条路径变得常见了）。
+ */
+const asString = (value: unknown, max: number): string => {
+	if (typeof value !== 'string') return '';
+	if (value.length <= max) return value;
+	// 代理对占两个码元，所以先多取一倍码元再按码点截，够用且不用扫全串。
+	return [...value.slice(0, max * 2)].slice(0, max).join('');
+};
 const asId = (value: unknown): string => {
 	const raw = asString(value, 64);
 	return /^[A-Za-z0-9_-]{8,64}$/.test(raw) ? raw : '';

@@ -72,9 +72,18 @@ const id = 'a1b2c3d4e5f60718';
 {
 	assert.equal(decodeClientMessage(JSON.stringify({ t: 'chat', text: '' })), null);
 	assert.equal(decodeClientMessage(JSON.stringify({ t: 'chat', text: 42 })), null);
-	const chat = decodeClientMessage(JSON.stringify({ t: 'chat', text: '中'.repeat(500) }));
-	assert.equal(chat && 'text' in chat ? chat.text.length : -1, 400, '聊天内容裁到 400');
-	ok('chat：空/非字符串被拒，超长裁剪');
+const chat = decodeClientMessage(JSON.stringify({ t: 'chat', text: '中'.repeat(500) }));
+assert.equal(chat && 'text' in chat ? chat.text.length : -1, 400, '聊天内容裁到 400');
+ok('chat：空/非字符串被拒，超长裁剪');
+
+// 裁剪要按**码点**：emoji 是代理对，直接 slice 会在边界劈出半个字符，聊天里就是乱码方块。
+{
+	const long = decodeClientMessage(JSON.stringify({ t: 'chat', text: '😀'.repeat(500) }));
+	const text = long && 'text' in long ? long.text : '';
+	assert.equal([...text].length, 400, 'emoji 也要按码点裁到 400');
+	assert.ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:[^\uD800-\uDBFF]|^)[\uDC00-\uDFFF]/.test(text), '裁剪后不该留下落单的代理项');
+	ok('chat：emoji 超长按码点裁剪，不劈坏代理对');
+}
 }
 
 // 杂项：不是 JSON、不是对象、未知类型全部返回 null（调用方按「丢弃」处理）
