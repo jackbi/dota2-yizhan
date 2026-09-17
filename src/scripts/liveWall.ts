@@ -50,8 +50,9 @@ interface State {
 	/**
 	 * 显式要求「嵌平台整页」的房间 key。
 	 *
-	 * 斗鱼默认走直链 + `<video>`（见 `playDouyu`），只有解析失败、自动播放被拦，或者用户自己
-	 * 切过来时才用 iframe。虎牙本来就是官方播放器页，跟这个开关无关。
+	 * 斗鱼与虎牙默认都走直链 + `<video>`（见 `playDirect`），只有解析失败、自动播放被拦，
+	 * 或者用户自己切过来时才用 iframe。虎牙原先默认嵌它官方的纯播放器页，改掉的原因是那页
+	 * 只给约 10 分钟试看（见 `lib/liveStream.ts` 的 `parseHuyaStream`）。
 	 */
 	iframeKeys: string[];
 }
@@ -59,6 +60,14 @@ interface State {
 const LAYOUTS = [1, 2, 4, 6, 9];
 const MAX_SLOTS = 9;
 const STORAGE_KEY = 'dota2-live-wall/v1';
+
+/**
+ * 能自己解析直链、用 `<video>` 播的平台。
+ *
+ * B站 嵌不进来（`X-Frame-Options: SAMEORIGIN`）也没解直链，YouTube 是另一套，两者都只能
+ * 给一条「打开直播间」的外链。
+ */
+const DIRECT_PLATFORMS = new Set<Platform>(['douyu', 'huya']);
 
 /**
  * 「只显示画面」的取景参数——**现在只剩斗鱼一家**。
@@ -83,9 +92,10 @@ const STORAGE_KEY = 'dota2-live-wall/v1';
  * | --- | --- | --- | --- | --- |
  * | 斗鱼 | `#js-player-video` | (32, 0) | 813×457 | `relative`，会滚走 |
  *
- * **虎牙已经不需要裁切了**：它有一个官方的纯播放器页 `liveshare.huya.com/iframe/{房间号}`
- * （见 `data/site.ts` 的 `embedUrl()`），嵌进去就是画面本身，还自带每格可拖的音量滑杆。
- * 所以 `CROP` 里没有虎牙——`cropSpecOf('huya')` 返回 undefined，虎牙格子走「正常铺满」那条路。
+ * **虎牙不需要裁切**：它只在「直链播不动」时才嵌官方播放器页
+ * `liveshare.huya.com/iframe/{房间号}`（见 `data/site.ts` 的 `embedUrl()`），那一页本身就是
+ * 画面 + 一条控制条，铺满即可。所以 `CROP` 里没有虎牙——`cropSpecOf('huya')` 返回 undefined，
+ * 虎牙格子走「正常铺满」那条路。
  * （之前的写死值是 `#J_playerMain`、(90,60)、785×442，虎牙页头 `fixed` 吸顶得留 60px；
  * 那套连同它的偏移微调都已经删掉，别再照着老注释往回加。）
  *
@@ -439,10 +449,10 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		}
 
 		/*
-		 * 虎牙格子里是它的官方播放器，**控制条就贴在底部**（暂停/刷新/弹幕/音量）。
-		 * 我们那个 "打开直播间" 原先固定挂右下角，实测正好盖在音量滑杆和清晰度上（见截图），
-		 * 所以按平台换个位置：虎牙放到标题栏里，斗鱼保持右下角（它底部是裁出来的播放器区域，
-		 * 不冲突）。
+	 * 两个平台现在都默认直链自播，`<iframe>` 只在下述两种情况出现：直链解析不出来，或用户
+	 * 自己切了过去。虎牙那种兜底嵌的是它官方播放器页，**控制条贴在底部**（暂停/刷新/弹幕/音量），
+	 * 我们那个「打开直播间」原先固定挂右下角，实测正好盖在音量滑杆和清晰度上（见截图），
+	 * 所以按平台换个位置：虎牙放进标题栏，斗鱼保持右下角（它底部是裁出来的播放器区域，不冲突）。
 		 */
 		const huya = r.platform === 'huya';
 		const openLink = (cls: string): string =>
@@ -457,7 +467,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				${badge(r.platform)}
 				${huya ? openLink('shrink-0 rounded px-1 text-[11px] text-dota-light transition hover:bg-surface-3 hover:text-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold') : ''}
 				${
-					r.platform === 'douyu' && state.iframeKeys.includes(r.key)
+					DIRECT_PLATFORMS.has(r.platform) && state.iframeKeys.includes(r.key)
 						? `<button type="button" class="tile-use-video shrink-0 rounded px-1 text-[11px] text-dota-light transition hover:bg-surface-3 hover:text-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold" data-tile="${index}" title="改用直链播放（画面自己铺满，音量可控）">直链</button>`
 						: ''
 				}
@@ -472,7 +482,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 						播放这一格
 					</button>
 					<span class="tile-hint px-3 text-center text-[11px] leading-relaxed text-faint">
-						点开才会加载${huya ? '虎牙官方播放器' : '直播间画面'}${r.live ? '' : '（榜单房间，抓取时在播）'}
+					点开才会加载直播间画面${r.live ? '' : '（榜单房间，抓取时在播）'}
 					</span>
 				</div>
 			</div>
@@ -485,7 +495,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		const n = state.layout;
 		// 重建 innerHTML 会把 `<video>` 一起抹掉，所以先把播放器按规矩销毁——否则 mpegts.js
 		// 手里还攥着已经不存在的 media element，控制台会刷一串错。
-		destroyAllDouyuTiles();
+		destroyAllVideoTiles();
 		// 列宽行高全部走内联的 grid-template-*（见 applyTracks），类名只留布局骨架。
 		wallEl!.className = 'grid gap-3';
 		wallEl!.innerHTML = Array.from({ length: n }, (_, i) => tileHtml(i)).join('');
@@ -867,29 +877,49 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	 * 内存比嵌整页小得多。
 	 * 代价是每次播放要一次解析往返（约 1～4 秒），以及斗鱼改接口时这一块会先坏。
 	 */
-	interface DouyuTile {
+	interface VideoTile {
 		player: {
 			pause(): void;
 			unload(): void;
 			detachMediaElement(): void;
 			destroy(): void;
 		};
-	video: HTMLVideoElement;
-	/** 弹幕那条长连接。和播放器是两码事，但生命周期绑定在同一格里（见 `destroyDouyuTile`）。 */
-	danmaku: DanmakuHandle;
-}
-	const douyuTiles = new Map<number, DouyuTile>();
+		video: HTMLVideoElement;
+		/** 弹幕那条长连接。生命周期绑定在同一格里（见 `destroyVideoTile`）；虎牙还没接弹幕，所以可空。 */
+		danmaku: DanmakuHandle | null;
+	}
+	const videoTiles = new Map<number, VideoTile>();
 	/** 每格已重试几次（重新解析算一次）。轮播房间放完会 ended，允许自动续一次。 */
 	const retries = new Map<number, number>();
+	/**
+	 * 每格这一轮拿到的候选播放地址，以及正在用第几条。
+	 *
+	 * 只有虎牙会有多条（它一次给好几个 CDN，实测单条线路会抽风）；斗鱼永远只有一条，而且那
+	 * 地址是一次性的，换线等于重新解析——所以两条重试路径在 `playDirect` 里分开走。
+	 */
+	const candidates = new Map<number, string[]>();
+	const lineIndex = new Map<number, number>();
+	/**
+	 * 每格当前的「第几次尝试」。
+	 *
+	 * 换线路与重新解析都会再进一次 `playDirect`，而上一轮遗留的异步回调（播放器的 ERROR、
+	 * 还没落定的 `play()`）**必须认出自己已经过期**：旧播放器是被 `pause()` 拆掉的，那个
+	 * `play()` promise 必然以 AbortError 收场，不过滤就会把新一轮刚搭好的播放器判成
+	 * 「自动播放被拦」、当场切回 iframe——实测换线路那条路就是这么被打断的。
+	 */
+	const attempts = new Map<number, number>();
+	/** 每格最近一次 `ended` 的时刻，以及「连续短命轮次」的计数（用来识破拉不动还一直重连的循环）。 */
+	const lastEndedAt = new Map<number, number>();
+	const endedStrikes = new Map<number, number>();
 
 	function setHint(tile: HTMLElement, text: string): void {
 		const el = tile.querySelector('.tile-hint');
 		if (el) el.textContent = text;
 	}
 
-	function destroyDouyuTile(index: number): void {
-		const entry = douyuTiles.get(index);
-		douyuTiles.delete(index);
+	function destroyVideoTile(index: number): void {
+		const entry = videoTiles.get(index);
+		videoTiles.delete(index);
 		if (!entry) return;
 		try {
 			entry.player.pause();
@@ -900,17 +930,18 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			// 已经坏掉的播放器，销毁失败无所谓。
 		}
 		// 弹幕是另一条连接，播放器销毁失败也得关掉——不然换格之后它还在往一个不存在的格子里塞。
-		entry.danmaku.close();
+		entry.danmaku?.close();
 		entry.video.remove();
 	}
 
-	function destroyAllDouyuTiles(): void {
-		for (const index of [...douyuTiles.keys()]) destroyDouyuTile(index);
+	function destroyAllVideoTiles(): void {
+		for (const index of [...videoTiles.keys()]) destroyVideoTile(index);
+		attempts.clear();
 	}
 
 	/** 直链播不动时的退路：把这个格子切回「嵌平台整页 + 取景」那条老路。 */
 	function useIframeFallback(index: number, note: string): void {
-		destroyDouyuTile(index);
+		destroyVideoTile(index);
 		state.iframeKeys = [...new Set([...state.iframeKeys, state.slots[index] ?? ''])].filter(Boolean);
 		save();
 		setNote(note);
@@ -1013,7 +1044,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 
 	/** 格子尺寸变了重算弹幕范围（和 `refitCrops()` 一起被调）。 */
 	function refitDanmaku(): void {
-		for (const entry of douyuTiles.values()) fitDanmaku(entry.video, entry.danmaku.overlay);
+		for (const entry of videoTiles.values()) if (entry.danmaku) fitDanmaku(entry.video, entry.danmaku.overlay);
 	}
 
 	/**
@@ -1022,8 +1053,8 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	 * 斗鱼的弹幕是**另一条长连接**（不进视频流，也不经过我们的服务器，见 `lib/douyuDanmaku.ts`），
 	 * 所以它和播放器是两条命：播放器被销毁时这里必须跟着 `close()`，否则换格之后它还在收。
 	 *
-	 * 显示层在这里建（而不是在 `playDouyu` 摆 `<video>` 那几行里）：弹幕要盖在画面上，
-	 * 得等 `<video>` 先进 DOM 才有得盖，而「建层 → 挂连接 → 登记进 `douyuTiles`」本来就该是一处的事。
+	 * 显示层在这里建（而不是在 `playDirect` 摆 `<video>` 那几行里）：弹幕要盖在画面上，
+	 * 得等 `<video>` 先进 DOM 才有得盖，而「建层 → 挂连接 → 登记进 `videoTiles`」本来就该是一处的事。
 	 */
 	function startDanmaku(r: RoomRef, video: HTMLVideoElement): DanmakuHandle {
 		const body = video.parentElement;
@@ -1051,47 +1082,90 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		return { close: () => client.close(), overlay };
 	}
 
-	/** 每格左下角那组控制：静音开关 + 停止 + 当前清晰度。 */
-	function douyuControls(index: number, quality: string, muted: boolean): string {
+	/**
+	 * 每格左下角那组控制：静音开关 + 停止（斗鱼还多一个弹幕开关与清晰度标签）。
+	 *
+	 * 虎牙不标清晰度：接口给的档位表是给移动端的，我们解析时没带 `ratio`，到底播的是哪一档
+	 * 无从确认，标上去就是编——宁可空着。
+	 */
+	function tileControls(index: number, quality: string, muted: boolean, withDanmaku: boolean): string {
 		const btn =
 			'flex h-6 items-center justify-center rounded bg-ink/80 px-1.5 text-cream/80 backdrop-blur transition hover:bg-dota hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold';
 		return `<span class="absolute bottom-2 left-2 z-10 flex items-center gap-1" role="group" aria-label="这一格的声音与播放">
 			<button type="button" class="tile-mute ${btn}" data-tile="${index}" aria-pressed="${muted ? 'true' : 'false'}" aria-label="${muted ? '让这一格出声' : '把这一格静音'}">${muted ? '🔇' : '🔊'}</button>
-			<button type="button" class="tile-danmaku-toggle ${btn}" data-tile="${index}" aria-pressed="true" aria-label="把这一格的弹幕隐藏">弹</button>
+			${
+				withDanmaku
+					? `<button type="button" class="tile-danmaku-toggle ${btn}" data-tile="${index}" aria-pressed="true" aria-label="把这一格的弹幕隐藏">弹</button>`
+					: ''
+			}
 			<button type="button" class="tile-stop ${btn}" data-tile="${index}" aria-label="停掉这一格（房间留在格子里）">■</button>
-			<span class="rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-cream/60 backdrop-blur">${esc(quality)}</span>
+			${quality ? `<span class="rounded bg-ink/80 px-1.5 py-0.5 text-[10px] text-cream/60 backdrop-blur">${esc(quality)}</span>` : ''}
 		</span>`;
 	}
 
 	/**
-	 * 斗鱼格子的播放：解析 → 立刻用 `<video>` 播。
+	 * 直链格子的播放：解析 → 用 `<video>` 播。斗鱼与虎牙都走这里。
 	 *
-	 * 这里的 `await` 顺序不能动：拿到 `url` 之后**中间不能再插任何请求**（包括探测、预加载、日志上报），
-	 * 否则就是在烧那个一次性 token。
+	 * 两个平台的**重试语义完全不同**，所以 `retry()` 里分岔：
+	 *
+	 * - 斗鱼：地址是一次性的，`await` 顺序不能动——拿到 `url` 之后**中间不能再插任何请求**
+	 *   （包括探测、预加载、日志上报），否则就是在烧那个 token；重试只能重新解析。
+	 * - 虎牙：一次解析给好几条 CDN 线路（实测单条线路会抽风），所以先把候选线路用完，再重新解析。
 	 */
-	async function playDouyu(index: number, r: RoomRef): Promise<void> {
+	async function playDirect(index: number, r: RoomRef, reuseLine?: number): Promise<void> {
 		const tile = wallEl!.querySelector<HTMLElement>(`[data-slot="${index}"]`);
 		if (!tile) return;
-		destroyDouyuTile(index);
+		const attempt = (attempts.get(index) ?? 0) + 1;
+		attempts.set(index, attempt);
+		destroyVideoTile(index);
 		tile.querySelector('.tile-video-controls')?.remove();
 		tile.querySelector('.tile-idle')?.remove();
 		const body = tile.querySelector<HTMLElement>('.tile-body');
 		if (!body) return;
-		body.innerHTML = '<div class="tile-loading absolute inset-0 grid place-items-center text-[11px] text-faint">取直链…</div>';
+		const loading = typeof reuseLine === 'number' ? '换线路…' : '取直链…';
+		body.innerHTML = `<div class="tile-loading absolute inset-0 grid place-items-center text-[11px] text-faint">${loading}</div>`;
 
-		let payload: { ok?: boolean; url?: string; kind?: string; quality?: string; error?: string };
-		try {
-			const res = await fetch(`/api/live/stream-url?platform=douyu&room=${encodeURIComponent(r.roomId)}`);
-			payload = (await res.json()) as typeof payload;
-		} catch (e) {
-			payload = { ok: false, error: e instanceof Error ? e.message : String(e) };
+		interface Payload {
+			ok?: boolean;
+			url?: string;
+			urls?: string[];
+			kind?: string;
+			quality?: string;
+			error?: string;
 		}
-		// 解析期间用户可能已经把这一格换掉/清掉了。
-		if (!tile.isConnected || state.slots[index] !== r.key) return;
-		if (!payload.ok || !payload.url) {
-			useIframeFallback(index, `斗鱼直链解析失败（${payload.error ?? '未知原因'}），这一格已切回平台页面。`);
-			return;
+		let urls: string[] = [];
+		let line = 0;
+		let quality = '';
+		let kind = 'flv';
+		/*
+		 * 有可复用的候选时不再发请求：这条路是虎牙的「换下一条线路」，它那地址 24 小时内都能用，
+		 * 重新解析一遍纯属浪费（斗鱼的候选永远只有一条，走不到这里）。
+		 */
+		if (typeof reuseLine === 'number' && (candidates.get(index)?.length ?? 0) > reuseLine) {
+			urls = candidates.get(index)!;
+			line = reuseLine;
+		} else {
+			let payload: Payload;
+			try {
+				const res = await fetch(`/api/live/stream-url?platform=${r.platform}&room=${encodeURIComponent(r.roomId)}`);
+				payload = (await res.json()) as Payload;
+			} catch (e) {
+				payload = { ok: false, error: e instanceof Error ? e.message : String(e) };
+			}
+			// 解析期间用户可能已经把这一格换掉/清掉了。
+			if (!tile.isConnected || state.slots[index] !== r.key) return;
+			if (!payload.ok || !(payload.url || payload.urls?.length)) {
+				useIframeFallback(index, `直链解析失败（${payload.error ?? '未知原因'}），这一格已切回平台页面。`);
+				return;
+			}
+			// 虎牙一次给一批候选（首选在前），斗鱼只给一条。
+			urls = [...new Set([payload.url, ...(payload.urls ?? [])].filter((u): u is string => !!u))];
+			candidates.set(index, urls);
+			quality = payload.quality ?? '';
+			kind = payload.kind ?? 'flv';
 		}
+		lineIndex.set(index, line);
+		const url = urls[line] ?? urls[0];
 
 		body.innerHTML = '';
 		const video = document.createElement('video');
@@ -1111,50 +1185,84 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		video.style.objectFit = 'contain';
 		body.append(video);
 
-		const quality = payload.quality ?? '';
-		tile.insertAdjacentHTML('beforeend', `<span class="tile-video-controls contents">${douyuControls(index, quality, true)}</span>`);
+		// 弹幕开关只有斗鱼有（虎牙的弹幕是另一套协议，还没接）。
+		const withDanmaku = r.platform === 'douyu';
+		tile.insertAdjacentHTML(
+			'beforeend',
+			`<span class="tile-video-controls contents">${tileControls(index, quality, true, withDanmaku)}</span>`,
+		);
 
 		let mpegts: typeof import('mpegts.js').default;
 		try {
 			// 按需加载：只在真的播斗鱼时才把这 200 多 KB 的库拉下来。
 			mpegts = (await import('mpegts.js')).default;
 		} catch (e) {
+			if (attempts.get(index) !== attempt) return;
 			useIframeFallback(index, `播放器没加载起来（${e instanceof Error ? e.message : String(e)}），这一格已切回平台页面。`);
 			return;
 		}
-		if (!tile.isConnected || state.slots[index] !== r.key) return;
+		if (!tile.isConnected || state.slots[index] !== r.key || attempts.get(index) !== attempt) return;
 
 		const retry = (): void => {
+			// 过期那次的 ERROR 不该动新一轮的播放器。
+			if (attempts.get(index) !== attempt) return;
+			/*
+			 * 虎牙先换下一条线路：它一次解析给好几条 CDN，而单条线路会抽风（实测 AL 线 8 次里
+			 * 3 次 403、2 次连不上）。换线不用重新解析，也不该算一次「重试」——用完候选才算。
+			 */
+			const list = candidates.get(index) ?? [];
+			const nextLine = (lineIndex.get(index) ?? 0) + 1;
+			if (nextLine < list.length) {
+				void playDirect(index, r, nextLine);
+				return;
+			}
 			const used = (retries.get(index) ?? 0) + 1;
 			retries.set(index, used);
 			if (used <= 2) {
-				// **重新解析**，绝不重用刚才那条地址。
-				void playDouyu(index, r);
+				// **重新解析**：斗鱼那条地址用过了就不能再用，虎牙则是候选全试完了。
+				void playDirect(index, r);
 			} else {
 				useIframeFallback(index, '这一格反复播不起来，已切回平台页面（点「播放这一格」可再试）。');
 			}
 		};
 
 		const player = mpegts.createPlayer(
-			{ type: payload.kind === 'm3u8' ? 'mse' : 'flv', isLive: true, url: payload.url },
+			{ type: kind === 'm3u8' ? 'mse' : 'flv', isLive: true, url },
 			// 直播：别攒缓冲，起播要快。
 			{ enableStashBuffer: false, stashInitialSize: 128, liveBufferLatencyChasing: true },
 		);
 		player.on(mpegts.Events.ERROR, retry);
-		// 轮播房间（斗鱼 `videoLoop === 1`）拉到的是一段有限的流，放完就是 ended：自动续一次。
-		video.addEventListener('ended', retry);
+		/*
+		 * 轮播房间（斗鱼 `videoLoop === 1`）拉到的是一段有限的流，放完就是 ended：自动续一次。
+		 *
+		 * 但要防住「这条路径根本推不动」：实测境外出口拉虎牙，每隔一两秒就被掐一次（每次只给
+		 * 0.2~2MB），照单重连就是个永远在闪的格子。正常的轮播一轮要几分钟，所以 20 秒内连着
+		 * 断三次就认输、切回平台页面。
+		 */
+		video.addEventListener('ended', () => {
+			if (attempts.get(index) !== attempt) return;
+			const now = Date.now();
+			const strikes = now - (lastEndedAt.get(index) ?? 0) < 20_000 ? (endedStrikes.get(index) ?? 0) + 1 : 0;
+			lastEndedAt.set(index, now);
+			endedStrikes.set(index, strikes);
+			if (strikes >= 3) {
+				useIframeFallback(index, '这条线路连着几次几秒就断，已切回平台页面（点「直链」可再试）。');
+				return;
+			}
+			retry();
+		});
 		player.attachMediaElement(video);
 		/*
 		 * **先登记，再 load/play。**
 		 *
 		 * 登记晚于 `play()` 时，下面两条失败分支（ERROR 早于 play 落定、自动播放被拦）里的
-		 * `useIframeFallback()` → `destroyDouyuTile()` 会在表里查不到条目、直接 return：
+		 * `useIframeFallback()` → `destroyVideoTile()` 会在表里查不到条目、直接 return：
 		 * pause / unload / detachMediaElement / destroy 一个都不执行，而 `resetTile()` 已经把这个
 		 * `<video>` 换出 DOM。结果是格子上显示兜底页面、后台仍挂着一个 mpegts loader 在拉流，
 		 * 它的 ERROR handler 还会再触发一次重新解析，等于多叠一个 player。弹幕连接同理：
 		 * 得有人在表里负责关它。
 		 */
-		douyuTiles.set(index, { player, video, danmaku: startDanmaku(r, video) });
+		videoTiles.set(index, { player, video, danmaku: withDanmaku ? startDanmaku(r, video) : null });
 		player.load();
 		try {
 			await player.play();
@@ -1164,6 +1272,9 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			// 起播这段时间里用户可能已经把这一格清掉或换成别的房间了，那时别拿「自动播放被拦」
 			// 去解释——播放器已经在表里，`resetTile()` 负责销毁它。
 			if (!tile.isConnected || state.slots[index] !== r.key) return;
+			// 同理，换线路/重新解析会让旧播放器被 pause，那个 promise 必然以 AbortError 收场；
+			// 过期的那一次直接闭嘴，别把新一轮正在起的播说成失败。
+			if (attempts.get(index) !== attempt) return;
 			useIframeFallback(index, `自动播放被拦（${e instanceof Error ? e.message : String(e)}），这一格已切回平台页面。`);
 			return;
 		}
@@ -1178,8 +1289,14 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	function resetTile(index: number): void {
 		const tile = wallEl!.querySelector<HTMLElement>(`[data-slot="${index}"]`);
 		if (!tile) return;
-		destroyDouyuTile(index);
+		destroyVideoTile(index);
 		retries.delete(index);
+		candidates.delete(index);
+		lineIndex.delete(index);
+		// 删掉令牌：还在半路上的那些回调会因此认出自己已过期。
+		attempts.delete(index);
+		lastEndedAt.delete(index);
+		endedStrikes.delete(index);
 		const wrapper = document.createElement('div');
 		wrapper.innerHTML = tileHtml(index).trim();
 		const fresh = wrapper.firstElementChild;
@@ -1195,9 +1312,9 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		if (!tile || !key) return;
 		const r = rooms.get(key) ?? state.manual.find((m) => m.key === key);
 		if (!r) return;
-		// 斗鱼走直链自己播；用户显式要求「用平台页面」时（解析失败/手动切）才回到 iframe。
-		if (r.platform === 'douyu' && !state.iframeKeys.includes(r.key)) {
-			void playDouyu(index, r);
+		// 斗鱼与虎牙都走直链自播；用户显式要求「用平台页面」时（解析失败/手动切）才回到 iframe。
+		if (DIRECT_PLATFORMS.has(r.platform) && !state.iframeKeys.includes(r.key)) {
+			void playDirect(index, r);
 			return;
 		}
 		const body = tile.querySelector('.tile-body');
@@ -1260,8 +1377,8 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	/** 切换取景方式后把已经在播的格子重新加载，省得用户再点一遍。 */
 	function reloadPlayers(): void {
 		const playing = [...wallEl!.querySelectorAll<HTMLElement>('[data-slot]')]
-			// 斗鱼是 `<video>`（在 `douyuTiles` 里），虎牙与兜底是 `<iframe>`，两边都要捞。
-			.filter((tile) => tile.querySelector('iframe') || douyuTiles.has(Number(tile.dataset.slot)))
+			// 直链播放是 `<video>`（在 `videoTiles` 里），兜底与整页是 `<iframe>`，两边都要捞。
+			.filter((tile) => tile.querySelector('iframe') || videoTiles.has(Number(tile.dataset.slot)))
 			.map((tile) => Number(tile.dataset.slot))
 			.filter((n) => Number.isInteger(n));
 		renderWall();
@@ -1269,7 +1386,7 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	}
 
 	function stopAll(): void {
-		destroyAllDouyuTiles();
+		destroyAllVideoTiles();
 		wallEl!.querySelectorAll('iframe').forEach((f) => f.remove());
 		renderWall();
 	}
@@ -1551,10 +1668,10 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 			resetCrop(Number(cropReset.dataset.tile));
 			return;
 		}
-		// 斗鱼直链播放时的两个控制：静音开关（多路分屏最需要的那件事）与「停掉但留着房间」。
+		// 直链播放时的那组控制：静音开关（多路分屏最需要的那件事）与「停掉但留着房间」。
 		const mute = target.closest<HTMLButtonElement>('.tile-mute');
 		if (mute?.dataset.tile) {
-			const entry = douyuTiles.get(Number(mute.dataset.tile));
+			const entry = videoTiles.get(Number(mute.dataset.tile));
 			if (entry) {
 				entry.video.muted = !entry.video.muted;
 				mute.textContent = entry.video.muted ? '🔇' : '🔊';
@@ -1566,8 +1683,9 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 	// 弹幕开关：只切这一格的显示，连接照收——关了再开要重连一次，还得重新等 `loginres`。
 	const danmakuToggle = target.closest<HTMLButtonElement>('.tile-danmaku-toggle');
 	if (danmakuToggle?.dataset.tile) {
-		const entry = douyuTiles.get(Number(danmakuToggle.dataset.tile));
-		if (entry) {
+		// 虎牙格子里没有这个按钮（它的弹幕协议还没接），查不到弹幕就当没点。
+		const entry = videoTiles.get(Number(danmakuToggle.dataset.tile));
+		if (entry?.danmaku) {
 			const show = entry.danmaku.overlay.style.display === 'none';
 			entry.danmaku.overlay.style.display = show ? '' : 'none';
 			danmakuToggle.setAttribute('aria-pressed', String(show));

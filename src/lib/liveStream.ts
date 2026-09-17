@@ -1,11 +1,17 @@
 import { md5Hex } from './md5';
+import { parseHuyaStream } from './huyaStream';
 
 /**
  * 直播**直链**解析（只在服务端跑）。
  *
- * 和 `liveApi.ts` 的区别：那个抓的是「谁在播」，这个拿的是「画面从哪来」——分屏页的斗鱼格子
+ * 和 `liveApi.ts` 的区别：那个抓的是「谁在播」，这个拿的是「画面从哪来」——分屏页的格子
  * 用它解出的直链自己播 `<video>`，不再嵌平台整页再 `transform` 裁切（见 docs/live.md 的
- * 「分屏页的画面：斗鱼直链、虎牙官方播放器、兜底取景」）。解析失败时才退回那条取景兜底路。
+ * 「分屏页的画面：两个平台都走直链、兜底取景」）。解析失败时才退回那条取景兜底路。
+ *
+ * 两个平台的**地址性质差得远**，别把一条路上的结论套到另一条：
+ *
+ * - 斗鱼：一次性令牌、有效期约 25 秒，拿到就得立刻播，重试必须重新解析（见下一节）。
+ * - 虎牙：签名 24 小时有效、同一地址能反复拉，而且一次给多条 CDN 线路（见文末 `resolveHuya`）。
  *
  * ## 斗鱼这条路是哪来的
  *
@@ -241,5 +247,62 @@ export async function resolveDouyu(
 	return result;
 }
 
+	return result;
+}
+
+// ---------------------------------------------------------------- 虎牙
+
+export interface HuyaResolve {
+	roomId: string;
+	live: boolean;
+	owner?: string;
+	title?: string;
+	/** 候选播放地址，按线路偏好排序。拿不到就是空数组。 */
+	urls: string[];
+	steps: string[];
+	errors: string[];
+}
+
+/**
+ * 解析一个虎牙房间的播放直链。
+ *
+ * 只打一个接口——`profileRoom` 正是构建期抓开播状态用的那个，不需要签名、不需要跑页面 JS、
+ * 不需要 cookie，比斗鱼那条链短得多。
+ */
+export async function resolveHuya(roomId: string): Promise<HuyaResolve> {
+	const steps: string[] = [];
+	const errors: string[] = [];
+	const result: HuyaResolve = { roomId, live: false, urls: [], steps, errors };
+
+	const res = await getJson(`https://mp.huya.com/cache.php?m=Live&do=profileRoom&roomid=${roomId}`, {
+		'user-agent': UA,
+		accept: 'application/json, text/plain, */*',
+	});
+	if (res.error) {
+		errors.push(`profileRoom：${res.error}`);
+		return result;
+	}
+	const info = parseHuyaStream(res.data);
+	if (!info) {
+		errors.push(`profileRoom 返回的形状不对：${JSON.stringify(res.data).slice(0, 300)}`);
+		return result;
+	}
+
+	result.live = info.live;
+	result.owner = info.owner;
+	result.title = info.title;
+	const cdns = info.lines.map((l) => l.cdn).join('/');
+	steps.push(`profileRoom: liveStatus=${info.live ? 'ON' : '非 ON'}，线路 ${info.lines.length} 条（${cdns || '无'}）`);
+	// 轮播与未开播的房间接口一个地址都不给，这一格只能回落到兜底那条路（嵌官方播放器）。
+	if (!info.live) {
+		errors.push(`虎牙这边不是开播状态${info.title ? `（${info.title}）` : ''}，没有可用的直链`);
+		return result;
+	}
+	if (info.lines.length === 0) {
+		errors.push('接口没给播放地址');
+		return result;
+	}
+	result.urls = info.lines.map((l) => l.url);
+	steps.push(`直链：flv × ${result.urls.length}（首选 ${info.lines[0].cdn}）`);
 	return result;
 }

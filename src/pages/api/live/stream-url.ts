@@ -1,10 +1,11 @@
 import type { APIRoute } from 'astro';
-import { resolveDouyu } from '../../../lib/liveStream';
+import { resolveDouyu, resolveHuya } from '../../../lib/liveStream';
 
 export const prerender = false;
 
 /**
  * 给分屏页用的**直链**接口：`GET /api/live/stream-url?platform=douyu&room=58718`
+ * （虎牙同一形状：`platform=huya`，只是多回一个 `urls` 候选线路数组。）
  *
  * 只回一条**一次性**的播放地址，不回视频字节——**视频流量不过服务器**，浏览器直接去斗鱼 CDN 拉
  * （实测 CDN 给 `Access-Control-Allow-Origin: *`，同源限制不存在）。
@@ -22,19 +23,54 @@ export const prerender = false;
  *
  * 这也是为什么之前「自己播流」的尝试全是假的失败：诊断先拿这条地址请求了三次探 CORS，
  * token 被用掉了，后面谁来播都只剩试看量级。
+ *
+ * ## 虎牙的形状不一样
+ *
+ * 虎牙那条链只打一个接口，回的是**一组**候选地址（签名 24 小时有效、能反复拉、单条线路会
+ * 抽风，实测详情见 `lib/liveStream.ts` 的 `resolveHuya`）。所以虎牙不仅回 `url`（首选），
+ * 还回 `urls`：播放器一条播不动就换下一条，不必重新解析。
  */
 export const GET: APIRoute = async ({ url }) => {
 	const platform = (url.searchParams.get('platform') ?? 'douyu').trim();
 	const room = (url.searchParams.get('room') ?? '').trim();
-	if (platform !== 'douyu') {
+	if (platform !== 'douyu' && platform !== 'huya') {
 		return json({ ok: false, error: `暂不支持 platform=${platform}` }, 400);
 	}
 	if (!/^\d{1,9}$/.test(room)) {
 		return json({ ok: false, error: 'room 必须是数字房间号，例如 58718' }, 400);
 	}
-	const rate = Number(url.searchParams.get('rate') ?? 0);
 
 	const started = Date.now();
+
+	if (platform === 'huya') {
+		const resolved = await resolveHuya(room);
+		if (resolved.urls.length === 0) {
+			return json(
+				{
+					ok: false,
+					error: resolved.errors[0] ?? '没拿到直链',
+					live: resolved.live,
+					steps: resolved.steps,
+					errors: resolved.errors,
+				},
+				502,
+			);
+		}
+		return json({
+			ok: true,
+			platform,
+			room,
+			url: resolved.urls[0],
+			urls: resolved.urls,
+			kind: 'flv',
+			live: resolved.live,
+			owner: resolved.owner,
+			title: resolved.title,
+			elapsedMs: Date.now() - started,
+		});
+	}
+
+	const rate = Number(url.searchParams.get('rate') ?? 0);
 	const resolved = await resolveDouyu(room, Number.isFinite(rate) ? { rate: [rate] } : {});
 	if (!resolved.url) {
 		return json(
