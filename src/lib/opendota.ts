@@ -161,6 +161,51 @@ export async function getHeroMap(): Promise<Map<number, HeroInfo>> {
 	return heroMapPromise;
 }
 
+export interface ProHeroStat {
+	/** 该英雄在职业比赛里的出场、取胜与被禁场次。 */
+	picks: number;
+	wins: number;
+	bans: number;
+}
+
+/** 职业样本变化慢，缓存一天足够，也避免每次构建都多打一个请求。 */
+const PRO_HERO_TTL_SECONDS = DAY_SECONDS;
+
+interface OdHeroStatRow {
+	id?: number | null;
+	pro_pick?: number | null;
+	pro_win?: number | null;
+	pro_ban?: number | null;
+}
+
+let proHeroStatsPromise: Promise<Map<number, ProHeroStat>> | null = null;
+
+/**
+ * 职业比赛的英雄出场与被禁场次（`/api/heroStats` 的 `pro_*`）。
+ *
+ * 取之前先说清口径：这两个数字**不是**「近一周」也不是「全部历史」，而是 OpenDota 数据库里
+ * 滚动的职业样本。实测全部英雄加起来只有 600 多次出场，折合约 60 场对局，单个英雄常常只有
+ * 个位数。所以它只能当**热度**的旁证，不能当胜率用；界面上也照实数展示场次，不换算成百分比
+ * 唬人。真正有统计意义的号位胜率走 STRATZ 的高分局数据（见 `stratzApi.fetchHeroMeta`）。
+ *
+ * 拿不到就返回空 Map，调用方按"没有职业样本"降级。
+ */
+export function fetchProHeroStats(): Promise<Map<number, ProHeroStat>> {
+	proHeroStatsPromise ??= (async () => {
+		const rows = await cachedJson<OdHeroStatRow[]>('hero-stats', `${API}/heroStats`, PRO_HERO_TTL_SECONDS);
+		const map = new Map<number, ProHeroStat>();
+		for (const row of rows ?? []) {
+			if (typeof row.id !== 'number') continue;
+			const picks = row.pro_pick ?? 0;
+			const bans = row.pro_ban ?? 0;
+			if (picks === 0 && bans === 0) continue;
+			map.set(row.id, { picks, wins: row.pro_win ?? 0, bans });
+		}
+		return map;
+	})();
+	return proHeroStatsPromise;
+}
+
 // ---------------------------------------------------------------- 队伍映射
 
 export interface OdTeam {
