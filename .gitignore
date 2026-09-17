@@ -42,6 +42,10 @@ __pycache__/
 # 这些是个人环境的东西，不进仓库，也别一直挂在 git status 里。
 .vscode/
 .agents/
+# 对外推广文案（NGA / LinuxDo 发帖稿）。放这儿是为了写的时候能对着代码改，
+# 但**不进仓库**：发帖稿是一次性对外文本，进了仓库就会和线上功能说明各自漂移，
+# clone 下来的人也只会看到一堆宣传稿。
+promo/
 # 代码索引（codegraph）：本地生成的，换台机器重新索引即可。
 .codegraph/
 .playwright-mcp/
