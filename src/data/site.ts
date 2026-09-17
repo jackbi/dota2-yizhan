@@ -8,6 +8,7 @@ export const NAV = [
 	{ href: '/news', label: '新闻' },
 	{ href: '/community', label: '社区' },
 	{ href: '/tournaments', label: '赛事' },
+	{ href: '/draft', label: '阵容分析' },
 	{ href: '/patches', label: '版本' },
 	{ href: '/heroes', label: '英雄' },
 	{ href: '/items', label: '装备' },

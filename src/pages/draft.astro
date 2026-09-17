@@ -1,0 +1,444 @@
+---
+import Layout from '../layouts/Layout.astro';
+import { loadDraftData } from '../lib/draftData';
+import { formatMatchTime } from '../lib/format';
+import { getTournaments } from '../lib/tournamentsApi';
+import type { EsportsMatch } from '../data/types';
+
+/**
+ * 阵容分析：观赛时手动录 BP，再由数据层与模型一起给出建议。
+ *
+ * 页面本身是静态的，英雄数据与号位胜率在构建期写进来（见 `lib/draftData.ts`），
+ * 唯一的运行时外部依赖是用户自己的 DeepSeek key，直接从浏览器发出去，服务端不经手。
+ */
+
+const data = await loadDraftData();
+const payload = JSON.stringify(data);
+
+/**
+ * 比赛选择器用的赛程快照。
+ *
+ * 这是构建期的：跟站内赛程页一样不会自己刷新。观赛时通常已经知道自己看的是哪场，
+ * 所以它只是省去打字的入口，选不到就手输队名。
+ */
+const bundle = await getTournaments();
+const now = Math.floor(Date.now() / 1000);
+const byId = new Map<string, EsportsMatch>();
+for (const match of [...bundle.live, ...bundle.events.flatMap((event) => event.matches ?? [])]) {
+	if (!byId.has(match.id)) byId.set(match.id, match);
+}
+/** 排序：进行中 → 未开赛（近的在前）→ 已结束（新的在前）。 */
+const statusRank = (match: EsportsMatch): number => (match.status === 'live' ? 0 : match.status === 'upcoming' ? 1 : 2);
+const matches = [...byId.values()]
+	.sort((a, b) => statusRank(a) - statusRank(b) || (statusRank(a) === 2 ? b.startTime - a.startTime : a.startTime - b.startTime))
+	.slice(0, 24);
+const matchLabel = (match: EsportsMatch): string => {
+	const status = match.status === 'live' ? '进行中' : match.startTime > now ? '未开赛' : '已结束';
+	/**
+	 * 实时接口给的比赛偶尔没有开赛时间（`startTime` 是 0），直接算会得到 NaN，
+	 * 格式化函数会抛 RangeError 把整页构建打断，所以这里先挡住。
+	 */
+	if (!Number.isFinite(match.startTime) || match.startTime <= 0) return `${match.home.name} vs ${match.away.name} · ${match.eventName} · ${status}`;
+	const time =
+		status === '未开赛'
+			? formatMatchTime(match.startTime, now)
+			: `${Math.abs(Math.round((now - match.startTime) / 3600))} 小时${status === '进行中' ? '前开赛' : '前'}`;
+	return `${match.home.name} vs ${match.away.name} · ${match.eventName} · ${time}`;
+};
+---
+
+<Layout
+	title="阵容分析 · DOTA2 驿站"
+	description="队长模式的 BP 陪练台：手动录入双方 ban/pick，按号位胜率给出建议，可选用自己的 DeepSeek key 让模型解释每一手。"
+>
+	<section class="mx-auto max-w-[1800px] px-4 py-8 sm:px-6 lg:px-8">
+		<div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+			<div>
+				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">阵容分析</p>
+				<h1 class="mt-2 font-display text-3xl sm:text-4xl">BP 陪练台</h1>
+				<p class="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
+					看比赛时把双方的 ban/pick 点进来，轮到你这边时看建议。顺序按 7.40 起的队长模式：24 手、每队 7 禁 5 选，
+					后选方握着最后一手禁用和最后一手挑选。号位胜率取 {data.bracketLabel}近 {data.windowDays} 天的统计。
+				</p>
+			</div>
+			<div class="flex flex-wrap items-center gap-2 text-xs">
+				<span class:list={['rounded-full border px-3 py-1', data.hasPositionData ? 'border-line text-muted' : 'border-dota/50 text-dota-light']}>
+					{data.hasPositionData ? `号位样本覆盖 ${data.heroes.length} 个英雄` : '号位样本缺失，建议只看职业热度'}
+				</span>
+				<span class="rounded-full border border-line px-3 py-1 text-muted">
+					职业样本 {data.proSample.picks} 出场 / {data.proSample.bans} 被禁
+				</span>
+			</div>
+		</div>
+
+		<!-- 控制条 -->
+		<div class="mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface/60 px-4 py-3">
+			<label class="flex items-center gap-2 text-xs text-muted">
+				选比赛
+				<select id="draft-match" class="min-w-56 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream">
+					<option value="">不选，手动填队名</option>
+					{matches.map((match) => (
+						<option value={match.id} data-home={match.home.name} data-away={match.away.name}>
+							{matchLabel(match)}
+						</option>
+					))}
+				</select>
+			</label>
+
+			<label class="flex items-center gap-2 text-xs text-muted">
+				我方
+				<input id="draft-our-team" type="text" maxlength="24" placeholder="留空也行" class="w-36 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint" />
+			</label>
+			<label class="flex items-center gap-2 text-xs text-muted">
+				对方
+				<input id="draft-their-team" type="text" maxlength="24" placeholder="留空也行" class="w-36 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint" />
+			</label>
+
+			<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="我方阵营">
+				<span>我方阵营</span>
+				<button type="button" data-side="radiant" class="filter-chip">天辉</button>
+				<button type="button" data-side="dire" class="filter-chip">夜魇</button>
+			</div>
+			<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="先选权">
+				<span>先选权</span>
+				<button type="button" data-first-pick="ours" class="filter-chip">我方</button>
+				<button type="button" data-first-pick="theirs" class="filter-chip">对方</button>
+			</div>
+
+			<div class="ml-auto flex items-center gap-2">
+				<button id="draft-undo" type="button" class="filter-chip">撤销</button>
+				<button id="draft-skip" type="button" class="filter-chip">跳过这手</button>
+				<button id="draft-reset" type="button" class="filter-chip">清空</button>
+			</div>
+		</div>
+
+		<!-- 当前手 -->
+		<div id="draft-banner" class="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface-2/70 px-4 py-3 text-sm" role="status" aria-live="polite">
+			<span id="draft-banner-step" class="font-display text-lg text-gold">第 1 手</span>
+			<span id="draft-banner-turn" class="text-cream">我方禁用</span>
+			<span id="draft-banner-detail" class="text-xs text-faint"></span>
+		</div>
+
+		<div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+			<!-- 英雄池 -->
+			<div class="rounded-2xl border border-line bg-surface/60 p-4">
+				<div class="mb-3 flex flex-wrap items-center gap-x-6 gap-y-3">
+					<label class="flex items-center gap-2 text-xs text-muted">
+						搜索
+						<input id="draft-search" type="search" placeholder="英雄名或英文名" class="w-40 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint" />
+					</label>
+					<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="按属性筛选">
+						<span>属性</span>
+						<button type="button" data-attr="all" class="filter-chip" aria-pressed="true">全部</button>
+						<button type="button" data-attr="STR" class="filter-chip" aria-pressed="false">力量</button>
+						<button type="button" data-attr="AGI" class="filter-chip" aria-pressed="false">敏捷</button>
+						<button type="button" data-attr="INT" class="filter-chip" aria-pressed="false">智力</button>
+						<button type="button" data-attr="UNI" class="filter-chip" aria-pressed="false">全才</button>
+					</div>
+					<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="按号位筛选">
+						<span>号位</span>
+						<button type="button" data-position="all" class="filter-chip" aria-pressed="true">全部</button>
+						{[1, 2, 3, 4, 5].map((position) => (
+							<button type="button" data-position={position} class="filter-chip" aria-pressed="false" title={`只看有 ${position} 号位样本的英雄`}>{position}</button>
+						))}
+					</div>
+					<span id="draft-pool-count" class="ml-auto text-xs text-faint"></span>
+				</div>
+				<div id="draft-pool" class="pool-root" aria-label="英雄池"></div>
+				<p id="draft-pool-hint" class="mt-3 text-xs text-faint"></p>
+			</div>
+
+			<!-- BP 板 -->
+			<div class="rounded-2xl border border-line bg-surface/60 p-4">
+				<div class="grid grid-cols-2 gap-3">
+					<div id="draft-column-radiant" class="draft-column" data-side="radiant">
+						<p class="draft-column-title"><span id="draft-label-radiant">天辉</span><span class="draft-column-badge" id="draft-badge-radiant"></span></p>
+						<div id="draft-bans-radiant" class="draft-bans"></div>
+						<div id="draft-picks-radiant" class="draft-picks"></div>
+					</div>
+					<div id="draft-column-dire" class="draft-column" data-side="dire">
+						<p class="draft-column-title"><span id="draft-label-dire">夜魇</span><span class="draft-column-badge" id="draft-badge-dire"></span></p>
+						<div id="draft-bans-dire" class="draft-bans"></div>
+						<div id="draft-picks-dire" class="draft-picks"></div>
+					</div>
+				</div>
+				<p class="mt-3 text-xs text-faint">格子上的数字是手号，和客户端里的顺序一致。</p>
+			</div>
+		</div>
+
+		<!-- 建议 -->
+		<section class="mt-5 rounded-2xl border border-line bg-surface/60 p-4" aria-label="建议">
+			<div class="flex flex-wrap items-center gap-3">
+				<button id="draft-advice-toggle" type="button" class="filter-chip" aria-expanded="false" aria-controls="draft-advice-body">看建议（不剧透）</button>
+				<!-- 初值用内联 style：Tailwind 的 `hidden` 类优先级更高，脚本摘不掉，元素会永远是隐藏的。 -->
+				<button id="draft-advice-ai" type="button" class="filter-chip" style="display: none">让 AI 解释这几手</button>
+				<span id="draft-advice-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
+			</div>
+			<div id="draft-advice-body" style="display: none">
+				<p id="draft-advice-summary" class="mt-4 text-sm text-cream"></p>
+				<div id="draft-lineup" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5"></div>
+				<div id="draft-advice-cards" class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3"></div>
+			</div>
+		</section>
+
+		<!-- 设置 -->
+		<section class="mt-5 rounded-2xl border border-line bg-surface/60 p-4" aria-label="设置">
+			<h2 class="font-display text-lg">AI 解释（可选）</h2>
+			<p class="mt-2 text-xs leading-relaxed text-muted">
+				填自己的 DeepSeek key，请求从这台浏览器直接发给 DeepSeek，本站不经手也不保存。
+				key 存在本机 localStorage 里，公共电脑上别存。没填也能用：上面的建议完全由站点数据算出。
+			</p>
+			<div class="mt-3 flex flex-wrap items-end gap-3">
+				<label class="flex items-center gap-2 text-xs text-muted">
+					API key
+					<input id="draft-key" type="password" autocomplete="off" placeholder="sk-..." class="w-64 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint" />
+				</label>
+				<label class="flex items-center gap-2 text-xs text-muted">
+					模型
+					<select id="draft-model" class="rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream">
+						<option value="deepseek-flash">deepseek-flash</option>
+						<option value="deepseek-v4-pro">deepseek-v4-pro</option>
+					</select>
+				</label>
+				<button id="draft-test" type="button" class="filter-chip">测试连接</button>
+				<button id="draft-clear" type="button" class="filter-chip">清除 key</button>
+				<span id="draft-key-state" class="text-xs text-faint"></span>
+			</div>
+		</section>
+
+		<p class="mt-6 text-xs leading-relaxed text-faint">
+			数据口径：号位胜率来自 STRATZ 的 {data.bracketLabel}统计（近 {data.windowDays} 天，单个号位少于 {data.minPositionMatches} 场不计）；
+			职业出场与被禁来自 OpenDota 的职业样本，总量只有 {data.proSample.picks} 出场 / {data.proSample.bans} 被禁，只能当热度看。
+			建议是按号位胜率做的启发式估计，不是胜率预测，也不代表任何队伍的真实战术。
+		</p>
+
+		<noscript>
+			<p class="mt-6 rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
+				BP 陪练台要靠 JavaScript 才能录入与计算。页面上方的英雄数据是构建期生成的，脚本被禁用时看不到。
+			</p>
+		</noscript>
+	</section>
+
+	<!-- 构建期数据：英雄、号位胜率、职业样本。用 is:inline 避免被当成模块打包。 -->
+	<script type="application/json" id="draft-data" set:html={payload} is:inline />
+</Layout>
+
+<!--
+	`is:global` 是必须的，不是图省事：英雄池、BP 格子、候选卡片这些节点都是脚本建出来的，
+	而 Astro 默认会把样式编译成 `.hero-tile[data-astro-cid-xxx]` 这种带作用域属性的选择器，
+	动态节点上没有这个属性，规则等于全部失效（实测症状：英雄格子退回 256px 的原始图片尺寸，
+	BP 格子变成 31px 的小方块，整页被拉成七千多像素高）。
+
+	不用再套一层 `.draft-page` 前缀：这个样式块只属于本页，打包出来只在 /draft 加载，
+	`.filter-chip` 虽然在英雄页和装备页也有同名类，但那边各有自己的作用域规则，互不影响。
+-->
+<style is:global>
+	.filter-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		border: 1px solid var(--color-line);
+		border-radius: 0.5rem;
+		padding: 0.35rem 0.6rem;
+		font-size: 0.75rem;
+		color: var(--color-muted);
+		background: var(--color-surface-2);
+		transition: color 0.12s ease-in-out, border-color 0.12s ease-in-out;
+	}
+	.filter-chip:hover {
+		color: var(--color-cream);
+		border-color: var(--color-gold-deep);
+	}
+	.filter-chip[aria-pressed='true'] {
+		color: var(--color-cream);
+		border-color: var(--color-dota);
+		background: color-mix(in srgb, var(--color-dota) 22%, var(--color-surface-2));
+	}
+	.filter-chip:disabled {
+		opacity: 0.4;
+	}
+
+	.draft-column {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		border-radius: 0.75rem;
+		border: 1px solid var(--color-line);
+		border-top: 2px solid var(--side-color, var(--color-line));
+		padding: 0.5rem;
+		background: color-mix(in srgb, var(--side-color, var(--color-line)) 8%, transparent);
+	}
+	.draft-column[data-side='radiant'] {
+		--side-color: #62a86f;
+	}
+	.draft-column[data-side='dire'] {
+		--side-color: var(--color-dota);
+	}
+	.draft-column-title {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.25rem;
+		font-size: 0.8rem;
+		color: var(--color-cream);
+	}
+	.draft-column-badge {
+		font-size: 0.65rem;
+		color: var(--color-gold);
+	}
+	.draft-bans {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.25rem;
+	}
+	.draft-picks {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.375rem;
+	}
+	.draft-slot {
+		position: relative;
+		overflow: hidden;
+		border-radius: 0.375rem;
+		border: 1px solid var(--color-line);
+		background: var(--color-surface-3);
+		color: var(--color-faint);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 0.65rem;
+		aspect-ratio: 16 / 9;
+	}
+	.draft-picks .draft-slot {
+		aspect-ratio: 16 / 10;
+	}
+	.draft-slot img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: top;
+	}
+	.draft-slot[data-state='filled'] {
+		border-color: var(--side-color, var(--color-line));
+	}
+	.draft-slot[data-current='true'] {
+		border-color: var(--color-gold);
+		box-shadow: 0 0 0 1px var(--color-gold);
+	}
+	.draft-slot-number {
+		position: absolute;
+		left: 0.15rem;
+		bottom: 0.1rem;
+		font-size: 0.6rem;
+		line-height: 1;
+		padding: 0.05rem 0.15rem;
+		border-radius: 0.2rem;
+		background: rgb(0 0 0 / 0.55);
+		color: var(--color-cream);
+	}
+
+	.hero-tile {
+		position: relative;
+		overflow: hidden;
+		border-radius: 0.375rem;
+		border: 1px solid var(--color-line);
+		background: var(--color-surface-2);
+		aspect-ratio: 16 / 10;
+		transition: border-color 0.12s ease-in-out, transform 0.12s ease-in-out;
+	}
+
+	.pool-root {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
+	}
+	.pool-group {
+		display: flex;
+		flex-direction: column;
+		gap: 0.375rem;
+	}
+	.pool-group-title {
+		font-size: 0.7rem;
+		letter-spacing: 0.08em;
+		color: var(--color-muted);
+	}
+	.pool-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+		gap: 0.375rem;
+	}
+
+	.advice-card {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		border: 1px solid var(--color-line);
+		border-radius: 0.75rem;
+		background: var(--color-surface-2);
+		padding: 0.75rem;
+		text-align: left;
+	}
+	.advice-card:hover {
+		border-color: var(--color-gold-deep);
+	}
+	.advice-card[disabled] {
+		opacity: 0.55;
+	}
+	.lineup-slot {
+		border: 1px solid var(--color-line);
+		border-radius: 0.5rem;
+		background: var(--color-surface-2);
+		padding: 0.4rem 0.5rem;
+		font-size: 0.7rem;
+		color: var(--color-muted);
+	}
+	.lineup-slot[data-settled='true'] {
+		border-color: var(--color-gold-deep);
+		color: var(--color-cream);
+	}
+	.hero-tile:hover {
+		border-color: var(--color-gold-deep);
+		transform: translateY(-1px);
+	}
+	.hero-tile img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		object-position: top;
+	}
+	.hero-tile-name {
+		position: absolute;
+		inset-inline: 0;
+		bottom: 0;
+		padding: 0.15rem 0.25rem;
+		font-size: 0.625rem;
+		line-height: 1.2;
+		color: var(--color-cream);
+		background: linear-gradient(to top, rgb(0 0 0 / 0.72), rgb(0 0 0 / 0));
+	}
+	.hero-tile[data-used='ban'] {
+		filter: grayscale(1) brightness(0.55);
+	}
+	.hero-tile[data-used='pick'] {
+		filter: grayscale(0.6) brightness(0.7);
+	}
+	.hero-tile[data-used] .hero-tile-name::after {
+		content: attr(data-used-label);
+		display: block;
+		font-size: 0.55rem;
+		color: var(--color-gold);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.draft-slot[data-current='true'] {
+			box-shadow: 0 0 0 1px var(--color-gold);
+		}
+		.hero-tile:hover {
+			transform: none;
+		}
+	}
+</style>
+
+<script>
+	import '../scripts/draftBoard';
+</script>
