@@ -59,6 +59,41 @@ function relayConfig(): RelayConfigPayload {
 	return CUSTOM_RELAYS.length > 0 ? { ...base, urls: [...CUSTOM_RELAYS] } : { ...base, redundancy: RELAY_REDUNDANCY };
 }
 
+/**
+ * ICE 服务器。**Trystero 默认那一套在境内不靠谱**：它写死 `stun*.l.google.com:19302` ×3 加
+ * `stun.cloudflare.com:3478`，而 `rtcConfig` 到了 core 里是 `{ iceServers: 默认, ...rtcConfig }`
+ * ——**整体替换**，我们给一份就等于把默认那份顶掉，所以海外的两个也得自己列上。
+ *
+ * 实测（境内宽带）：三个境内 STUN 都能回 srflx 候选，且拿到的公网映射地址与 Google/Cloudflare
+ * 那两个不同（出口不一致）；只留默认那份的话，网络里正好把 Google 挡掉的那一方拿不到候选，
+ * 于是**同一个 WiFi 能连、跨网络连不上**——正是「host 候选不需要 STUN，跨 NAT 非它不可」。
+ */
+const STUN_SERVERS = [
+	'stun:stun.miwifi.com:3478',
+	'stun:stun.chat.bilibili.com:3478',
+	'stun:stun.hitv.com:3478',
+	'stun:stun.l.google.com:19302',
+	'stun:stun.cloudflare.com:3478',
+];
+
+/**
+ * TURN 中转。**默认空，而空着就意味着「双方都是对称 NAT 时必然连不上」**（国内手机 4G/5G 大量
+ * 是对称 NAT）。要填就填自己那台 coturn，形状 `{ urls, username, credential }`。
+ *
+ * **注意别用 Trystero 的 `turnConfig`**：那个只有在你不传 `rtcConfig.iceServers` 时才生效
+ * （见上面那条「整体替换」），我们既然要自定义 STUN，TURN 就得一起写进 `iceServers`。
+ *
+ * 搭法见 docs/party.md 的「跨网络连不上怎么办」。
+ */
+const TURN_SERVERS: { urls: string; username: string; credential: string }[] = [];
+
+/**
+ * 传给 `joinRoom` 的 ICE 配置。STUN 与 TURN 合成一份列表——理由见上面两条注释。
+ */
+function iceServers(): RTCIceServer[] {
+	return [...STUN_SERVERS.map((urls) => ({ urls })), ...TURN_SERVERS];
+}
+
 /** 房主每隔多久向大厅重播一次自己的房间。 */
 const ANNOUNCE_MS = 15_000;
 /**
@@ -448,7 +483,8 @@ function attachLobbyHandlers(handle: Room): void {
 
 function joinLobby(): void {
 	if (lobbyRoom) return;
-	const handle = joinRoom({ appId: APP_ID, relayConfig: relayConfig() }, LOBBY_ROOM_ID);
+	// 大厅同样要跨网络和陌生人建连，所以这份 ICE 配置两边都得给，不是只给房间那条。
+	const handle = joinRoom({ appId: APP_ID, relayConfig: relayConfig(), rtcConfig: { iceServers: iceServers() } }, LOBBY_ROOM_ID);
 	lobbyRoom = handle;
 	attachLobbyHandlers(handle);
 	renderLobby();
@@ -580,7 +616,7 @@ async function enterRoom(options: {
 	if (!isHost && !options.defer) startHostSilenceTimer();
 
 	const handle = joinRoom(
-		{ appId: APP_ID, password: options.password, relayConfig: relayConfig() },
+		{ appId: APP_ID, password: options.password, relayConfig: relayConfig(), rtcConfig: { iceServers: iceServers() } },
 		`${ROOM_PREFIX}${options.code}`,
 		{ onJoinError: (details) => onJoinError(details.error) },
 	);

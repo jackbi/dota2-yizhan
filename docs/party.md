@@ -104,14 +104,53 @@ WebRTC 的失败在浏览器里长得一模一样——都是「房间里没人�
 时它才会显示成「正在连接信令中继…」并附带建议。Trystero 自己那层中继告警已经关掉
 （`relayConfig.warnOnRelayFailure: false`），免得多刷一遍。
 
-**默认没有 TURN。** Trystero 只带 Cloudflare 的 STUN（`stun:stun.cloudflare.com:3478`）。
-同一个 WiFi 下的两个人通常没问题；国内手机 4G/5G 大量是对称 NAT，双方都对称时**必然**
-连不上，只能靠 TURN 中转。要彻底解决就在自己的 VPS 上跑一个 coturn，然后：
+### STUN：默认那份在境内不可靠（已换掉）
 
-1. 把地址填进 `src/scripts/partyRoom.ts` 的 `CUSTOM_RELAYS`（自建 `@trystero-p2p/ws-relay`
-   或几个本地可达的 Nostr 中继）——**填了之后 `RELAY_REDUNDANCY` 会被忽略**；
-2. TURN 通过 `joinRoom` 的 `turnConfig` 传入，目前没有配置项，需要时在那里加。
+Trystero 默认给的是 `stun*.l.google.com:19302` ×3 加 `stun.cloudflare.com:3478`，而它在 core
+里是 `{ iceServers: 默认, ...rtcConfig }`——**`rtcConfig` 整体替换默认值**，所以
+`src/scripts/partyRoom.ts` 自己列了一份，海外的两个也一起保留当冗余：
 
+| STUN | 位置 | 实测（境内宽带） |
+| --- | --- | --- |
+| `stun:stun.miwifi.com:3478` | 境内 | 回 srflx 候选 |
+| `stun:stun.chat.bilibili.com:3478` | 境内 | 回 srflx 候选 |
+| `stun:stun.hitv.com:3478` | 境内 | 回 srflx 候选 |
+| `stun:stun.l.google.com:19302` | 海外 | 本机可达，但映射地址与境内那两个不同 |
+| `stun:stun.cloudflare.com:3478` | 海外 | 同上 |
+
+**这是「同一个 WiFi 能连、跨网络连不上」最可能的那个原因**：同一个局域网里用的是 host 候选
+（`.local` 的 mDNS 名字），根本不需要 STUN；一旦跨网络就必须拿到公网映射地址，而某一方要是
+正好连不上 Google/Cloudflare，候选里就只有 host，ICE 永远配不出可用的一对。三类公共 STUN
+是第三方免费服务，哪天不响应了就换一个等价的。
+
+### TURN：对称 NAT 只能靠它
+
+STUN 只解决「知道自己公网地址」。双方都是对称 NAT 时（国内手机 4G/5G 大量如此），打洞必然
+失败，**只能靠 TURN 中转**。填 `src/scripts/partyRoom.ts` 里的 `TURN_SERVERS`：
+
+```ts
+const TURN_SERVERS = [{ urls: 'turn:turn.example.com:3478', username: 'dota2', credential: '<密码>' }];
+```
+
+**别用 Trystero 的 `turnConfig` 参数**：它只在你不传 `rtcConfig.iceServers` 时才生效（见上面
+那条「整体替换」），既然要自定义 STUN，TURN 就得写进同一份 `iceServers`——`iceServers()` 已经
+把两者合起来了。自己搭 coturn 的要点：
+
+```sh
+# 云主机上（Debian/Ubuntu 系）
+apt install coturn && systemctl enable --now coturn
+# /etc/turnserver.conf 至少要这几行
+listening-port=3478
+realm=turn.example.com
+user=dota2:<密码>
+fingerprint
+```
+
+两个容易踩的点：**云控制台的安全组要放行 `UDP 3478` 与中继端口段**（`min-port`/`max-port`，
+实测那台新加坡机器上入站 UDP 3478 是被挡的，宿主机自己没开 firewalld 也一样收不到包）；
+**给 coturn 挂个 `tls-listening-port=5349` 或直接用 443** 能在 UDP 被限速时兜底。
+
+填完之后在房间页面对照看效果：双方 `chrome://webrtc-internals` 里应该出现 `relay` 类型的候选对。
 TURN 只是中转字节，数据仍然是端到端加密的；它不解密、也没有业务逻辑。
 
 ## 一个 Vite 的坑：`trystero` 必须写进 `optimizeDeps.include`
