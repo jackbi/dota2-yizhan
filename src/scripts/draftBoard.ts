@@ -186,7 +186,12 @@ if (data) {
 			for (const attr of ATTR_ORDER) {
 				const group = document.createElement('div');
 				group.className = 'pool-group';
-				group.dataset.attr = attr;
+				/*
+				 * 分组用 `data-attr-group`，**不能**用 `data-attr`：属性筛选按钮也是 `[data-attr]`，
+				 * 两者共用的话，点英雄时事件冒泡到分组上，会把过滤器切到这个英雄的属性，
+				 * 于是点一下英雄，整个池子就只剩下一组（实测踩过）。
+				 */
+				group.dataset.attrGroup = attr;
 				const title = document.createElement('p');
 				title.className = 'pool-group-title';
 				const grid = document.createElement('div');
@@ -250,7 +255,7 @@ if (data) {
 		function applyFilters(): void {
 			for (const group of groups.values()) {
 				const wrapper = group.parentElement;
-				if (wrapper) wrapper.hidden = attrFilter !== 'all' && wrapper.dataset.attr !== attrFilter;
+				if (wrapper) wrapper.hidden = attrFilter !== 'all' && wrapper.dataset.attrGroup !== attrFilter;
 			}
 			syncPool();
 		}

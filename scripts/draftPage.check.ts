@@ -62,6 +62,10 @@ for (const attr of ['data-attr', 'data-position', 'data-side', 'data-first-pick'
 	assert.ok(page.includes(`${attr}="`), `页面上缺少 ${attr} 挂钩`);
 	assert.ok(script.includes(`[${attr}]`), `脚本没有监听 ${attr}`);
 }
+// 英雄池分组必须换一个属性名：分组和筛选按钮共用 `data-attr` 时，点英雄会冒泡到分组上，
+// 顺手把过滤器切到这个英雄的属性（实测症状：点一下英雄，池子里只剩一组）。
+assert.ok(script.includes('dataset.attrGroup'), '分组要用 data-attr-group，别和筛选按钮抢 data-attr');
+assert.ok(!/group\.dataset\.attr\b/.test(script), '分组不能把属性写在 data-attr 上');
 assert.ok(page.includes('data-attr="STR"') && page.includes('data-attr="UNI"'), '属性筛选要覆盖四个属性');
 // 号位按钮是循环生成的，源码里只会看到 `data-position={position}`，所以查循环的取值。
 assert.ok(page.includes('data-position={position}'), '号位筛选按钮要走循环生成');
