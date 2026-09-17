@@ -13,7 +13,7 @@
     "rebuild": "sh scripts/rebuild.sh",
     "deploy": "DEPLOY_TARGET=cloudflare astro build && wrangler deploy",
     "fonts": "node scripts/fonts.mjs",
-    "check": "node --experimental-strip-types scripts/md5.check.ts && node --experimental-strip-types scripts/danmaku.check.ts && node --experimental-strip-types scripts/buildCache.check.ts && node --experimental-strip-types scripts/cachePrune.check.ts && node --experimental-strip-types scripts/liveStream.check.ts && node --experimental-strip-types scripts/stratzEndpoint.check.ts && node --experimental-strip-types scripts/fonts.check.ts && node --experimental-strip-types scripts/patchNotes.check.ts && node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/lobbyRoom.check.ts && node --experimental-strip-types scripts/partyVisibility.check.ts && node --experimental-strip-types scripts/partyDrag.check.ts",
+    "check": "node --experimental-strip-types scripts/md5.check.ts && node --experimental-strip-types scripts/danmaku.check.ts && node --experimental-strip-types scripts/buildCache.check.ts && node --experimental-strip-types scripts/cachePrune.check.ts && node --experimental-strip-types scripts/liveStream.check.ts && node --experimental-strip-types scripts/stratzEndpoint.check.ts && node --experimental-strip-types scripts/fonts.check.ts && node --experimental-strip-types scripts/patchNotes.check.ts && node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/partyProtocol.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/partyVisibility.check.ts && node --experimental-strip-types scripts/partyDrag.check.ts",
     "astro": "astro"
   },
   "dependencies": {
@@ -22,8 +22,7 @@
     "astro": "^7.2.10",
     "cookie": "^2.0.1",
     "mpegts.js": "^1.8.2",
-    "tailwindcss": "^4.3.3",
-    "trystero": "^0.25.4"
+    "tailwindcss": "^4.3.3"
   },
   "allowScripts": {
     "esbuild": true

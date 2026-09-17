@@ -7,12 +7,25 @@
    * （挡掉指向内网/本机的地址）。SSR 侧只用 Web 标准 API，不需要 nodejs_compat。
    */
   "compatibility_flags": ["global_fetch_strictly_public"],
-  /*
-   * `main` 必须写这个包名，**不能写构建产物路径**：Cloudflare 的 Vite 插件在配置阶段就要求
-   * `main` 指向一个已存在的文件，写 `dist/server/entry.mjs` 会直接以
-   * "doesn't point to an existing file" 中止构建。真正的产物布局由适配器接管。
-   */
-  "main": "@astrojs/cloudflare/entrypoints/server",
+	/*
+	 * Worker 入口是**我们自己的** `src/worker/index.ts`，它在 Astro 的 server handler 外面包了一层，
+	 * 用来把 `/api/party/*` 接到开黑房间的 Durable Object 上（其余请求原样交给 Astro）。
+	 *
+	 * 不能写 `dist/server/entry.mjs`：Cloudflare 的 Vite 插件在配置阶段要求 `main` 指向一个存在
+	 * 的源码文件，写产物路径会以 "doesn't point to an existing file" 中止构建。
+	 */
+	"main": "src/worker/index.ts",
+	/*
+	 * 开黑房间的两个 Durable Object（见 src/worker/partyRoom.ts）：
+	 * 一个房间一个实例，另有一个全局大厅。
+	 */
+	"durable_objects": {
+		"bindings": [
+			{ "name": "PARTY_ROOMS", "class_name": "PartyRoom" },
+			{ "name": "PARTY_LOBBY", "class_name": "PartyLobby" },
+		],
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["PartyRoom", "PartyLobby"] }],
   /*
    * 静态资源就是构建产物。构建结束时适配器会把这里改写成 `../client`（相对 `dist/server/`），
    * 所以这里写的是 Astro 的 outDir，不是它最终读的那个目录。

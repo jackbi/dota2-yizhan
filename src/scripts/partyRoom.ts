@@ -1,136 +1,46 @@
-import { getRelaySockets, joinRoom, selfId, type MessageAction, type Room } from 'trystero';
 import * as L from '../lib/partyLogic';
 import type { ChatMessage, Member, RoomState, Team } from '../lib/partyLogic';
+import type { ClientMessage, LobbyRoom, TeamOp } from '../lib/partyProtocol';
+import { decodeLobbyMessage, decodeServerMessage, encodeMessage } from '../lib/partyProtocol';
 
 /**
  * 开黑房间的客户端逻辑。
  *
- * 传输是 Trystero（WebRTC 数据通道 + 公共信令中继），**没有服务端**：
- * 服务端只提供静态页面和 `/api/me`（Steam 昵称、头像）。房间不落库、不留聊天记录，
- * 关页面就散——这不是偷懒，是因为本站每 5 分钟重建并重启一次（见 docs/deploy.md
- * 「部署与重建频率」），任何存在 SSR 进程内存里的房间都会被那次重启清空。
+ * 传输是**一条 WebSocket 到本站自己的 Worker**，房间状态放在 Durable Object 里
+ * （`src/worker/partyRoom.ts`）。早先用的是 Trystero 的 P2P：局域网内没问题，但跨网络要靠
+ * 打洞，国内手机流量大量是对称 NAT，最后得架 TURN、还要看云安全组放不放 UDP——
+ * 那条链上的每一环都能让「进不了房间」，而失败的样子永远只是「房间里没人」。
  *
  * 三条贯穿全文的约定：
  *
- * 1. **房主是唯一权威。** 成员、队伍、roll 结果都在房主的 `state` 里，
- *    其他人只发指令、只渲染收到的快照。这样不需要任何冲突合并，
- *    也保证了「房主分配人员」的结果对所有人一致。
- * 2. **房间密码就是 WebRTC 信令的加密密钥。** Trystero 用 `password` 派生 AES-GCM 密钥
- *    去加密 SDP，还额外做一次 challenge；密码不对的人在信令层就建不起连接，
- *    会走 `onJoinError`。比前端 `if (pwd === input)` 强得多。
- * 3. **遇到失败要说人话。** P2P 的失败（中继被墙、对称 NAT 打不通、密码错）
- *    在浏览器里长得一模一样：都是「房间里没人」。所以每种失败都要有各自的提示，
- *    见 `setNotice` 与 `onJoinError`。
+ * 1. **服务端是唯一权威。** 客户端只做两件事：把操作发上去、把收到的快照画出来。
+ *    分队、roll、权限判断全在 Durable Object 里（用的还是 `partyLogic.ts`），
+ *    所以这边没有「房主本地先改再广播」那套，也就没有快照冲突。
+ * 2. **密码在服务端校验。** 房间里存的是密码的 SHA-256，进房时比对；对了才把人写进名册。
+ *    浏览器这边只负责把密码发出去。
+ * 3. **遇到失败要说人话。** 断线、密码错、房间没了，服务端都会给出明确的 code，
+ *    页面按 code 说人话（见 `onSocketError`）。
  */
 
 // ---------------------------------------------------------------- 常量
 
-const APP_ID = 'dota2yizhan-party-v1';
-const LOBBY_ROOM_ID = 'lobby';
-const ROOM_PREFIX = 'room-';
 const HASH_PREFIX = '#/r/';
 
-/**
- * 信令中继的冗余度。
- *
- * Trystero 默认从 28 个公共 Nostr 中继里**按 appId 洗牌后取 5 个**——所有人都一致，
- * 但本地网络要是正好把挑中的那 5 个都挡了，房间就永远建不起来，页面上只会显示「没人」。
- * 提到 10 个明显提高命中率，代价是 /party 页面上多开几条 WebSocket（离开页面就关）。
- */
-const RELAY_REDUNDANCY = 10;
+/** 房间与大厅的 WebSocket 端点（见 src/worker/index.ts 的路由）。 */
+const ROOM_WS_PATH = '/api/party/room/';
+const LOBBY_WS_PATH = '/api/party/rooms';
 
+/** 断线重连的退避节奏：先快后慢，页面回到前台会立刻重试一次。 */
+const RECONNECT_DELAYS_MS = [600, 1200, 2500, 5000, 10_000, 20_000];
 /**
- * 自定义中继列表。公共中继都在海外，国内直连不稳；要更稳可以自建一个 Trystero 的
- * ws-relay（`@trystero-p2p/ws-relay`），或者填几个本地可达的 Nostr 中继。
- * **填了之后上面那个冗余度会被忽略**（列表里的全部使用）。
- */
-const CUSTOM_RELAYS: string[] = [];
-
-/**
- * 信令中继配置。`warnOnRelayFailure: false` 关掉的是 **Trystero 自己**的告警——
- * 公共中继里总有几个在本地网络打不通，每个都刷一行没意义；真正有用的信息是
- * 「连上了几个」，那个由页面顶部的状态条负责展示（浏览器自己为失败的 WebSocket
- * 打的那行 `WebSocket connection to ... failed` 是拦不掉的，那是浏览器在报网络错误）。
- */
-type RelayConfigPayload = { warnOnRelayFailure: boolean; urls?: string[]; redundancy?: number };
-
-function relayConfig(): RelayConfigPayload {
-	const base: RelayConfigPayload = { warnOnRelayFailure: false };
-	return CUSTOM_RELAYS.length > 0 ? { ...base, urls: [...CUSTOM_RELAYS] } : { ...base, redundancy: RELAY_REDUNDANCY };
-}
-
-/**
- * ICE 服务器。**Trystero 默认那一套在境内不靠谱**：它写死 `stun*.l.google.com:19302` ×3 加
- * `stun.cloudflare.com:3478`，而 `rtcConfig` 到了 core 里是 `{ iceServers: 默认, ...rtcConfig }`
- * ——**整体替换**，我们给一份就等于把默认那份顶掉，所以海外的两个也得自己列上。
+ * 进房握手的等待上限。
  *
- * 实测（境内宽带）：三个境内 STUN 都能回 srflx 候选，且拿到的公网映射地址与 Google/Cloudflare
- * 那两个不同（出口不一致）；只留默认那份的话，网络里正好把 Google 挡掉的那一方拿不到候选，
- * 于是**同一个 WiFi 能连、跨网络连不上**——正是「host 候选不需要 STUN，跨 NAT 非它不可」。
- */
-const STUN_SERVERS = [
-	'stun:stun.miwifi.com:3478',
-	'stun:stun.chat.bilibili.com:3478',
-	'stun:stun.hitv.com:3478',
-	'stun:stun.l.google.com:19302',
-	'stun:stun.cloudflare.com:3478',
-];
-
-/**
- * TURN 中转。对称 NAT 之间（国内手机 4G/5G 大量如此）打洞必然失败，**只有它能救**；
- * 没有它时页面的表现就是「同一个 WiFi 能连、跨网络连不上」，或者干脆「大厅已连 0 人」。
- *
- * 凭据**不在代码里**：部署时由 SSR 渲染进 `#party-setup` 的 data-*（见 party.astro 与
- * astro.config 的 env schema），这里只负责读——公开仓库里不放一份能白嫖的中转凭据。
- * 没配就返回空数组，退化成「只有 STUN」。
- *
- * **注意别用 Trystero 的 `turnConfig`**：那个只有在你不传 `rtcConfig.iceServers` 时才生效
- * （见上面那条「整体替换」），既然要自定义 STUN，TURN 就得一起写进 `iceServers`。
- *
- * coturn 的搭法与要放行的端口见 docs/party.md。
- */
-function turnServers(): RTCIceServer[] {
-	const url = dom.setup.dataset.turnUrl?.trim();
-	if (!url) return [];
-	return [
-		{
-			// 普通 turn: 就把 UDP / TCP 各来一条；turns: 本身已经是 TLS over TCP，原样用。
-			urls: url.startsWith('turns:') ? [url] : [`${url}?transport=udp`, `${url}?transport=tcp`],
-			username: dom.setup.dataset.turnUser ?? '',
-			credential: dom.setup.dataset.turnCred ?? '',
-		},
-	];
-}
-
-/**
- * 传给 `joinRoom` 的 ICE 配置。STUN 与 TURN 合成一份列表——理由见上面两条注释。
- */
-function iceServers(): RTCIceServer[] {
-	return [...STUN_SERVERS.map((urls) => ({ urls })), ...turnServers()];
-}
-
-/** 房主每隔多久向大厅重播一次自己的房间。 */
-const ANNOUNCE_MS = 15_000;
-/**
- * 超过这么久没重播的房间从大厅列表里剔除：房主关页面是不会有告别消息的。
- *
- * **必须明显大于一分钟。** 浏览器对隐藏标签的定时器有节流（Chrome 长时间隐藏后是每分钟一次），
- * 而房主切去打游戏、把页面留在后台是常态——那里 15 秒的播报间隔会被拉到 60 秒以上。窗口要是只有
- * 45 秒，房间就会在最常见的用法下「每 45 秒从别人列表里消失一次」。2 分钟给节流留了余量，代价是
- * 房主真的关掉页面时，那条房间会在列表里多挂一分钟。
- */
-const LOBBY_STALE_MS = 120_000;
-/** 进房后等不到房主数据的提示延迟。 */
-const HOST_SILENCE_MS = 10_000;
-/** 房主掉线后等他回来的窗口：刷新只要一两秒，真的走了就等这么久。 */
-const HOST_RETURN_MS = 20_000;
-/**
- * 「先验证密码」的等待上限。
- *
- * 密码是对的、房主也在，连上并收到第一份快照通常在一两秒内；12 秒还没动静，
- * 基本就是密码/房间码错了或房主不在，没必要让人一直盯着禁用的按钮。
+ * 一条 WebSocket + 一次 `join`/`joined` 往返通常一两秒就完事；12 秒还没动静，
+ * 基本是网络进不去 Worker（比如公司网拦了 WebSocket），没必要让人一直盯着禁用的按钮。
  */
 const JOIN_VERIFY_MS = 12_000;
+/** 心跳间隔。服务端只做回声，用来尽早发现「连接其实已经死了」。 */
+const PING_MS = 25_000;
 
 const NICK_KEY = 'dota2-party/nickname';
 /**
@@ -139,6 +49,8 @@ const NICK_KEY = 'dota2-party/nickname';
  */
 const AVATAR_KEY = 'dota2-party/avatar';
 const ROOM_KEY = 'dota2-party/room';
+/** 标签页级标识：刷新不变，重连时服务端据此认出「是同一个人回来了」。 */
+const CLIENT_ID_KEY = 'dota2-party/client';
 
 // ---------------------------------------------------------------- 消息类型
 
@@ -154,25 +66,13 @@ type LobbyAnnounce = {
 
 type LobbyEntry = { code: string; name: string; count: number; at: number };
 
-/** `avatar` 用空串表示「没有」，理由见 partyLogic 顶部关于 `JsonValue` 的说明。 */
-type HelloPayload = { name: string; avatar: string };
-type SnapshotPayload = { state: RoomState; chat: ChatMessage[] };
-type ChatPayload = { message: ChatMessage };
-
-/** 非房主发给房主的指令。房主自己改状态不走这里，直接调 partyLogic。 */
-type Cmd =
-	| { type: 'chat'; text: string }
-	| { type: 'roll' }
-	| { type: 'move'; memberId: string; teamId: string | null }
-	| { type: 'sync' };
-
-/** 刷新页面时用来重新进房（房主要用它把房间按原样重建）。 */
+/** 刷新页面时用来重新进房。 */
 type RoomSession = { code: string; password: string; asHost: boolean; name?: string };
 
-/** 进房结果。`defer` 模式下要等房主确认收到我们了才有结论。 */
+/** 进房结果。`defer` 模式下要等服务端确认了才有结论。 */
 type EnterResult = { ok: true } | { ok: false; error: string };
 
-/** 正在「先验证密码再进房」时挂着的那个 Promise（见 enterRoom 末尾）。 */
+/** 正在等 `join` 的回应时挂着的那个 Promise（见 enterRoom 末尾）。 */
 let pendingJoin: { resolve: (result: EnterResult) => void; timer: number } | null = null;
 
 // ---------------------------------------------------------------- DOM
@@ -254,33 +154,48 @@ let identity: { name: string; avatar: string } = { name: '', avatar: '' };
 /** Steam 登录态。为 null 表示未登录，此时房间里用输入框里的昵称。 */
 let steamUser: { name: string; avatar: string } | null = null;
 
-let lobbyRoom: Room | null = null;
-/** 我是不是在大厅里播报自己的房间（房主）。只是开关，不影响大厅连接的形态。 */
-let lobbyAsHost = false;
-let lobbyEntries = new Map<string, LobbyEntry>();
-let lastAnnounceAt = 0;
-
 let roomCode = '';
 let isHost = false;
-/** 房主权威状态；非房主这里是收到的最后一份快照。 */
+/** 服务端推来的最后一份快照。所有人都是这个角色，没有「房主本地状态」这一说。 */
 let room: RoomState | null = null;
 let chat: ChatMessage[] = [];
-let roomHandle: Room | null = null;
-let roomActions: RoomActions | null = null;
-/** 是否已经收到过房主的任何数据（用来区分「还没连上」和「房间空了」）。 */
-let sawHostData = false;
-let hostSilenceTimer = 0;
-let hostReturnTimer = 0;
+/** 服务端分配给我的 id（就是进房时带上去的 clientId）。 */
+let selfId = '';
+
+/** 大厅里的房间列表，服务端推什么就是什么。 */
+let lobbyRooms: LobbyRoom[] = [];
 /** 改名中的队（房主点「改名」后临时把标题换成输入框）。 */
 let renamingTeamId: string | null = null;
 
-interface RoomActions {
-	hello: MessageAction<HelloPayload>;
-	sync: MessageAction<SnapshotPayload>;
-	state: MessageAction<SnapshotPayload>;
-	chat: MessageAction<ChatPayload>;
-	cmd: MessageAction<Cmd>;
-	bye: MessageAction<null>;
+/**
+ * 两个 WebSocket：一个连大厅（只收房间列表），一个连自己的房间。
+ *
+ * 都是「断了就按退避重连，回来之后自动重发 join」——这是唯一一条传输，
+ * 所以重连逻辑必须写扎实：房间那边拿同一个 clientId 重连，服务端认得出是同一个人，
+ * 名册、队伍位置、房主身份都还在。
+ */
+type SocketKind = 'lobby' | 'room';
+
+let lobbySocket: WebSocket | null = null;
+let roomSocket: WebSocket | null = null;
+let roomSocketRetry = 0;
+let lobbySocketRetry = 0;
+let reconnectTimer = 0;
+let pingTimer = 0;
+/** 主动离开期间不要重连（close 事件分不清「断了」和「我自己关的」）。 */
+let leaving = false;
+/** 进房时记下参数，重连要用同一份。 */
+let joinIntent: { password: string; asHost: boolean; name?: string } | null = null;
+
+/** 每个标签页一个稳定的标识：刷新不变（sessionStorage），但两个标签页互不影响。 */
+function clientId(): string {
+	const cached = sessionStorage.getItem(CLIENT_ID_KEY);
+	if (cached && /^[A-Za-z0-9_-]{8,64}$/.test(cached)) return cached;
+	const bytes = new Uint8Array(9);
+	crypto.getRandomValues(bytes);
+	const generated = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+	sessionStorage.setItem(CLIENT_ID_KEY, generated);
+	return generated;
 }
 
 /** 取一个不依赖 Math.random 实现质量的随机源给房间逻辑用。 */
@@ -445,99 +360,68 @@ function setNotice(message: string | null, kind: NoticeKind = 'info', sticky = f
 // ---------------------------------------------------------------- 大厅
 
 /**
- * 大厅房间：**整个页面生命周期只加入一次，所有人都是活跃身份**。
+ * 大厅：一条 WebSocket 到 `/api/party/rooms`，服务端（Durable Object）推房间列表。
  *
- * 角色（房主 / 访客）只决定「要不要播报自己的房间」，**不是 joinRoom 的配置项**。
- * 这一点是刻意设计出来的，因为先前的 passive 方案踩了两个坑：
- *
- * 1. **被动房间根本不广播。** 休眠的 passive 房间在 `queueAnnounce` 里就直接 return
- *    （没到活跃状态就不 announce），于是访客只能等房主下一次播报才会被发现并建连——房主每
- *    15 秒才播一次，打开页面盯着空大厅干等十几秒是不能接受的；
- * 2. **角色是 joinRoom 的配置，切换就得 leave + 重进同一个 roomId**，正好撞上
- *    「joinRoom 幂等 + leave 异步」那个坑：`leave()` 第一步是 `await leaveAction.send('')`，
- *    删内部登记在它之后，期间重进会拿回**正在退出的旧实例**（配置也是旧的）。进房与离房
- *    两个方向都会踩，症状是房主以为自己在大厅广播、客人却什么都看不到，而且没有任何报错。
- *    `scripts/lobbyRoom.check.ts` 里对这个行为有断言。
- *
- * 配置不再随角色变化，第 2 类问题就不可能发生；加入时的初始播报是连发几次的（Trystero
- * 的 startup burst），所以新来的人一两秒内就能看到房间，不用等下一个周期。
- *
- * 代价是大厅变成全网状：N 个在线的人两两建连，几十人以内没问题，再多就得另想办法
- * （限制同时在线、或回到被动 + 缩短播报间隔）。docs/party.md 的「已知的取舍」里记了这一条。
+ * 以前大厅是「所有人 P2P 全网状、房主每 15 秒播报一次自己的房间、两分钟没动静就当过期」。
+ * 那套的复杂度全来自「没人知道有哪些房间」；房间搬到服务端之后，列表是它自己知道的，
+ * 于是那堆定时器与去重逻辑一起消失了。
  */
-function attachLobbyHandlers(handle: Room): void {
-	const announce = handle.makeAction<LobbyAnnounce>('announce');
-	const query = handle.makeAction<null>('query');
-
-	announce.onMessage = (data) => {
-		if (data.gone) {
-			lobbyEntries.delete(data.code);
-		} else {
-			lobbyEntries.set(data.code, {
-				code: data.code,
-				name: data.name,
-				count: data.count,
-				at: Date.now(),
-			});
-		}
+/**
+ * 大厅：连上本站的一条 WebSocket，服务端推什么列表就画什么。
+ *
+ * 以前那套「房主每 15 秒重播一次自己的房间、2 分钟没动静就从列表里剔除」的定时器全删了——
+ * 房间在服务端，人数是它自己知道的。
+ */
+function connectLobby(): void {
+	if (lobbySocket && lobbySocket.readyState <= WebSocket.OPEN) return;
+	const socket = new WebSocket(wsUrl(LOBBY_WS_PATH));
+	lobbySocket = socket;
+	socket.addEventListener('open', () => {
+		lobbySocketRetry = 0;
+		renderNet();
+	});
+	socket.addEventListener('message', (event) => {
+		if (typeof event.data !== 'string') return;
+		const message = decodeLobbyMessage(event.data);
+		if (!message) return;
+		lobbyRooms = [...message.rooms].sort((a, b) => b.at - a.at);
 		renderLobby();
-	};
-
-	// 访客问「有谁开了房」→ 房主把自己的房间报回去。
-	query.onMessage = (_data, { peerId }) => {
-		if (lobbyAsHost) announceNow(peerId);
-	};
-
-	handle.onPeerJoin = (peerId) => {
-		// 连上就各自报一次，别只依赖单边：房主主动播，访客也问一句。
-		// 只做单边的话，「那条广播没到」时大厅就是空的，而且没有任何线索能查。
-		if (lobbyAsHost) announceNow(peerId);
-		else void query.send(null, { target: peerId });
-	};
+		renderNet();
+	});
+	socket.addEventListener('close', () => {
+		if (lobbySocket === socket) lobbySocket = null;
+		renderNet();
+		scheduleReconnect('lobby');
+	});
+	// 出错之后 close 一定会来，重连交给上面那支。
+	socket.addEventListener('error', () => undefined);
 }
 
-function joinLobby(): void {
-	if (lobbyRoom) return;
-	// 大厅同样要跨网络和陌生人建连，所以这份 ICE 配置两边都得给，不是只给房间那条。
-	const handle = joinRoom({ appId: APP_ID, relayConfig: relayConfig(), rtcConfig: { iceServers: iceServers() } }, LOBBY_ROOM_ID);
-	lobbyRoom = handle;
-	attachLobbyHandlers(handle);
-	renderLobby();
-	renderNet();
+function wsUrl(path: string): string {
+	const url = new URL(path, location.origin);
+	url.protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+	return url.toString();
 }
 
-/** 房主开播 / 停播。只是这个开关，**不动大厅连接**。 */
-function setLobbyHosting(hosting: boolean): void {
-	lobbyAsHost = hosting;
-	if (hosting) announceNow();
-}
-
-/** 向大厅广播（或单发给某个人）我在开的房间。房间数据变了就要重播一次。 */
-function announceNow(target?: string): void {
-	if (!lobbyAsHost || !lobbyRoom || !room) return;
-	const announce = lobbyRoom.makeAction<LobbyAnnounce>('announce');
-	const payload: LobbyAnnounce = {
-		code: room.code,
-		name: room.name,
-		count: room.members.length,
-		gone: false,
-	};
-	void announce.send(payload, target ? { target } : undefined);
-	lastAnnounceAt = Date.now();
-}
-
-function announceGone(code: string): void {
-	if (!lobbyRoom) return;
-	const announce = lobbyRoom.makeAction<LobbyAnnounce>('announce');
-	void announce.send({ code, name: '', count: 0, gone: true });
+/** 断线重连：按退避节奏排下一次，页面回到前台时也会主动来一发。 */
+function scheduleReconnect(kind: SocketKind): void {
+	if (kind === 'lobby') {
+		const delay = RECONNECT_DELAYS_MS[Math.min(lobbySocketRetry, RECONNECT_DELAYS_MS.length - 1)];
+		lobbySocketRetry += 1;
+		window.setTimeout(connectLobby, delay);
+		return;
+	}
+	if (!roomCode) return;
+	const delay = RECONNECT_DELAYS_MS[Math.min(roomSocketRetry, RECONNECT_DELAYS_MS.length - 1)];
+	roomSocketRetry += 1;
+	window.clearTimeout(reconnectTimer);
+	reconnectTimer = window.setTimeout(() => {
+		if (roomCode) openRoomSocket();
+	}, delay);
 }
 
 function renderLobby(): void {
-	const now = Date.now();
-	for (const [code, entry] of lobbyEntries) {
-		if (now - entry.at > LOBBY_STALE_MS) lobbyEntries.delete(code);
-	}
-	const entries = [...lobbyEntries.values()].sort((a, b) => b.at - a.at);
+	const entries = lobbyRooms;
 
 	dom.lobbyList.replaceChildren(
 		...entries.map((entry) => {
@@ -611,106 +495,31 @@ async function enterRoom(options: {
 	password: string;
 	asHost: boolean;
 	name?: string;
-	/** 加入别人的房间时用：先留在设置页验证密码，连上之后才切到房间界面。 */
+	/** 加入别人的房间时用：先留在设置页等 `joined`，拿到才切界面。 */
 	defer?: boolean;
 }): Promise<EnterResult> {
 	if (pendingJoin) settleJoin({ ok: false, error: '上一次加入还没结束，请重试。' });
 	if (roomCode) await leaveRoom({ silent: true });
 
 	roomCode = options.code;
-	isHost = options.asHost;
+	joinIntent = { password: options.password, asHost: options.asHost, name: options.name };
+	roomSocketRetry = 0;
+	isHost = false;
+	selfId = '';
 	room = null;
 	chat = [];
-	sawHostData = false;
 	setNotice(null);
-	// defer 模式先不切界面：密码就是信令密钥，连不上就说明密码不对或房主不在，
-	// 这时候把人丢进一个空房间没有意义（见文件末尾那个 Promise）。
+	// defer 模式先不切界面：密码不对、房间没了，服务端会立刻回一条 error，
+	// 这时把人丢进一个空房间没有意义（见文件末尾那个 Promise）。
 	if (!options.defer) showRoom();
 	renderRoom();
-	setNotice(isHost ? '正在建房…' : '正在连接房间…', 'info', true);
-	if (!isHost && !options.defer) startHostSilenceTimer();
-
-	const handle = joinRoom(
-		{ appId: APP_ID, password: options.password, relayConfig: relayConfig(), rtcConfig: { iceServers: iceServers() } },
-		`${ROOM_PREFIX}${options.code}`,
-		{ onJoinError: (details) => onJoinError(details.error) },
-	);
-	roomHandle = handle;
-
-	const actions: RoomActions = {
-		hello: handle.makeAction<HelloPayload>('hello'),
-		sync: handle.makeAction<SnapshotPayload>('sync'),
-		state: handle.makeAction<SnapshotPayload>('state'),
-		chat: handle.makeAction<ChatPayload>('chat'),
-		cmd: handle.makeAction<Cmd>('cmd'),
-		bye: handle.makeAction<null>('bye'),
-	};
-	roomActions = actions;
-
-	actions.hello.onMessage = (payload, { peerId }) => {
-		if (!isHost) return;
-		hostAddMember(peerId, payload);
-	};
-	actions.cmd.onMessage = (cmd, { peerId }) => hostHandleCmd(peerId, cmd);
-	actions.bye.onMessage = (_payload, { peerId }) => {
-		if (!isHost || !room) return;
-		const member = L.memberById(room, peerId);
-		if (member) hostMutate((state) => L.removeMember(state, peerId), `${member.name} 离开了房间`);
-	};
-	actions.sync.onMessage = (payload) => applySnapshot(payload, true);
-	actions.state.onMessage = (payload) => applySnapshot(payload, false);
-	actions.chat.onMessage = (payload) => {
-		chat = L.appendChat(chat, payload.message);
-		renderChat();
-	};
-
-	handle.onPeerJoin = (peerId) => {
-		if (isHost) return;
-		// 房主（或房主重建后的新实例）上线了：报上自己的身份，等他回快照。
-		void actions.hello.send({ name: identity.name, avatar: identity.avatar }, { target: peerId });
-	};
-	handle.onPeerLeave = (peerId) => {
-		if (isHost) {
-			if (!room) return;
-			const member = L.memberById(room, peerId);
-			// 没打过招呼就走了的人不在名册里，不用处理。
-			if (member) hostMutate((state) => L.removeMember(state, peerId), `${member.name} 掉线了`);
-			return;
-		}
-		if (room && peerId === room.hostId) waitForHost();
-	};
-
-	if (isHost) {
-		const fallback = L.sanitizeName(identity.name) || '房主';
-		identity = { name: fallback, avatar: identity.avatar };
-		const name = options.name ?? fallback;
-		room = L.createRoom({
-			code: options.code,
-			name,
-			host: { id: selfId, name: fallback, avatar: identity.avatar, joinedAt: Date.now() },
-		});
-		chat = [systemMessage(`房间「${room.name}」已创建，房间码 ${room.code}`)];
-		setNotice(null);
-		renderRoom();
-		renderChat();
-		// 房间开起来之后才开播：大厅卡片上的人数要准。
-		setLobbyHosting(true);
-	} else {
-		renderRoom();
-	}
+	setNotice(options.asHost ? '正在建房…' : '正在连接房间…', 'info', true);
+	openRoomSocket();
 
 	writeSession({ code: options.code, password: options.password, asHost: options.asHost, name: options.name });
 	if (codeFromHash() !== options.code) history.replaceState(null, '', `${location.pathname}${HASH_PREFIX}${options.code}`);
 
 	if (!options.defer) return { ok: true };
-	/*
-	 * 「先验证密码，再进房间」。
-	 *
-	 * 密码就是信令的加密密钥，Trystero 没有「只验一下密码」的接口——唯一可靠的验证方式就是
-	 * 真去连一次。所以这里不改验证方式，只把**界面切换时机**往后挪：密码对了、房主把房间快照
-	 * 发过来了，才切到房间界面（见 applySnapshot）。在此之前一直留在加入房间那张卡上，
-	 * 错了就把原因写在卡片里，而不是让人先进一个空房间再被踢出来。
-	 */
 	return new Promise<EnterResult>((resolve) => {
 		pendingJoin = {
 			resolve,
@@ -718,7 +527,7 @@ async function enterRoom(options: {
 				settleJoin({
 					ok: false,
 					error:
-						'一直没收到房主的回应。按可能性排查：① 房间码或密码抄错了——写错时房主那边完全看不到你的请求，不会有人来告诉你；② 房主已经不在这个房间了；③ 双方网络不允许直连。',
+						'一直没连上房间服务。最可能是这条网络把 WebSocket 拦了（公司网、校园网、部分公共 WiFi 常见），换个网络（比如手机热点）再试；房间码/密码写错的话服务端会直接告诉你，不会等到超时。',
 				});
 				void leaveRoom({ silent: true });
 			}, JOIN_VERIFY_MS),
@@ -735,241 +544,139 @@ function settleJoin(result: EnterResult): void {
 	pending.resolve(result);
 }
 
-async function leaveRoom(options: { silent?: boolean } = {}): Promise<void> {
-	const wasHost = isHost;
-	const code = roomCode;
-	if (wasHost && !options.silent) {
-		const confirmed = window.confirm('你是房主，离开后房间就解散了，其他人会掉线。确定离开？');
-		if (!confirmed) return;
-	}
-	if (wasHost) {
-		announceGone(code);
-		setLobbyHosting(false);
-	}
-	window.clearTimeout(hostSilenceTimer);
-	window.clearTimeout(hostReturnTimer);
-	if (roomHandle) {
-		try {
-			// **必须等它落定**：Trystero 的 leave() 是异步的（先发告别消息、再删内部登记），
-			// 不等就重进同一个 roomId 会拿回正在退出的旧实例。密码输错后重试正好走这条路。
-			await roomHandle.leave();
-		} catch {
-			// 退不掉也要把本地状态清干净，否则界面会卡在房间里。
-		}
-	}
-	roomHandle = null;
-	roomActions = null;
-	roomCode = '';
-	isHost = false;
-	room = null;
-	chat = [];
-	sawHostData = false;
-	renamingTeamId = null;
-	setNotice(null);
-	writeSession(null);
-	history.replaceState(null, '', location.pathname);
-	showSetup();
-}
-
-/** 非房主侧：进房一段时间没收到房主的任何数据。 */
-function startHostSilenceTimer(): void {
-	window.clearTimeout(hostSilenceTimer);
-	hostSilenceTimer = window.setTimeout(() => {
-		if (sawHostData || !roomCode) return;
-		setNotice(
-			'一直没收到房主的响应。按可能性排查：① 密码或房间码抄错了——写错时房主那边完全看不到你的请求，所以不会有人来告诉你；② 双方网络不允许直连。先核一遍密码和房间码，再换个网络（比如手机热点）试。',
-			'warn',
-			true,
-		);
-	}, HOST_SILENCE_MS);
+/** 进房要发的那条消息。重连时重发同一条（clientId 不变，服务端认得出是同一个人）。 */
+function joinMessage(): ClientMessage {
+	const intent = joinIntent;
+	return {
+		t: 'join',
+		clientId: clientId(),
+		name: identity.name,
+		avatar: identity.avatar,
+		password: intent?.password ?? '',
+		create: intent?.asHost ? { name: intent.name ?? identity.name } : undefined,
+	};
 }
 
 /**
- * 房主掉线（含他自己刷新页面）。
+ * 开一条房间 WebSocket，连上就发 `join`。
  *
- * 不能立刻把房间判死：刷新只要一两秒，房主会带着**新的 peer id** 回来
- * （Trystero 的 selfId 每次加载都重新生成）。所以这里先给一个宽限窗口，
- * 期间只要收到房主的任何快照就当作他回来了。
+ * 重连也走这里。服务端按 clientId 认人：刷新、断网重来都还是名册里的同一位，
+ * 队伍位置与 roll 结果不会丢——这正是当初 P2P 方案里最难处理的那部分。
  */
-function waitForHost(): void {
-	if (!roomCode) return;
-	setNotice('房主掉线了，正在等他回来…（他刷新页面的话马上就回）', 'warn', true);
-	window.clearTimeout(hostReturnTimer);
-	hostReturnTimer = window.setTimeout(() => {
-		if (!roomCode) return;
-		setNotice('房主已经离开，房间解散了。', 'error', true);
-		dom.chatInput.disabled = true;
-	}, HOST_RETURN_MS);
+function openRoomSocket(): void {
+	if (!roomCode || !joinIntent || leaving) return;
+	if (roomSocket && roomSocket.readyState <= WebSocket.OPEN) return;
+	const socket = new WebSocket(wsUrl(`${ROOM_WS_PATH}${encodeURIComponent(roomCode)}`));
+	roomSocket = socket;
+	socket.addEventListener('open', () => {
+		roomSocketRetry = 0;
+		window.clearInterval(pingTimer);
+		pingTimer = window.setInterval(() => {
+			if (socket.readyState === WebSocket.OPEN) socket.send(encodeMessage({ t: 'ping' }));
+		}, PING_MS);
+		socket.send(encodeMessage(joinMessage()));
+		renderNet();
+	});
+	socket.addEventListener('message', (event) => {
+		if (typeof event.data !== 'string') return;
+		const message = decodeServerMessage(event.data);
+		if (!message) return;
+		handleRoomMessage(message);
+	});
+	socket.addEventListener('close', () => {
+		if (roomSocket === socket) roomSocket = null;
+		window.clearInterval(pingTimer);
+		if (leaving || !roomCode) return;
+		setNotice('和房间的连接断了，正在重连…', 'warn', true);
+		renderNet();
+		scheduleReconnect('room');
+	});
+	// 出错之后 close 一定会来。
+	socket.addEventListener('error', () => undefined);
 }
 
-function onJoinError(error: string): void {
-	/*
-	 * 已经有确切诊断了，就别再让「等不到房主」那条超时提示把它盖掉。
-	 *
-	 * 这里踩过：密码输错时 joiner 一两秒内就会收到
-	 * `incorrect room password when decrypting offer`，页面先显示「密码不对」，
-	 * 但 10 秒后 silence 定时器照样触发，把这条精确提示覆盖成「也可能是网络……换网络再试」，
-	 * 于是「密码错」被读成了「网络错」。
-	 */
-	window.clearTimeout(hostSilenceTimer);
-	// Trystero 的密码失败文案都带 password：解密 SDP 失败与握手 challenge 失败。
-	const passwordProblem = /password/i.test(error);
-
-	// 还在「先验证密码」阶段：把结论交回那张加入卡片，不要切界面、也不要留个空房间。
-	if (pendingJoin) {
-		settleJoin({
-			ok: false,
-			error: passwordProblem
-				? '密码不对：这个房间的密码和房主设的不一样。房间里的人收不到你的加入请求，所以不会有人来提醒你——回去问一下房主，顺便确认房间码没念错。'
-				: `连不上房主（${error}）。这是网络限制，不是密码问题：同一个 WiFi 下的两个人通常能连上，否则换个网络（比如手机热点）再试。`,
-		});
-		void leaveRoom({ silent: true });
-		return;
-	}
-
-	// 房主看到这条，说明是**别人**没进来（他自己的连接是好的）。
-	if (isHost) {
-		setNotice(
-			passwordProblem
-				? '有人想加入，但密码不对，被挡在门外了。把房间码和密码再对一遍给他。'
-				: `有人想加入，但你们之间建不起直连（${error}）。多人房间里这通常是对面网络受限。`,
-			'warn',
-		);
-		return;
-	}
-
-	// 已经在房间里了：这说明只是和**某一个人**连不上（两人的网络互不通），
-	// 房主那边多半是好的。这种部分失败不说清楚，会让人以为整个房间都坏了。
-	if (sawHostData) {
-		setNotice(`和房间里的某个人建立不了直连（${error}）。其他人不受影响，但这个人的消息你看不到。`, 'warn');
-		return;
-	}
-
-	setNotice(
-		passwordProblem
-			? '密码不对：这个房间的密码和房主设的不一样。房间里的人收不到你的加入请求，所以不会有人来提醒你——回去问一下房主，顺便确认房间码没念错。'
-			: `和房间里的人建立不了直连（${error}）。这是网络限制，不是密码问题：同一个 WiFi 下的两个人通常能连上，否则换个网络（比如手机热点）再试。`,
-		'error',
-		true,
-	);
-}
-
-/** 非房主收到的快照。 */
-function applySnapshot(payload: SnapshotPayload, isSync: boolean): void {
+/** 服务端推来的消息。三种：进房成功、状态快照、错误。 */
+function handleRoomMessage(message: ReturnType<typeof decodeServerMessage> & object): void {
 	if (!roomCode) return;
-	// 房主换了实例（刷新后 peer id 变了）时 rev 会从头开始，不能按 rev 丢弃。
-	if (room && payload.state.hostId === room.hostId && payload.state.rev < room.rev) return;
-	if (payload.state.code !== roomCode) return;
-
-	const first = !sawHostData;
-	sawHostData = true;
-	window.clearTimeout(hostSilenceTimer);
-	window.clearTimeout(hostReturnTimer);
+	if (message.t === 'pong') return;
+	if (message.t === 'error') {
+		onSocketError(message.code, message.message);
+		return;
+	}
+	if (message.state.code !== roomCode) return;
+	room = message.state;
+	chat = message.chat;
+	selfId = message.t === 'joined' ? message.selfId : selfId;
+	isHost = room.hostId === selfId;
 	dom.chatInput.disabled = false;
 	setNotice(null);
-	room = payload.state;
-	if (isSync && payload.chat) chat = [...payload.chat];
-	if (first) chat = L.appendChat(chat, systemMessage('已连上房主，房间信息同步完成'));
 	renderRoom();
 	renderChat();
-
-	// 收到房主的快照 = 密码是对的、房主也在：这时候才把人放进房间界面。
-	if (pendingJoin) {
+	renderNet();
+	if (message.t === 'joined' && pendingJoin) {
 		settleJoin({ ok: true });
 		showRoom();
 	}
 }
 
-// ---------------------------------------------------------------- 房主侧
-
-/** 房主改状态：算新状态 → 记一条系统消息 → 广播 → 刷新大厅里的人数。 */
-function hostMutate(mutate: (state: RoomState) => RoomState, systemText?: string | null): void {
-	if (!isHost || !room || !roomActions) return;
-	const next = mutate(room);
-	if (next === room) return;
-	room = next;
-	if (systemText) pushMessage(systemMessage(systemText));
-	renderRoom();
-	renderChat();
-	// 广播不带聊天历史：历史只在有人进房时单独补发（`sync`），否则每条消息都要重传一遍。
-	void roomActions.state.send({ state: room, chat: [] });
-	// 人走了/来了要重播，大厅卡片上的人数是实时算的。
-	if (systemText) announceNow();
+function sendToRoom(message: ClientMessage): boolean {
+	if (roomSocket?.readyState !== WebSocket.OPEN) return false;
+	roomSocket.send(encodeMessage(message));
+	return true;
 }
 
-function pushMessage(message: ChatMessage): void {
-	chat = L.appendChat(chat, message);
-	if (roomActions) void roomActions.chat.send({ message });
-}
+/** 服务端明确拒绝时的文案。每种情况都不一样，别混成一句「连不上」。 */
+function onSocketError(code: string, detail?: string): void {
+	const text =
+		code === 'bad-password'
+			? '密码不对：这个房间的密码和房主设的不一样。回去问一下房主，顺便确认房间码没念错。'
+			: code === 'room-not-found'
+				? '房间不存在了：房主可能已经关掉，或者房间码抄错了。'
+				: code === 'too-many-messages'
+					? '消息发得太快，连接被服务端断开了。等一下再进。'
+					: (detail ?? '服务端拒绝了这次操作。');
 
-function hostAddMember(peerId: string, payload: HelloPayload): void {
-	if (!isHost || !room || !roomActions) return;
-	/*
-	 * 这里的 `typeof` 判断看着多余（类型上就是 string），但这是**从数据通道收来的**内容：
-	 * 对面的版本可能比我们旧、也可能有人手搓消息。类型只是本仓库内部的约定，不是运行时保证。
-	 */
-	const rawName = typeof payload.name === 'string' ? payload.name : '';
-	const rawAvatar = typeof payload.avatar === 'string' ? payload.avatar : '';
-	const name = L.sanitizeName(rawName) || '无名氏';
-	const member: Member = {
-		id: peerId,
-		name,
-		// 头像地址来自对方的 Steam 资料，只在 <img> 里用（不拼 HTML），并限定 https。
-		avatar: rawAvatar.startsWith('https://') ? rawAvatar : '',
-		joinedAt: Date.now(),
-	};
-
-	if (L.memberById(room, peerId)) {
-		// 老面孔重连（刷新、切网络）：只更新昵称头像，不记一条「加入房间」的噪音。
-		const before = room;
-		room = L.upsertMember(room, member).state;
-		renderRoom();
-		if (room.rev !== before.rev) void roomActions.state.send({ state: room, chat: [] });
-		void roomActions.sync.send({ state: room, chat }, { target: peerId });
+	if (pendingJoin) {
+		settleJoin({ ok: false, error: text });
+		void leaveRoom({ silent: true });
 		return;
 	}
-
-	const before = room;
-	const result = L.upsertMember(room, member);
-	room = result.state;
-	pushMessage(systemMessage(`${name} 加入了房间`));
-	renderRoom();
-	renderChat();
-	if (room.rev !== before.rev) void roomActions.state.send({ state: room, chat: [] });
-	// 新来的人单独补一份完整快照（带聊天历史）。
-	void roomActions.sync.send({ state: room, chat }, { target: peerId });
-	announceNow();
+	setNotice(text, 'error', true);
 }
 
-function hostHandleCmd(peerId: string, cmd: Cmd): void {
-	if (!isHost || !room || !roomActions) return;
-	const member = L.memberById(room, peerId);
-	if (!member) return; // 没打过招呼的人不能发言、不能操作
-
-	switch (cmd.type) {
-		case 'chat': {
-			const text = L.clampChatText(cmd.text ?? '');
-			if (!text) return;
-			// 名字用名册里的，不采信对方传来的昵称：否则谁都能顶着别人的名字说话。
-			pushMessage({ id: id(), kind: 'say', peerId, name: member.name, text, at: Date.now() });
-			renderChat();
-			break;
-		}
-		case 'roll': {
-			const value = L.rollValue(cryptoRand);
-			hostMutate((state) => L.setRoll(state, peerId, value), `${member.name} 掷出了 ${value}`);
-			break;
-		}
-		case 'move': {
-			// 只有本人能挪自己（房主挪别人走的是本地操作，不经过这里）。
-			if (cmd.memberId !== peerId) return;
-			hostMutate((state) => L.moveMember(state, cmd.memberId, cmd.teamId), null);
-			break;
-		}
-		case 'sync':
-			void roomActions.sync.send({ state: room, chat }, { target: peerId });
-			break;
+async function leaveRoom(options: { silent?: boolean } = {}): Promise<void> {
+	if (isHost && !options.silent) {
+		const confirmed = window.confirm('离开房间？你走之后房主会交给房间里最早加入的那个人。');
+		if (!confirmed) return;
 	}
+	// 先置位再关连接：close 回调看到 leaving 就不会排重连。
+	leaving = true;
+	window.clearTimeout(reconnectTimer);
+	window.clearInterval(pingTimer);
+	const socket = roomSocket;
+	roomSocket = null;
+	joinIntent = null;
+	roomCode = '';
+	isHost = false;
+	selfId = '';
+	room = null;
+	chat = [];
+	renamingTeamId = null;
+	setNotice(null);
+	writeSession(null);
+	history.replaceState(null, '', location.pathname);
+	if (socket) {
+		try {
+			socket.close(1000, '主动离开');
+		} catch {
+			// 已经断了。
+		}
+	}
+	showSetup();
+	leaving = false;
+	// 列表上的人数是服务端给的，刚摘掉自己，重连一次拿最新的。
+	connectLobby();
+	renderNet();
 }
 
 // ---------------------------------------------------------------- 渲染
@@ -1020,40 +727,30 @@ function avatarNode(name: string, avatar: string, size: number): HTMLElement {
 }
 
 function renderNet(): void {
-	let open = 0;
-	try {
-		const sockets = getRelaySockets() as Record<string, WebSocket | undefined>;
-		for (const socket of Object.values(sockets)) if (socket?.readyState === 1) open += 1;
-	} catch {
-		// 取不到就当没连上，下面的文案本来就是「连不上怎么办」。
-	}
-
-	dom.netDot.className = `h-2 w-2 shrink-0 rounded-full ${open > 0 ? 'bg-[#22c55e]' : 'bg-faint'}`;
-	dom.netText.textContent =
-		open > 0 ? `信令中继已连接 ${open} 个` : '正在连接信令中继…（一直连不上就换网络或开代理）';
-
 	/*
-	 * 大厅里**连上了几个人**是这页最重要的自检数字：房间列表、聊天、分队加起来都建立在
-	 * 「P2P 真的连上了」之上，而连不上时页面上什么都不会发生、也不会报错。
-	 * 报出这个数字，就能一眼分清「没人开房」和「我根本没连上」。
+	 * 传输只有两条 WebSocket，所以「连上没有」这件事本身就是能直接问出来的：
+	 * 大厅那条决定房间列表更不更新，房间那条决定你的操作发不发得出去。
 	 */
-	let lobbyPeers = 0;
-	try {
-		lobbyPeers = Object.keys(lobbyRoom?.getPeers() ?? {}).length;
-	} catch {
-		// 取不到就当 0，下面的文案本来就是「还在找」。
-	}
+	const lobbyOnline = lobbySocket?.readyState === WebSocket.OPEN;
+	const roomOnline = roomSocket?.readyState === WebSocket.OPEN;
+
+	dom.netDot.className = `h-2 w-2 shrink-0 rounded-full ${lobbyOnline || roomOnline ? 'bg-[#22c55e]' : 'bg-faint'}`;
+	dom.netText.textContent = roomCode
+		? roomOnline
+			? '已连上房间'
+			: '正在重连房间…'
+		: lobbyOnline
+			? '已连上大厅'
+			: '正在连接…';
 
 	const parts: string[] = [];
 	if (roomCode && room) {
 		parts.push(`房间内 ${room.members.length} 人`);
-		// 房主是否真的在大厅里可见，是「大厅看不到房间」那类问题的唯一线索，这里一并摆出来。
-		if (isHost) parts.push(`大厅可见 · 已连 ${lobbyPeers} 人`);
+		parts.push(isHost ? '你是房主' : `房主是 ${L.memberById(room, room.hostId)?.name ?? '—'}`);
 	} else {
-		parts.push(lobbyPeers > 0 ? `大厅已连 ${lobbyPeers} 人` : '正在找大厅里的其他人…');
-		parts.push(lobbyEntries.size > 0 ? `${lobbyEntries.size} 个房间在等人` : '当前没有房间');
+		parts.push(lobbyRooms.length > 0 ? `${lobbyRooms.length} 个房间在等人` : '当前没有房间');
 	}
-	parts.push('P2P 直连，本站不经手聊天内容');
+	parts.push('走本站的 WebSocket，房间状态存在服务端');
 	dom.netDetail.textContent = parts.join(' · ');
 }
 
@@ -1151,7 +848,7 @@ function teamCard(state: RoomState, team: Team): HTMLElement {
 			committed = true;
 			const next = input.value;
 			renamingTeamId = null;
-			hostMutate((current) => L.renameTeam(current, team.id, next), null);
+			sendToRoom({ t: 'team', op: { kind: 'rename', teamId: team.id, name: next } });
 			renderTeams();
 		};
 		input.addEventListener('keydown', (event) => {
@@ -1352,7 +1049,7 @@ function setDropZone(zone: HTMLElement | null): void {
 
 /**
  * 挪人。下拉和拖拽共用这一条路径，免得两条路的权限或提示走偏。
- * 房主直接改本地权威状态；其他人把请求发给房主（房主只允许他挪自己，见 hostHandleCmd）。
+ * 一律发给服务端：它自己判断「挪自己随时行、挪别人得是房主」，客户端不做权威判断。
  */
 function moveMemberTo(memberId: string, teamId: string | null): void {
 	if (!room) return;
@@ -1370,8 +1067,7 @@ function moveMemberTo(memberId: string, teamId: string | null): void {
 		return;
 	}
 
-	if (isHost) hostMutate((state) => L.moveMember(state, memberId, teamId), null);
-	else void roomActions?.cmd.send({ type: 'move', memberId, teamId });
+	sendToRoom({ t: 'move', memberId, teamId });
 }
 
 function bindMemberDrag(): void {
@@ -1527,43 +1223,35 @@ function bindEvents(): void {
 		const text = L.clampChatText(dom.chatInput.value);
 		if (!text) return;
 		dom.chatInput.value = '';
-		if (isHost) {
-			if (!room) return;
-			pushMessage({ id: id(), kind: 'say', peerId: selfId, name: identity.name, text, at: Date.now() });
-			renderChat();
-		} else {
-			void roomActions?.cmd.send({ type: 'chat', text });
-		}
+		// 不本地先画：消息会随服务端推回来的快照一起到，本地插一条反而要处理「重发了怎么办」。
+		sendToRoom({ t: 'chat', text });
 	});
 
 	dom.rollBtn.addEventListener('click', () => {
 		if (!room) return;
-		if (isHost) {
-			const value = L.rollValue(cryptoRand);
-			hostMutate((state) => L.setRoll(state, selfId, value), `${identity.name} 掷出了 ${value}`);
-		} else {
-			void roomActions?.cmd.send({ type: 'roll' });
-		}
+		// 点数由服务端摇，客户端连随机数都不用参与——否则每个人算出来都不一样。
+		sendToRoom({ t: 'roll' });
 	});
 
 	dom.teamSize.addEventListener('change', () => {
-		const size = Number(dom.teamSize.value);
-		hostMutate((state) => L.setTeamSize(state, size), `每队上限改成 ${L.clampTeamSize(size)} 人`);
+		if (!isHost) return;
+		sendToRoom({ t: 'team', op: { kind: 'size', size: Number(dom.teamSize.value) } });
 	});
 	dom.autoAssign.addEventListener('change', () => {
-		hostMutate((state) => L.setAutoAssign(state, dom.autoAssign.checked), null);
+		if (!isHost) return;
+		sendToRoom({ t: 'team', op: { kind: 'autoAssign', on: dom.autoAssign.checked } });
 	});
 
 	// 房主工具：按钮分散在几处，统一用事件委托。
 	document.addEventListener('click', (event) => {
 		const target = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-host-tool]');
 		if (!target || !isHost) return;
-		const tool = target.dataset.hostTool;
-		if (tool === 'autoForm') hostMutate((state) => L.autoFormTeams(state), '按人数重新分队');
-		else if (tool === 'randomize') hostMutate((state) => L.randomizeTeams(state, cryptoRand), '随机重排了队伍');
-		else if (tool === 'byRoll') hostMutate((state) => L.formTeamsByRoll(state), '按 roll 蛇形分队');
-		else if (tool === 'addTeam') hostMutate((state) => L.addTeam(state), '新增了一个队伍');
-		else if (tool === 'clearRolls') hostMutate((state) => L.clearRolls(state), '重开了一轮 roll');
+		const tool = target.dataset.hostTool as TeamOp['kind'] | undefined;
+		if (!tool) return;
+		// 这几个都没有参数，`kind` 直接对上协议里的 `kind`，省一层映射。
+		if (tool === 'autoForm' || tool === 'randomize' || tool === 'byRoll' || tool === 'addTeam' || tool === 'clearRolls') {
+			sendToRoom({ t: 'team', op: { kind: tool } });
+		}
 	});
 
 	// 归队：队伍区和空闲池里各有一个下拉，两者是同一件事，所以合并成一个委托监听
@@ -1579,7 +1267,7 @@ function bindEvents(): void {
 	document.addEventListener('click', (event) => {
 		const node = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-team-remove],[data-team-rename-start]');
 		if (!node || !isHost) return;
-		if (node.dataset.teamRemove) hostMutate((state) => L.removeTeam(state, node.dataset.teamRemove ?? ''), null);
+		if (node.dataset.teamRemove) sendToRoom({ t: 'team', op: { kind: 'remove', teamId: node.dataset.teamRemove } });
 		else if (node.dataset.teamRenameStart) {
 			renamingTeamId = node.dataset.teamRenameStart;
 			renderTeams();
@@ -1624,22 +1312,23 @@ function bindEvents(): void {
 		}
 	});
 
-	// 关页面/刷新时告诉房主我走了：WebRTC 自己有断线检测，但那要等好几秒，
-	// 不打招呼的话名册里会留一个幽灵，房间里的人会以为你还在。
+	// 关页面/刷新时把连接关干净：服务端收到 close 就把人从名册里摘掉，
+	// 不用等心跳超时（否则别人要过十几秒才看到你走了）。
 	window.addEventListener('pagehide', () => {
-		if (!isHost && roomActions) void roomActions.bye.send(null);
+		try {
+			roomSocket?.close(1000, '页面关闭');
+		} catch {
+			// 已经断了。
+		}
 	});
 
 	/*
-	 * 回到前台立刻补一次播报与重绘，不等下一个 5 秒节拍。
-	 *
-	 * 隐藏期间播报会被浏览器节流（Chrome 约一分钟一次，见 `LOBBY_STALE_MS` 的注释），
-	 * 房主切回来时别人列表里的房间可能刚好过期了，这一下能把状态推回去。
+	 * 回到前台立刻补一次：隐藏期间浏览器会掐掉/冻结连接，回来时重连一次比等退避计时器快得多。
 	 */
 	document.addEventListener('visibilitychange', () => {
 		if (document.hidden) return;
-		if (lobbyAsHost) announceNow();
-		if (lobbyEntries.size > 0) renderLobby();
+		connectLobby();
+		if (roomCode && roomSocket?.readyState !== WebSocket.OPEN) openRoomSocket();
 		renderNet();
 	});
 }
@@ -1724,17 +1413,18 @@ async function copyText(text: string, button: HTMLButtonElement): Promise<void> 
 // ---------------------------------------------------------------- 启动
 
 function startTicker(): void {
-/*
- * 一个 5 秒的节拍同时干三件事：按需重播、剔除过期的房间、刷新网络状态。
+/**
+ * 5 秒节拍只做两件事：刷新网络状态、必要时把断掉的连接捞回来。
  *
- * 「剔除过期房间」不能只在非房主那条分支里——剪枝写在 `renderLobby()` 内部，房主原先永远走
- * 播报分支，于是只有别人播报时才顺带重绘一次，自己列表里的失效房间会一直挂着。
+ * 房间列表不用它管——服务端推什么就是什么，没有过期时间要算。
  */
-window.setInterval(() => {
-if (lobbyAsHost && Date.now() - lastAnnounceAt > ANNOUNCE_MS) announceNow();
-if (lobbyEntries.size > 0) renderLobby();
-renderNet();
-}, 5000);
+function startTicker(): void {
+	window.setInterval(() => {
+		if (!lobbySocket || lobbySocket.readyState > WebSocket.OPEN) connectLobby();
+		if (roomCode && (!roomSocket || roomSocket.readyState > WebSocket.OPEN)) openRoomSocket();
+		renderNet();
+	}, 5000);
+}
 }
 
 function restoreNickname(): void {
@@ -1755,8 +1445,8 @@ function boot(): void {
 	restoreNickname();
 	bindEvents();
 	startTicker();
-	// 大厅只在这里加入一次，之后再也不动它（角色切换只是开播 / 停播）。
-	joinLobby();
+	// 大厅连接只在这里建一次，之后断了会自动重连。
+	connectLobby();
 
 	const code = codeFromHash();
 	const session = readSession();

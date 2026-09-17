@@ -12,9 +12,9 @@ import { readFileSync } from 'node:fs';
  * 3. `dragstart` 必须 `setData()`：不设数据时 **Firefox 根本不会开始拖拽**（哪怕我们只读自己的变量）；
  * 4. `draggable` 只能挂在手柄上，不能挂在成员卡上：卡里嵌着归队用的 `<select>`，
  *    祖先带 `draggable` 之后那些控件在部分浏览器里点不动；
- * 5. `L.moveMember()` 只许有两条入口——本机的 `moveMemberTo()` 和房主代远端执行的 `hostHandleCmd()`；
- *    拖拽和下拉必须共用前者，后者必须拦住「挪别人」的命令，否则「房主能挪任何人、其他人只能挪
- *    自己」这条规则会散落到各处，迟早走偏；
+ * 5. 客户端**不许自己改状态**：挪人只有 `moveMemberTo()` 一条入口，它把请求发给服务端；
+ *    「房主能挪任何人、其他人只能挪自己」这条规则在 Durable Object 里判（这里顺带断言它还在），
+ *    否则权限判断会散落到各处，迟早走偏；
  * 6. 重建队伍区前必须 `clearDrag()`：`replaceChildren()` 会把拖拽源节点从文档里摘掉，浏览器随即
  *    中止拖拽，而 `dragend` 落在脱离文档的节点上、冒泡不到 `document`，于是 `draggingMemberId`
  *    永远停在那个幽灵身上；
@@ -103,17 +103,21 @@ assert.ok(
 	'成员卡本身不能可拖：卡里嵌着归队用的 <select>，祖先 draggable 会让它点不动',
 );
 
-// 规则 5：挪人只有两条入口——本机的 `moveMemberTo()`，和房主代远端执行命令的 `hostHandleCmd()`。
-// 除此之外不许有第三处直接调 `L.moveMember()`，否则 `isHost` / 只能挪自己这两条判断开始泄漏。
+// 规则 5：客户端只发请求，改状态的是服务端（`src/worker/partyRoom.ts`）。
+// 客户端**一次都不该**直接调 `L.moveMember()`——那意味着本地权威又回来了。
 const moveCalls = [...script.matchAll(/L\.moveMember\(/g)];
-assert.equal(moveCalls.length, 2, `L.moveMember() 只该有两处调用，现在 ${moveCalls.length} 处`);
-assert.ok(functionBody('moveMemberTo').includes('L.moveMember('), '本机那处必须在 moveMemberTo() 里');
-const hostCmd = functionBody('hostHandleCmd');
-assert.ok(hostCmd.includes('L.moveMember('), '远端命令那处必须在 hostHandleCmd() 里');
-// 房主代执行时唯一能挪的就是发起人自己：不然谁都能把别人挪走。
-assert.match(hostCmd, /cmd\.memberId !== peerId/, 'hostHandleCmd 必须拦住「挪别人」的 move 命令');
+assert.equal(moveCalls.length, 0, `客户端不该直接改房间状态，现在有 ${moveCalls.length} 处 L.moveMember()`);
+assert.match(
+	functionBody('moveMemberTo'),
+	/sendToRoom\(\{ t: 'move'/,
+	'moveMemberTo() 只能把 move 请求发给服务端',
+);
 assert.match(drop, /moveMemberTo\(/, 'drop 必须走 moveMemberTo()');
 assert.ok(!/hostMutate|cmd\.send/.test(drop), 'drop 里不许直接改状态或发指令：权限判断只留一处');
+
+// 权限判断现在在服务端：非房主只能挪自己。它丢了的话，谁都能把别人的位置挪走。
+const worker = readFileSync(new URL('../src/worker/partyRoom.ts', import.meta.url), 'utf8');
+assert.match(worker, /message\.memberId !== clientId && !isHost/, '服务端必须拦住「非房主挪别人」');
 
 // 规则 6：重新渲染前清拖拽状态。
 assert.match(functionBody('renderTeams'), /clearDrag\(\)/, 'renderTeams() 必须先 clearDrag()');
