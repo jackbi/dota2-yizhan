@@ -71,4 +71,25 @@ assert.match(page, /\[1, 2, 3, 4, 5\]\.map/, '号位筛选要覆盖 1 到 5');
 assert.ok(page.includes('id="draft-data"'), '页面要带上构建期数据');
 assert.ok(page.includes("import '../scripts/draftBoard'"), '页面要加载客户端脚本');
 
+// ---------------------------------------------------------------- 布局约束
+
+/**
+ * 这几条都是实测踩出来的，删掉不会报错，只会让页面看起来"没做完"：
+ *
+ * 1. 右边的 BP 板要和左边的英雄池**等高**。面板本身会被栅拉高，但里面那层只有内容高度，
+ *    改回两列挑选（或去掉 flex 拉伸）就会空出四五百像素。
+ * 2. 挑选区排**一列**，禁用区保持小格子，两者的高度差靠栅格分配。
+ * 3. 比赛下拉必须限宽：原生 select 会按最长的那条 option 撑开，窄屏上顶出横向滚动条
+ *    （实测 390px 视口下页面被撑到 534px）。
+ */
+assert.ok(page.includes('class="draft-board '), 'BP 板要带 draft-board 类');
+assert.ok(page.includes('class="draft-board-grid '), 'BP 板的栅格要带 draft-board-grid 类');
+assert.match(page, /@media \(min-width: 1280px\)/, '等高拉伸要放在 xl 断点里，否则移动端会被拉伸');
+assert.match(page, /\.draft-board-grid\s*\{[^}]*flex:\s*1 1 auto/, 'draft-board-grid 必须撑满面板高度');
+assert.match(page, /\.draft-picks\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/, '挑选区必须是单列');
+assert.match(page, /\.draft-bans\s*\{[^}]*grid-template-columns:\s*repeat\(4,/, '禁用区四列小格');
+assert.match(page, /\.draft-picks \.draft-slot\s*\{[^}]*min-height:\s*52px/, '挑选格要有高度下限，别在小屏被压没');
+assert.ok(!page.includes('min-w-56'), '比赛下拉不能用 min-w 定宽，会被最长的 option 撑破布局');
+assert.match(page, /id="draft-match"[^>]*class="[^"]*w-full[^"]*sm:w-72/, '比赛下拉要限宽');
+
 console.log(`draftPage 断言通过（${pageIds.size} 个 id，脚本引用 ${queriedIds.size} 个）`);
