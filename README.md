@@ -22,6 +22,8 @@
 - **官方新闻**（`/news`）：dota2.com.cn 官网资讯与 r/DotA2 热帖，正文抓回站内阅读
 - **社区热帖**（`/community`）：NGA 与虎扑两个来源，站内镜像主楼正文与回复，可按来源与时间筛选
 - **官方赛事**（`/tournaments`）：TI / Major / ESL 等赛事的赛程与赛果，带战队页
+- **阵容分析**（`/draft`）：看比赛时手动录 BP，按号位胜率给下一手建议；可选填自己的 DeepSeek key
+  让模型解释这一手，key 只存在浏览器本地
 - **版本信息**（`/patches`）：7.08 到最新共 118 个版本的更新日志，按「英雄 → 技能 / 天赋 / 命石」分层
 - **英雄与装备**（`/heroes`、`/items`）：属性、定位、出装与物品资料
 - **个人战绩**（`/me`）：Steam OpenID 登录后看概况、比赛、英雄、队友与对手、进展、分析五个子页，
@@ -104,6 +106,7 @@ README 只留「是什么 / 怎么跑 / 怎么部署」，实现细节与踩过�
 | 直播：OB 名单与开播状态、分屏页的画面与格子尺寸、弹幕 | [docs/live.md](./docs/live.md) |
 | 数据来源：社区热帖、头像与封面本地化、B站视频、版本 datafeed、赛事 | [docs/data-sources.md](./docs/data-sources.md) |
 | 开黑房间：协议、身份来源、连不上时的表现与取舍 | [docs/party.md](./docs/party.md) |
+| 阵容分析：顺序表来源、候选怎么算、模型负责什么 | [docs/draft.md](./docs/draft.md) |
 | logo / 字体 / 主题色板 | [docs/branding.md](./docs/branding.md) |
 | 与 dart_simple_live 的直播做法差异（为什么浏览器里做不到同样的效果） | [docs/live-source-deltas.md](./docs/live-source-deltas.md) |
 
