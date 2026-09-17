@@ -38,6 +38,7 @@ const data: DraftData = {
 	updatedAt: '2026-09-17T00:00:00.000Z',
 	bracketLabel: '超凡入圣及以上',
 	windowDays: 7,
+	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	heroes: [
 		hero(1, '敌法师', [0.52, null, null, null, null]),
@@ -82,6 +83,8 @@ assert.match(user, /Team XG vs Team Spirit/, '用户提示词要带双方队名'
 assert.match(user, /第 1 手/, '要说清现在第几手');
 assert.match(user, /最后一手/, '要说清最后一手归谁');
 assert.match(user, /超凡入圣及以上/, '要带上号位胜率的口径');
+assert.match(user, /版本 7\.41f（2026-09-15 发布）/, '要带上这批数据对应的游戏版本');
+assert.ok(!user.includes('跨了这次版本更新'), '没跨版本时不要吓唬模型');
 for (const candidate of started.candidates) {
 	assert.ok(user.includes(`heroId=${candidate.heroId}`), `候选 ${candidate.heroId} 必须出现在提示词里`);
 }
@@ -90,6 +93,18 @@ for (const candidate of started.candidates) {
 }
 assert.ok(!user.includes('undefined'), '提示词里出现了 undefined，说明有字段没取到');
 assert.ok(!user.includes('NaN'), '提示词里出现了 NaN');
+
+// 样本跨版本时必须说明白：否则模型会把新旧混算的胜率当成"当前版本共识"。
+const straddling = buildAdviceMessages({
+	advice: started,
+	data: { ...data, patch: { version: '7.41f', date: '2026-09-15', straddles: true } },
+	ourTeam: 'Team XG',
+	theirTeam: 'Team Spirit',
+	recorded: [],
+	ourSide: 'radiant',
+	firstPicker: 'radiant',
+});
+assert.match(straddling[1]?.content ?? '', /跨了这次版本更新/, '跨版本时提示词里要有这条提醒');
 
 // ---------------------------------------------------------------- 请求体
 

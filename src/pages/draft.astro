@@ -68,6 +68,12 @@ const matchLabel = (match: EsportsMatch): string => {
 				<span class="rounded-full border border-line px-3 py-1 text-muted">
 					职业样本 {data.proSample.picks} 出场 / {data.proSample.bans} 被禁
 				</span>
+				{data.patch.version ? (
+					<span class:list={['rounded-full border px-3 py-1', data.patch.straddles ? 'border-gold-deep text-gold' : 'border-line text-muted']}>
+						版本 {data.patch.version}
+						{data.patch.straddles ? ' · 样本跨版本' : ''}
+					</span>
+				) : null}
 			</div>
 		</div>
 
@@ -211,7 +217,8 @@ const matchLabel = (match: EsportsMatch): string => {
 		</section>
 
 		<p class="mt-6 text-xs leading-relaxed text-faint">
-			数据口径：号位胜率来自 STRATZ 的 {data.bracketLabel}统计（近 {data.windowDays} 天，单个号位少于 {data.minPositionMatches} 场不计）；
+			数据口径：号位胜率来自 STRATZ 的 {data.bracketLabel}统计（近 {data.windowDays} 天，单个号位少于 {data.minPositionMatches} 场不计），
+			对应版本 {data.patch.version || '未知'}{data.patch.date ? `（${data.patch.date} 发布）` : ''}{data.patch.straddles ? '，这批样本跨了一次版本更新，胜率混着旧版本的场次' : ''}；
 			职业出场与被禁来自 OpenDota 的职业样本，总量只有 {data.proSample.picks} 出场 / {data.proSample.bans} 被禁，只能当热度看。
 			建议是按号位胜率做的启发式估计，不是胜率预测，也不代表任何队伍的真实战术。
 		</p>

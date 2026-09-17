@@ -56,6 +56,7 @@ const data: DraftData = {
 	updatedAt: '2026-09-17T00:00:00.000Z',
 	bracketLabel: '超凡入圣及以上',
 	windowDays: 7,
+	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	heroes: HEROES,
 	proSample: { picks: 620, bans: 532 },

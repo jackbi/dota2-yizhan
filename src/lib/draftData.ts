@@ -1,6 +1,7 @@
 import { fetchHeroList } from './heroApi';
 import { reportSource } from './dataHealth';
 import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
+import { fetchPatchUpdates } from './patchesApi';
 import { HERO_META_BRACKET_LABEL, HERO_META_WINDOW_DAYS, fetchHeroMeta, stratzFetchCount } from './stratzApi';
 
 /**
@@ -46,6 +47,8 @@ export interface DraftData {
 	/** 号位胜率的口径说明，直接展示在页面上。 */
 	bracketLabel: string;
 	windowDays: number;
+	/** 这批胜率对应的游戏版本。 */
+	patch: DraftPatch;
 	minPositionMatches: number;
 	heroes: DraftHero[];
 	/** 职业样本总量，页面上用来说明"这点样本只能当热度看"。 */
@@ -53,6 +56,20 @@ export interface DraftData {
 	/** 两类数据的可用性，缺哪一类界面上就少一类建议依据。 */
 	hasPositionData: boolean;
 	hasProData: boolean;
+}
+
+export interface DraftPatch {
+	/** 版本号，例如 `7.41f`；拿不到就是空串。 */
+	version: string;
+	/** 发布日期，例如 `2026-09-15`。 */
+	date: string;
+	/**
+	 * 统计窗口里是否包含了一次版本更新。
+	 *
+	 * 近 7 天的样本里如果刚发过新版本，胜率就是新旧两个版本混在一起算的，这时候拿它当
+	 * "当前版本的英雄强度"会看偏，所以页面上和提示词里都要把这条说出来。
+	 */
+	straddles: boolean;
 }
 
 let dataPromise: Promise<DraftData> | null = null;
@@ -65,10 +82,11 @@ export function loadDraftData(): Promise<DraftData> {
 	dataPromise ??= (async () => {
 		// 起点的联网计数：末尾拿它判断这一轮到底是新抓的还是吃缓存。
 		const before = stratzFetchCount() + openDotaFetchCount();
-		const [heroList, meta, proStats] = await Promise.all([
+		const [heroList, meta, proStats, patchList] = await Promise.all([
 			fetchHeroList().catch(() => []),
 			fetchHeroMeta(),
 			fetchProHeroStats(),
+			fetchPatchUpdates().catch(() => []),
 		]);
 
 		let proPicks = 0;
@@ -114,19 +132,22 @@ export function loadDraftData(): Promise<DraftData> {
 		const hasProData = proPicks > 0 || proBans > 0;
 		const fetched = stratzFetchCount() + openDotaFetchCount() > before;
 
+		const patch = toPatch(patchList);
+
 		await reportSource(
 			'draft-data',
 			'阵容分析数据',
 			// 一份英雄都拿不到才算空；其余按"这轮有没有真的联网抓过"区分新数据与缓存，
 			// 不按有没有号位样本来判断——那会把"吃了缓存"说成"新抓的"。
 			heroes.length === 0 ? 'empty' : fetched ? 'fresh' : 'cache',
-			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；职业样本 ${proPicks} 出场 / ${proBans} 被禁`,
+			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；职业样本 ${proPicks} 出场 / ${proBans} 被禁；版本 ${patch.version || '未知'}`,
 		);
 
 		return {
 			updatedAt: new Date().toISOString(),
 			bracketLabel: HERO_META_BRACKET_LABEL,
 			windowDays: HERO_META_WINDOW_DAYS,
+			patch,
 			minPositionMatches: MIN_POSITION_MATCHES,
 			heroes,
 			proSample: { picks: proPicks, bans: proBans },
@@ -135,4 +156,18 @@ export function loadDraftData(): Promise<DraftData> {
 		};
 	})();
 	return dataPromise;
+}
+
+/**
+ * 取最新的版本号，并判断统计窗口里是不是跨了一次版本更新。
+ *
+ * 版本列表按时间倒序，第一条就是当前版本。`date` 是官方给的发布日（UTC 当天零点），
+ * 拿不到日期时不算跨版本，因为"不知道"不该说成"跨了"。
+ */
+function toPatch(list: readonly { version: string; date: string }[]): DraftPatch {
+	const latest = list[0];
+	if (!latest) return { version: '', date: '', straddles: false };
+	const releasedAt = Date.parse(`${latest.date}T00:00:00Z`);
+	const straddles = Number.isFinite(releasedAt) && Date.now() - releasedAt <= HERO_META_WINDOW_DAYS * 24 * 3600 * 1000;
+	return { version: latest.version, date: latest.date, straddles };
 }
