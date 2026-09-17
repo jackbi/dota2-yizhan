@@ -314,6 +314,14 @@ export default defineConfig({
 			 * 免得反向代理没透传对 Host 时把 Steam 的回调指错地方。
 			 */
 			SITE_URL: envField.string({ context: 'server', access: 'public', optional: true }),
+			/**
+			 * 开黑房间的 TURN 中转（coturn）。三个都配上才会生效，页面由 SSR 渲染进
+			 * `#party-setup` 的 data-* 里，脚本只负责读——**不写死在客户端代码里**，
+			 * 免得公开仓库里躺着一份能白嫖的中转凭据。
+			 */
+			TURN_URL: envField.string({ context: 'server', access: 'public', optional: true }),
+			TURN_USERNAME: envField.string({ context: 'server', access: 'public', optional: true }),
+			TURN_CREDENTIAL: envField.string({ context: 'server', access: 'secret', optional: true }),
 		},
 	},
 });

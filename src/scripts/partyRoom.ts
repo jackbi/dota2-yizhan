@@ -77,21 +77,36 @@ const STUN_SERVERS = [
 ];
 
 /**
- * TURN 中转。**默认空，而空着就意味着「双方都是对称 NAT 时必然连不上」**（国内手机 4G/5G 大量
- * 是对称 NAT）。要填就填自己那台 coturn，形状 `{ urls, username, credential }`。
+ * TURN 中转。对称 NAT 之间（国内手机 4G/5G 大量如此）打洞必然失败，**只有它能救**；
+ * 没有它时页面的表现就是「同一个 WiFi 能连、跨网络连不上」，或者干脆「大厅已连 0 人」。
+ *
+ * 凭据**不在代码里**：部署时由 SSR 渲染进 `#party-setup` 的 data-*（见 party.astro 与
+ * astro.config 的 env schema），这里只负责读——公开仓库里不放一份能白嫖的中转凭据。
+ * 没配就返回空数组，退化成「只有 STUN」。
  *
  * **注意别用 Trystero 的 `turnConfig`**：那个只有在你不传 `rtcConfig.iceServers` 时才生效
- * （见上面那条「整体替换」），我们既然要自定义 STUN，TURN 就得一起写进 `iceServers`。
+ * （见上面那条「整体替换」），既然要自定义 STUN，TURN 就得一起写进 `iceServers`。
  *
- * 搭法见 docs/party.md 的「跨网络连不上怎么办」。
+ * coturn 的搭法与要放行的端口见 docs/party.md。
  */
-const TURN_SERVERS: { urls: string; username: string; credential: string }[] = [];
+function turnServers(): RTCIceServer[] {
+	const url = dom.setup.dataset.turnUrl?.trim();
+	if (!url) return [];
+	return [
+		{
+			// 普通 turn: 就把 UDP / TCP 各来一条；turns: 本身已经是 TLS over TCP，原样用。
+			urls: url.startsWith('turns:') ? [url] : [`${url}?transport=udp`, `${url}?transport=tcp`],
+			username: dom.setup.dataset.turnUser ?? '',
+			credential: dom.setup.dataset.turnCred ?? '',
+		},
+	];
+}
 
 /**
  * 传给 `joinRoom` 的 ICE 配置。STUN 与 TURN 合成一份列表——理由见上面两条注释。
  */
 function iceServers(): RTCIceServer[] {
-	return [...STUN_SERVERS.map((urls) => ({ urls })), ...TURN_SERVERS];
+	return [...STUN_SERVERS.map((urls) => ({ urls })), ...turnServers()];
 }
 
 /** 房主每隔多久向大厅重播一次自己的房间。 */

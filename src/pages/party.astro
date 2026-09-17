@@ -1,6 +1,7 @@
 ---
 import Avatar from '../components/player/Avatar.astro';
 import Layout from '../layouts/Layout.astro';
+import { TURN_CREDENTIAL, TURN_URL, TURN_USERNAME } from 'astro:env/server';
 import { readSession } from '../lib/session';
 
 /**
@@ -27,6 +28,15 @@ export const prerender = false;
 
 const session = await readSession(Astro.cookies);
 const me = session ? { name: session.name, avatar: session.avatar } : null;
+
+/*
+ * TURN 中转（见 docs/party.md 的「TURN」一节）：只在这里读环境变量、渲染成 data-*，
+ * 客户端脚本不去碰 astro:env——它跑在浏览器里，读不到服务端密钥。没配就什么属性都不渲染，
+ * 客户端那边自然就退化成「只有 STUN」。
+ */
+const turn = TURN_URL && TURN_USERNAME && TURN_CREDENTIAL
+	? { url: TURN_URL, username: TURN_USERNAME, credential: TURN_CREDENTIAL }
+	: null;
 ---
 
 <Layout
@@ -64,7 +74,13 @@ const me = session ? { name: session.name, avatar: session.avatar } : null;
 		</div>
 
 		<!-- ==================================================== 设置区 -->
-		<div id="party-setup" class="space-y-5">
+		<div
+			id="party-setup"
+			class="space-y-5"
+			data-turn-url={turn?.url}
+			data-turn-user={turn?.username}
+			data-turn-cred={turn?.credential}
+		>
 			<section class="rounded-2xl border border-line bg-surface p-5" aria-labelledby="identity-title">
 				<h2 id="identity-title" class="font-display text-lg">你是谁</h2>
 				<p class="mt-1 text-sm text-faint">

@@ -126,32 +126,39 @@ Trystero 默认给的是 `stun*.l.google.com:19302` ×3 加 `stun.cloudflare.com
 ### TURN：对称 NAT 只能靠它
 
 STUN 只解决「知道自己公网地址」。双方都是对称 NAT 时（国内手机 4G/5G 大量如此），打洞必然
-失败，**只能靠 TURN 中转**。填 `src/scripts/partyRoom.ts` 里的 `TURN_SERVERS`：
+失败，**只能靠 TURN 中转**——这也是「同一个 WiFi 能连、手机流量连不上」的第二种成因
+（第一种是上面的 STUN）。
 
-```ts
-const TURN_SERVERS = [{ urls: 'turn:turn.example.com:3478', username: 'dota2', credential: '<密码>' }];
+客户端这边不用改代码：`TURN_URL` / `TURN_USERNAME` / `TURN_CREDENTIAL` 三个变量在
+`astro.config.mjs` 的 env schema 里声明，由 `party.astro` 在 SSR 时渲染进 `#party-setup`
+的 data-*，脚本只负责读——**公开仓库里不放一份能白嫖的中转凭据**。三个都配齐才生效。
+
+- 线上：`pnpm exec wrangler secret put TURN_URL`（`turn:43.160.194.51:3478`）、`TURN_USERNAME`、`TURN_CREDENTIAL`；
+- 本地：`.env` 里同样三条。
+
+服务端是那台新加坡机器上的 coturn（2026-09-17 装的），配置在 `/etc/coturn/turnserver.conf`，
+口令在 `/etc/turnserver-secret`（都是我这边生成的，不在仓库里）。它的形状：
+
 ```
-
-**别用 Trystero 的 `turnConfig` 参数**：它只在你不传 `rtcConfig.iceServers` 时才生效（见上面
-那条「整体替换」），既然要自定义 STUN，TURN 就得写进同一份 `iceServers`——`iceServers()` 已经
-把两者合起来了。自己搭 coturn 的要点：
-
-```sh
-# 云主机上（Debian/Ubuntu 系）
-apt install coturn && systemctl enable --now coturn
-# /etc/turnserver.conf 至少要这几行
 listening-port=3478
-realm=turn.example.com
-user=dota2:<密码>
-fingerprint
+min-port=49160 / max-port=49200     # 中继端口段
+external-ip=43.160.194.51/10.0.4.14 # 网卡上是私网地址，必须显式告诉它对外地址
+realm=dota2-party / lt-cred-mech / user=dota2:<口令>
+user-quota=12 / total-quota=120 / max-bps=500000   # 免得被人当中转器白嫖
 ```
 
-两个容易踩的点：**云控制台的安全组要放行 `UDP 3478` 与中继端口段**（`min-port`/`max-port`，
-实测那台新加坡机器上入站 UDP 3478 是被挡的，宿主机自己没开 firewalld 也一样收不到包）；
-**给 coturn 挂个 `tls-listening-port=5349` 或直接用 443** 能在 UDP 被限速时兜底。
+**云控制台的安全组必须放行这三个**，否则 coturn 起来也没用（宿主机自己没有防火墙，
+实测入站 UDP 是被云侧全部丢掉的）：
 
-填完之后在房间页面对照看效果：双方 `chrome://webrtc-internals` 里应该出现 `relay` 类型的候选对。
-TURN 只是中转字节，数据仍然是端到端加密的；它不解密、也没有业务逻辑。
+| 协议 | 端口 | 用途 |
+| --- | --- | --- |
+| UDP | 3478 | TURN 本体 |
+| UDP | 49160-49200 | 中继端口段（每个客户端占一个） |
+| TCP | 3478 | UDP 被限速时退到 TCP |
+
+自检办法：房间页面上双方打开 `chrome://webrtc-internals`，正常应该出现 `relay` 类型的候选对；
+服务端可以用 `journalctl -u coturn -f` 看有没有分配记录。TURN 只是中转字节，数据仍然端到端
+加密；它不解密、也没有业务逻辑。
 
 ## 一个 Vite 的坑：`trystero` 必须写进 `optimizeDeps.include`
 
