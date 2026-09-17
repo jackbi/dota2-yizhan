@@ -135,6 +135,6 @@ NGA / 虎扑 / Reddit（社区）、Liquipedia（赛程）、斗鱼 / 虎牙 / B
 
 > 采取**自愿**原则，收到的赞赏将用于提高开发者积极性和开发环境。
 
-| 微信 |
-| :---: |
-| <img src="https://imgbed.hiwenbin.com/file/1789613868939_微信图片_20260917104551_100_31.jpg" alt="微信收款码" width="200"> |
+| 微信 | 支付宝 |
+| :---: | :---: |
+| <img src="https://imgbed.hiwenbin.com/file/1789613883856_微信图片_20260917104550_99_31.jpg" alt="微信收款码" width="200"> | <img src="https://imgbed.hiwenbin.com/file/1789613868939_微信图片_20260917104551_100_31.jpg" alt="支付宝收款码" width="200"> |
