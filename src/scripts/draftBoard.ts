@@ -8,6 +8,7 @@ import {
 	DEEPSEEK_ENDPOINT,
 	DEFAULT_DEEPSEEK_MODEL,
 	buildAdviceMessages,
+	buildChatRequest,
 	parseAdviceReply,
 } from '../lib/draftPrompt.ts';
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
@@ -598,20 +599,14 @@ if (data) {
 			try {
 				/**
 				 * 发一次请求。`jsonMode` 为假时去掉 `response_format`：
-				 * 模型的 JSON 输出偶尔会因为参数不受支持被拒（400），而解析层本来就能处理
-				 * 带代码块围栏的回复，所以退一步继续用，不要让整个功能跟着挂掉。
+				 * 这个参数万一不受支持会被 400 拒掉，而解析层本来就能处理带代码块围栏的回复，
+				 * 所以退一步继续用，不要让整个功能跟着挂掉。
 				 */
 				const send = (jsonMode: boolean) =>
 					fetch(DEEPSEEK_ENDPOINT, {
 						method: 'POST',
 						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-						body: JSON.stringify({
-							model,
-							messages,
-							temperature: 0.3,
-							max_tokens: 900,
-							...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
-						}),
+						body: JSON.stringify(buildChatRequest({ model, messages, jsonMode })),
 					});
 				let response = await send(true);
 				if (response.status === 400) {
@@ -630,8 +625,15 @@ if (data) {
 					);
 					return;
 				}
-				const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-				const content = body.choices?.[0]?.message?.content ?? '';
+				const body = (await response.json()) as { choices?: { message?: { content?: string }; finish_reason?: string }[] };
+				const choice = body.choices?.[0];
+				const content = choice?.message?.content ?? '';
+				if (!content.trim()) {
+					// 实测过的一种情况：模型把上限全用在思考上，content 是空的。
+					// 请求里已经关了思考，这里只是兜底，别让用户看到"点了没反应"。
+					setStatus(choice?.finish_reason === 'length' ? '模型输出被截断，再点一次试试' : '模型这次返回了空内容，再点一次试试');
+					return;
+				}
 				const parsed = parseAdviceReply(content, advice.candidates.map((candidate) => candidate.heroId));
 				if (!parsed) {
 					setStatus('模型这次没给出可用结果，重试或按数据面板判断');

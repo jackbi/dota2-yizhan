@@ -82,6 +82,12 @@ key 的边界写清楚：存在浏览器 `localStorage`，请求由浏览器直�
 模型名走 `deepseek-flash` / `deepseek-v4-pro`，请求是 OpenAI 兼容格式；`response_format`
 被拒（400）时会去掉该参数重试一次，因为解析层本来就能处理带代码块围栏的回复。
 
+**请求里必须显式关掉思考**（`thinking: { type: 'disabled' }`）。这条不是调优，是不关就没结果：
+`deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
+吃掉、`content` 是空的（`finish_reason: length`），把上限提到 4000 也一样空且耗时 21 秒；
+关掉之后 1.8 秒返回 288 个 token 的正常 JSON。请求体的组装在 `draftPrompt.ts` 的
+`buildChatRequest` 里，`scripts/draftPrompt.check.ts` 盯着这一条别被改掉。
+
 ## 文件分工
 
 | 文件 | 职责 |

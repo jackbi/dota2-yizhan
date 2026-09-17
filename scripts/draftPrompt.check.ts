@@ -4,6 +4,7 @@ import { advise } from '../src/lib/draftScore.ts';
 import {
 	ADVICE_TARGET_COUNT,
 	buildAdviceMessages,
+	buildChatRequest,
 	buildSystemPrompt,
 	parseAdviceReply,
 } from '../src/lib/draftPrompt.ts';
@@ -89,6 +90,24 @@ for (const candidate of started.candidates) {
 }
 assert.ok(!user.includes('undefined'), '提示词里出现了 undefined，说明有字段没取到');
 assert.ok(!user.includes('NaN'), '提示词里出现了 NaN');
+
+// ---------------------------------------------------------------- 请求体
+
+/**
+ * 关掉思考这条是实测出来的，不是可选项：默认开着的时候模型把 token 上限全用在
+ * `reasoning_tokens` 上，`content` 是空的（900 与 4000 都试过），页面上表现为"点了没结果"。
+ */
+const request = buildChatRequest({ model: 'deepseek-flash', messages });
+assert.deepEqual(request.thinking, { type: 'disabled' }, '必须显式关掉思考，否则回复只有思考没有正文');
+assert.deepEqual(request.response_format, { type: 'json_object' }, '默认要求 JSON 输出');
+assert.equal(request.model, 'deepseek-flash');
+assert.equal(request.max_tokens, 900);
+assert.ok(Array.isArray(request.messages) && request.messages.length === 2, '请求里要带上两条消息');
+
+// 被 400 拒掉时可以退一步：去掉 response_format，其它参数不变。
+const withoutJson = buildChatRequest({ model: 'deepseek-flash', messages, jsonMode: false });
+assert.equal('response_format' in withoutJson, false, 'jsonMode 为假时不应带 response_format');
+assert.deepEqual(withoutJson.thinking, { type: 'disabled' }, '去掉 JSON 模式也要保持关闭思考');
 
 // ---------------------------------------------------------------- 回复解析
 

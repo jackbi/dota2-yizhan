@@ -147,6 +147,36 @@ export function buildAdviceMessages(input: PromptInput): PromptMessage[] {
 	];
 }
 
+/** 单次回复的 token 上限。关掉思考之后实测一次约 290 个 token，900 留了足够余量。 */
+export const ADVICE_MAX_TOKENS = 900;
+
+export interface ChatRequestOptions {
+	model: string;
+	messages: PromptMessage[];
+	/** 是否要求 JSON 输出。被 400 拒掉时调用方会去掉它重试。 */
+	jsonMode?: boolean;
+	maxTokens?: number;
+}
+
+/**
+ * 组装 DeepSeek 的 `chat/completions` 请求体。
+ *
+ * **必须显式关掉思考**（`thinking: { type: 'disabled' }`）。这不是调优，是不关就没有结果：
+ * `deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
+ * 吃光，`content` 是空的（`finish_reason: length`）；把上限提到 4000 也一样空，耗时 21 秒。
+ * 关掉之后 1.8 秒返回 288 个 token 的正常 JSON。
+ */
+export function buildChatRequest(options: ChatRequestOptions): Record<string, unknown> {
+	return {
+		model: options.model,
+		messages: options.messages,
+		temperature: 0.3,
+		max_tokens: options.maxTokens ?? ADVICE_MAX_TOKENS,
+		...(options.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
+		thinking: { type: 'disabled' },
+	};
+}
+
 export interface ParsedPick {
 	heroId: number;
 	position: number;
