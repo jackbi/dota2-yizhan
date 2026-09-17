@@ -37,19 +37,22 @@ export const GET: APIRoute = async ({ url, cookies, redirect }) => {
 	if (!identity) return redirect('/login?error=verify', 302);
 
 	/*
-	 * 昵称与头像顺带从 STRATZ 取。取不到**不该挡住登录**：SteamID 已经验过了，
-	 * 资料只是展示用，先用占位名进站，个人页自己会重试。
+	 * 昵称与头像顺带从 STRATZ 取。取不到**不该挡住登录**：SteamID 已经验过了，资料只是展示用。
+	 *
+	 * 取不到时 `name` 写空——**别在这里编一个「玩家 <账号 id>」**：那会被签进 30 天的 Cookie，
+	 * 等 STRATZ 恢复也没人去改它，页头就一直显示那个假名（踩过）。空名由
+	 * `hydrateSessionProfile()` 在下次请求时补齐，展示层的兜底在 `/api/me`。
 	 */
 	const profile = await loadPlayerProfile(identity.accountId, 1).catch(() => null);
 
 	await writeSession(
 		cookies,
-		{
-			accountId: identity.accountId,
-			steamId: identity.steamId,
-			name: profile?.name ?? `玩家 ${identity.accountId}`,
-			avatar: profile?.avatar ?? '',
-		},
+			{
+				accountId: identity.accountId,
+				steamId: identity.steamId,
+				name: profile?.name ?? '',
+				avatar: profile?.avatar ?? '',
+			},
 		isSecureOrigin(origin),
 	);
 

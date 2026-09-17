@@ -2,6 +2,8 @@
 import Avatar from '../components/player/Avatar.astro';
 import Layout from '../layouts/Layout.astro';
 import { readSession } from '../lib/session';
+import { displayName, hydrateSessionProfile } from '../lib/sessionProfile';
+import { isSecureOrigin } from '../lib/siteOrigin';
 
 /**
  * 开黑房间。
@@ -25,8 +27,16 @@ import { readSession } from '../lib/session';
  */
 export const prerender = false;
 
-const session = await readSession(Astro.cookies);
-const me = session ? { name: session.name, avatar: session.avatar } : null;
+/*
+ * 会话里的昵称头像可能还空着（登录那一刻 STRATZ 没取到）。这一页是 SSR 的，正好顺手补一次：
+ * 房间里的名字与头像直接取自这里，晚一步补就意味着进房间时顶着「玩家 125249704」。
+ */
+const session = await hydrateSessionProfile(
+	Astro.cookies,
+	await readSession(Astro.cookies),
+	isSecureOrigin(Astro.url.origin),
+);
+const me = session ? { name: displayName(session), avatar: session.avatar } : null;
 ---
 
 <Layout
