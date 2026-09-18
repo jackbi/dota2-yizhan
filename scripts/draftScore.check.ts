@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { advise } from '../src/lib/draftScore.ts';
 import type { RecordedHand } from '../src/lib/draftOrder.ts';
+import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES } from '../src/data/heroTraits.ts';
 
 /**
  * 阵容分析打分层的自检。
@@ -20,8 +21,18 @@ import type { RecordedHand } from '../src/lib/draftOrder.ts';
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/draftScore.check.ts`）。
  */
 
-/** 造一个英雄：`rates` 按一号位到五号位给胜率，null 表示这个位置没有样本。 */
-function hero(id: number, rates: (number | null)[], pro: [number, number, number] = [0, 0, 0]): DraftHero {
+/**
+ * 造一个英雄：`rates` 按一号位到五号位给胜率（null 表示没有样本），
+ * `roles` 是官方角色等级（核心/辅助/爆发/控制/打野/耐久/逃生/推进/先手），
+ * `traits` 是人工标注的体系与清场能力。
+ */
+function hero(
+	id: number,
+	rates: (number | null)[],
+	pro: [number, number, number] = [0, 0, 0],
+	roles: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0],
+	traits: { summon?: boolean; aoe?: boolean } = {},
+): DraftHero {
 	return {
 		id,
 		name: `英雄${id}`,
@@ -30,6 +41,9 @@ function hero(id: number, rates: (number | null)[], pro: [number, number, number
 		img: '',
 		positions: rates.map((rate) => (rate === null ? null : [1000, Math.round(rate * 1000)])),
 		pro,
+		roles,
+		summon: Boolean(traits.summon),
+		aoe: Boolean(traits.aoe),
 	};
 }
 
@@ -67,6 +81,23 @@ const data: DraftData = {
 };
 
 const OUR = 'radiant' as const;
+
+// ---------------------------------------------------------------- 人工名单
+
+/**
+ * 体系与清场这两类没有官方数据，是人写的名单，所以至少要保证：
+ * 不空、不重复、名字看起来是英雄名。名单与英雄表对不对得上，由构建期对账
+ * （对不上的名字会写进数据源日志，见 `draftData`）。
+ */
+for (const [label, names] of [
+	['幻象/召唤体系', SUMMON_ILLUSION_NAMES],
+	['AoE 清场', AOE_CLEAR_NAMES],
+] as const) {
+	assert.ok(names.length >= 8, `${label}名单太短了（${names.length} 个），像是被清空过`);
+	assert.equal(new Set(names).size, names.length, `${label}名单里有重复的名字`);
+	// 单字英雄名是存在的（陈），所以只查"不像名字"的情况：空串、带空格、带标点。
+	for (const name of names) assert.ok(name.length >= 1 && name === name.trim() && !/[\s，、]/.test(name), `${label}名单里的「${name}」不像英雄名`);
+}
 
 // ---------------------------------------------------------------- 第一手与先选权
 
@@ -185,6 +216,58 @@ assert.ok(
 	!noCounter.candidates.some((candidate) => candidate.reasons.some((line) => line.includes('对位'))),
 	'没数据时不该写出对位依据',
 );
+
+// ---------------------------------------------------------------- 能力维度与体系
+
+/**
+ * 这一组验三件事：
+ * 1. 缺控制的时候，控制高的候选要排前面（号位胜率、对位都一样，差别只可能来自能力维度）；
+ * 2. 对面是幻象/召唤体系时，清场的目标值从 1 提到 2，并且要写出来；
+ * 3. 体系判断来自哪一个英雄。
+ */
+const traitHeroes = [
+	hero(301, [0.5, null, null, null, null], [0, 0, 0], [0, 0, 0, 3, 0, 0, 0, 0, 0]), // 控制 3
+	hero(302, [0.5, null, null, null, null]), // 什么都不给
+	hero(303, [0.5, null, null, null, null], [0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0], { aoe: true }),
+	hero(304, [0.5, null, null, null, null], [0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0], { summon: true }), // 对面的体系英雄
+	hero(305, [0.5, null, null, null, null]), // 我方已选
+	hero(306, [0.5, null, null, null, null]), // 对面第二个
+];
+const traitData: DraftData = { ...data, heroes: traitHeroes, matchups: {}, matchupPairs: 0 };
+const traitRecorded: RecordedHand[] = [null, null, null, null, null, null, null, 305, 304, null, null, null, 306];
+const traitAdvice = advise({ data: traitData, recorded: traitRecorded, ourSide: OUR, firstPicker: OUR });
+assert.ok(traitAdvice, '体系局面也应该有建议');
+assert.equal(traitAdvice.step, 14);
+
+const control = traitAdvice.candidates.find((candidate) => candidate.heroId === 301);
+const plain = traitAdvice.candidates.find((candidate) => candidate.heroId === 302);
+const aoe = traitAdvice.candidates.find((candidate) => candidate.heroId === 303);
+assert.ok(control && plain && aoe, '三个候选都要在');
+assert.ok(control.ranking > plain.ranking, '缺控制时，控制高的候选要排前面');
+assert.ok(control.ranking > aoe.ranking, '控制缺口比清场缺口更急（目标值更大）');
+assert.ok(
+	control.reasons.some((line) => line.includes('补上阵容缺的控制') && line.includes('0/4')),
+	'依据里要写清补的是哪个维度、当前差多少，实际：' + control.reasons.join(' / '),
+);
+assert.ok(
+	aoe.reasons.some((line) => line.includes('清场')),
+	'带 AoE 的候选要写明补清场，实际：' + aoe.reasons.join(' / '),
+);
+assert.match(traitAdvice.composition.text, /控制 0\/4/, '阵容维度要列出控制现状');
+assert.ok(traitAdvice.composition.enemySummon, '要认出对面是幻象/召唤体系');
+assert.match(traitAdvice.composition.text, /清场 0\/2/, '对面是体系阵容时清场目标提到 2');
+assert.match(traitAdvice.composition.text, /幻象\/召唤体系/, '要在界面上说明为什么提高要求');
+
+// 把对面的体系英雄换成普通英雄，清场要求回到 1。
+const calmAdvice = advise({
+	data: { ...traitData, heroes: traitHeroes.map((item) => (item.id === 304 ? { ...item, summon: false } : item)) },
+	recorded: traitRecorded,
+	ourSide: OUR,
+	firstPicker: OUR,
+});
+assert.ok(calmAdvice);
+assert.ok(!calmAdvice.composition.enemySummon, '没有体系英雄时不该说是体系阵容');
+assert.match(calmAdvice.composition.text, /清场 0\/1/, '没有体系时清场目标只要 1');
 
 // 走满 24 手之后没有"下一手"。
 const full: RecordedHand[] = HEROES.map((item) => item.id).concat(Array.from({ length: 14 }, (_, index) => 100 + index));

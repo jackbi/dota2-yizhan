@@ -227,9 +227,60 @@ export async function fetchHeroList(): Promise<HeroListEntry[]> {
 	}));
 }
 
+/** 官方角色标签的顺序与等级长度（9 项，等级 0-3）。 */
+export const ROLE_COUNT = ROLE_ORDER.length;
+
+/**
+ * 每个英雄的官方角色等级，用于阵容分析的能力维度（控制/爆发/先手/推进/耐久/辅助/核心/机动）。
+ *
+ * 这份标签是 Valve 自己给的，比手写"谁有控谁有爆发"稳：英雄池改了、某个英雄重做了，
+ * 数据feed 会跟着变，不用我们维护。
+ *
+ * 拿不到某个英雄时按全 0 处理（等于这个英雄在能力维度上不加分），不因为一个英雄断了整批。
+ */
+export async function fetchHeroRoles(): Promise<Map<number, number[]>> {
+	const list = await fetchHeroList();
+	const out = new Map<number, number[]>();
+	const chunkSize = 8;
+	for (let index = 0; index < list.length; index += chunkSize) {
+		const chunk = list.slice(index, index + chunkSize);
+		await Promise.all(
+			chunk.map(async (hero) => {
+				try {
+					const detail = await loadHeroDetail(hero.id);
+					out.set(
+						hero.id,
+						ROLE_ORDER.map((_, roleIndex) => Number(detail?.role_levels?.[roleIndex] ?? 0)),
+					);
+				} catch {
+					out.set(hero.id, new Array(ROLE_COUNT).fill(0));
+				}
+			}),
+		);
+	}
+	return out;
+}
+
+/**
+ * 单个英雄的官方详情，按 id 去重。
+ *
+ * 英雄页的 `getStaticPaths` 会把 127 个英雄各拉一遍，阵容分析要的"角色等级"也在同一份详情里，
+ * 没有这层去重就会白拉第二遍。
+ */
+const heroDetailCache = new Map<string, Promise<any>>();
+
+function loadHeroDetail(id: number | string): Promise<any> {
+	const key = String(id);
+	let pending = heroDetailCache.get(key);
+	if (!pending) {
+		pending = getJson<{ result: { heroes: any } }>(`${BASE}/hero?hero_id=${key}`).then((data) => data.result.heroes);
+		heroDetailCache.set(key, pending);
+	}
+	return pending;
+}
+
 export async function fetchHero(id: number | string): Promise<Hero> {
-	const data = await getJson<{ result: { heroes: any } }>(`${BASE}/hero?hero_id=${id}`);
-	const h = data.result.heroes;
+	const h = await loadHeroDetail(id);
 	// 汇总所有技能的特殊数值，用于替换天赋/描述里的 {s:key} 占位
 	const specialMap: Record<string, number> = {};
 	for (const a of h.abilities ?? []) {

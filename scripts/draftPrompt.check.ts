@@ -31,6 +31,9 @@ function hero(id: number, name: string, rates: (number | null)[]): DraftHero {
 		img: '',
 		positions: rates.map((rate) => (rate === null ? null : [1000, Math.round(rate * 1000)])),
 		pro: [10, 5, 8],
+		roles: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+		summon: false,
+		aoe: false,
 	};
 }
 

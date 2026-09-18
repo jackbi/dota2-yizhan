@@ -124,6 +124,7 @@ if (data) {
 	const adviceBody = element<HTMLDivElement>('draft-advice-body');
 	const adviceStatus = element<HTMLSpanElement>('draft-advice-status');
 	const adviceSummary = element<HTMLParagraphElement>('draft-advice-summary');
+	const compositionLine = element<HTMLParagraphElement>('draft-composition');
 	const adviceCards = element<HTMLDivElement>('draft-advice-cards');
 	const lineupBox = element<HTMLDivElement>('draft-lineup');
 	const keyInput = element<HTMLInputElement>('draft-key');
@@ -396,6 +397,7 @@ if (data) {
 			if (adviceSummary) {
 				adviceSummary.textContent = aiResult?.summary ? `${advice.summary} AI：${aiResult.summary}` : advice.summary;
 			}
+			if (compositionLine) compositionLine.textContent = advice.composition.text;
 
 			if (lineupBox) {
 				lineupBox.innerHTML = advice.lineup

@@ -1,4 +1,5 @@
-import { fetchHeroList } from './heroApi';
+import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, resolveHeroNames } from '../data/heroTraits';
+import { ROLE_COUNT, fetchHeroList, fetchHeroRoles } from './heroApi';
 import { reportSource } from './dataHealth';
 import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
 import { fetchPatchUpdates } from './patchesApi';
@@ -47,6 +48,15 @@ export interface DraftHero {
 	positions: ([number, number] | null)[];
 	/** 职业样本：[出场, 取胜, 被禁]，拿不到时为 [0, 0, 0]。 */
 	pro: [number, number, number];
+	/**
+	 * 官方角色等级（9 项，0-3），顺序见 `heroApi.ROLE_ORDER`：
+	 * 核心/辅助/爆发/控制/打野/耐久/逃生/推进/先手。拿不到时是全 0。
+	 */
+	roles: number[];
+	/** 会造幻象或召唤物（判断对面是不是体系阵容）。 */
+	summon: boolean;
+	/** 有稳定的 AoE 清场能力（清幻象、清兵）。 */
+	aoe: boolean;
 }
 
 export interface DraftData {
@@ -99,6 +109,8 @@ export function loadDraftData(): Promise<DraftData> {
 			fetchProHeroStats(),
 			fetchPatchUpdates().catch(() => []),
 		]);
+		// 官方角色标签来自每个英雄的详情，与英雄页共用同一份去重缓存。
+		const roles = await fetchHeroRoles().catch(() => new Map<number, number[]>());
 
 		let proPicks = 0;
 		let proBans = 0;
@@ -116,6 +128,13 @@ export function loadDraftData(): Promise<DraftData> {
 				? heroList.map((hero) => ({ id: hero.id, name: hero.name, nameEn: hero.nameEn, attr: hero.attr, img: hero.img }))
 				: [...(await getHeroMap())].map(([id, info]) => ({ id, name: info.name, nameEn: info.name, attr: 'UNI', img: info.img }));
 
+		// 人工名单与英雄表对账：对不上的名字写进日志，不静默丢掉。
+		const summonNames = resolveHeroNames(SUMMON_ILLUSION_NAMES, base);
+		const aoeNames = resolveHeroNames(AOE_CLEAR_NAMES, base);
+		const summonIds = summonNames.ids;
+		const aoeIds = aoeNames.ids;
+		const missedNames = [...summonNames.missing, ...aoeNames.missing];
+
 		const heroes: DraftHero[] = base.map((hero) => {
 			const entry = meta?.heroes.get(hero.id);
 			const positions: ([number, number] | null)[] = [null, null, null, null, null];
@@ -128,6 +147,7 @@ export function loadDraftData(): Promise<DraftData> {
 				if (!current || stat.matches > current[0]) positions[index] = [stat.matches, stat.wins];
 			}
 			const pro = proStats.get(hero.id);
+			const roleLevels = roles.get(hero.id);
 			return {
 				id: hero.id,
 				name: hero.name,
@@ -136,6 +156,9 @@ export function loadDraftData(): Promise<DraftData> {
 				img: hero.img,
 				positions,
 				pro: pro ? [pro.picks, pro.wins, pro.bans] : [0, 0, 0],
+				roles: roleLevels && roleLevels.length === ROLE_COUNT ? roleLevels : new Array(ROLE_COUNT).fill(0),
+				summon: summonIds.has(hero.id),
+				aoe: aoeIds.has(hero.id),
 			};
 		});
 
@@ -154,7 +177,9 @@ export function loadDraftData(): Promise<DraftData> {
 			// 一份英雄都拿不到才算空；其余按"这轮有没有真的联网抓过"区分新数据与缓存，
 			// 不按有没有号位样本来判断——那会把"吃了缓存"说成"新抓的"。
 			heroes.length === 0 ? 'empty' : fetched ? 'fresh' : 'cache',
-			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；对位 ${matchups?.pairCount ?? 0} 对；职业样本 ${proPicks} 出场 / ${proBans} 被禁；版本 ${patch.version || '未知'}`,
+			// 人工名单对不上的名字接在末尾：英雄改名、写错字都会落到这里。
+			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；对位 ${matchups?.pairCount ?? 0} 对；职业样本 ${proPicks} 出场 / ${proBans} 被禁；版本 ${patch.version || '未知'}` +
+				(missedNames.length > 0 ? `；名单对不上：${missedNames.join('、')}` : ''),
 		);
 
 		return {

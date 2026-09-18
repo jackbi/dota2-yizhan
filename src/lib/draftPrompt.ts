@@ -179,6 +179,7 @@ export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): 
 		'',
 		'我方阵容现状：',
 		renderLineup(input),
+		input.advice.composition.text,
 		'',
 		'已经录进去的 BP：',
 		renderRecorded(input),

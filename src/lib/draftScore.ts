@@ -54,6 +54,40 @@ const CONTEST_CAP = 3;
  */
 const COUNTER_WEIGHT = 1.5;
 
+// 官方角色标签的下标，顺序见 `heroApi.ROLE_ORDER`（核心/辅助/爆发/控制/打野/耐久/逃生/推进/先手）。
+const ROLE_NUKER = 2;
+const ROLE_DISABLER = 3;
+const ROLE_DURABLE = 5;
+const ROLE_PUSHER = 7;
+const ROLE_INITIATOR = 8;
+
+/**
+ * 一套五人的阵容，各能力维度的目标值（官方角色等级之和）。
+ *
+ * 目标怎么定的：控制与爆发各要 4（大概相当于两个 2 级或一个 3 级加一个 1 级），
+ * 先手、上高、前排各要 2（有一个像样的就够）。这是"别选出五个只会打钱的"的底线，
+ * 不是"达标就赢"，所以只占估值里很小的一块。
+ */
+const COMPOSITION_TARGETS = [
+	{ key: 'control', label: '控制', role: ROLE_DISABLER, target: 4 },
+	{ key: 'burst', label: '爆发', role: ROLE_NUKER, target: 4 },
+	{ key: 'initiate', label: '先手', role: ROLE_INITIATOR, target: 2 },
+	{ key: 'push', label: '上高', role: ROLE_PUSHER, target: 2 },
+	{ key: 'front', label: '前排', role: ROLE_DURABLE, target: 2 },
+] as const;
+
+/** 清场（AoE）：对面有幻象/召唤体系时要求两个点，否则一个。 */
+const AOE_TARGET_BASE = 1;
+const AOE_TARGET_VS_SUMMON = 2;
+
+/**
+ * 能力维度在总估值里的权重：把一整套缺口都补满时给到这么多。
+ *
+ * 与号位胜率同尺度（一个号位胜率差 5 个百分点 = 0.05），所以"补上一个缺的控制"
+ * 大约相当于某个号位人选好 1 个百分点，够影响排序，但不至于盖过胜率与对位。
+ */
+const COMPOSITION_WEIGHT = 0.12;
+
 interface PoolHero {
 	hero: DraftHero;
 	/** 按号位索引（0 是一号位）的胜率，样本不足处为 null。 */
@@ -296,6 +330,76 @@ export interface Advice {
 	candidates: AdviceCandidate[];
 	/** 一句话总体判断，界面直接显示。 */
 	summary: string;
+	/** 阵容能力维度的现状与缺口，界面上单列一行；也是模型判断"这一手补什么"的依据。 */
+	composition: { text: string; enemySummon: boolean };
+}
+
+interface CompositionProfile {
+	/** 各维度当前值（官方角色等级之和）。 */
+	values: Record<string, number>;
+	/** 清场点数（有 AoE 的英雄个数）。 */
+	aoe: number;
+	/** 这一方是不是幻象/召唤体系。 */
+	summon: boolean;
+}
+
+/**
+ * 算一套阵容的能力画像。
+ *
+ * 用的是官方角色标签的等级之和，不是"有几个英雄会控制"：
+ * 一个 3 级控制（如沙王）和一个 1 级控制，在阵容里的分量本来就不同。
+ */
+function compositionProfile(heroes: readonly DraftHero[], vsSummon: boolean): CompositionProfile {
+	const values: Record<string, number> = {};
+	for (const dim of COMPOSITION_TARGETS) values[dim.key] = 0;
+	let aoe = 0;
+	let summon = false;
+	for (const hero of heroes) {
+		for (const dim of COMPOSITION_TARGETS) values[dim.key] += hero.roles[dim.role] ?? 0;
+		if (hero.aoe) aoe += 1;
+		if (hero.summon) summon = true;
+	}
+	void vsSummon;
+	return { values, aoe, summon };
+}
+
+/** 目标值：清场目标取决于对面是不是幻象/召唤体系。 */
+const targetOf = (key: string, enemySummon: boolean): number => {
+	if (key === 'aoe') return enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE;
+	return COMPOSITION_TARGETS.find((dim) => dim.key === key)?.target ?? 0;
+};
+
+const labelOf = (key: string): string => (key === 'aoe' ? '清场' : (COMPOSITION_TARGETS.find((dim) => dim.key === key)?.label ?? key));
+
+/**
+ * 这一手能补上阵容多少缺口。
+ *
+ * 只看**缺口**：阵容已经有三四个控制的时候，再选一个控不会加分，
+ * 否则"堆同类"反而成了最优解。
+ */
+function compositionGain(candidate: DraftHero, ours: readonly DraftHero[], enemySummon: boolean): { gain: number; label: string; supply: number; current: number; target: number } | null {
+	const profile = compositionProfile(ours, enemySummon);
+	const dims: { key: string; current: number; target: number; supply: number }[] = COMPOSITION_TARGETS.map((dim) => ({
+		key: dim.key,
+		current: profile.values[dim.key] ?? 0,
+		target: dim.target,
+		supply: candidate.roles[dim.role] ?? 0,
+	}));
+	dims.push({
+		key: 'aoe',
+		current: profile.aoe,
+		target: enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE,
+		supply: candidate.aoe ? 1 : 0,
+	});
+
+	const needs = dims.map((dim) => ({ ...dim, need: Math.max(0, dim.target - dim.current), filled: Math.min(Math.max(0, dim.target - dim.current), dim.supply) }));
+	const totalNeed = needs.reduce((sum, dim) => sum + dim.need, 0);
+	if (totalNeed === 0) return null;
+	const gain = needs.reduce((sum, dim) => sum + dim.filled, 0) / totalNeed;
+	if (gain <= 0) return null;
+	// 选填得最多的那一项写进依据；并列时按维度顺序（控制在前）。
+	const best = [...needs].sort((a, b) => b.filled - a.filled)[0];
+	return { gain, label: labelOf(best.key), supply: best.supply, current: best.current, target: best.target };
 }
 
 export interface AdviseInput {
@@ -407,6 +511,11 @@ export function advise(input: AdviseInput): Advice | null {
 	const theirCtx: RateContext = { matchups: data.matchups, foeIds: ourIds };
 	const ourBase = estimate(pool, ourIds, byId, contestedByUs, ourCtx);
 	const theirBase = estimate(pool, theirIds, byId, contestedByThem, theirCtx);
+	/** 能力维度只跟我们自己（或对面）已经选到的人有关，没选的先不算。 */
+	const ourHeroes = ourIds.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
+	const theirHeroes = theirIds.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
+	const enemySummon = theirHeroes.some((hero) => hero.summon);
+	const ourProfile = compositionProfile(ourHeroes, enemySummon);
 	/** 有一方已经挑满五个人时，再算"多拿一个"没有意义，也不能拿去分配号位。 */
 	const oursFull = ourIds.length >= 5;
 	const theirsFull = theirIds.length >= 5;
@@ -431,13 +540,15 @@ export function advise(input: AdviseInput): Advice | null {
 			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
+			const comp = compositionGain(hero, ourHeroes, enemySummon);
+			if (comp) reasons.push(`补上阵容缺的${comp.label}（本方 ${comp.current}/${comp.target}，它能给 ${comp.supply}）`);
 			if (proText) reasons.push(proText);
 			candidates.push({
 				heroId: hero.id,
 				position,
 				rate: rate ?? NEUTRAL_WIN_RATE,
 				hasSample: rate !== null,
-				ranking: oursAfter.total - ourBase.total,
+				ranking: oursAfter.total - ourBase.total + (comp?.gain ?? 0) * COMPOSITION_WEIGHT,
 				reasons,
 				risk:
 					rate === null
@@ -464,6 +575,9 @@ export function advise(input: AdviseInput): Advice | null {
 		];
 		const counter = counterSummary(data.matchups, hero.id, ourIds);
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
+		// 对面拿到它能补上他们缺的维度，也算威胁。
+		const compForThem = compositionGain(hero, theirHeroes, ourHeroes.some((item) => item.summon));
+		if (compForThem) reasons.push(`对面拿到它正好补上他们的${compForThem.label}（他们 ${compForThem.current}/${compForThem.target}）`);
 		if (ownGain > 0) reasons.push(`我们自己拿它可以涨 ${((ownGain * 100) / 5).toFixed(2)} 个百分点`);
 		if (proText) reasons.push(proText);
 		candidates.push({
@@ -472,7 +586,7 @@ export function advise(input: AdviseInput): Advice | null {
 			rate: rate ?? NEUTRAL_WIN_RATE,
 			hasSample: rate !== null,
 			// 自己更想要的英雄先不急着禁：威胁减去一半的自身收益。
-			ranking: threat - ownGain * 0.5,
+			ranking: threat + (compForThem?.gain ?? 0) * COMPOSITION_WEIGHT - ownGain * 0.5,
 			reasons,
 			risk: ownGain > threat ? '我们自己拿它收益更大，后面还轮得到的话可以考虑留' : '禁用只是止损，补不上我们自己阵容的缺口',
 		});
@@ -488,6 +602,9 @@ export function advise(input: AdviseInput): Advice | null {
 			: `最后一手禁用归${tail.ban === 'ours' ? '我方' : '对方'}、最后一手挑选归${tail.pick === 'ours' ? '我方' : '对方'}`;
 	const gapText = gaps.length > 0 ? `我方还缺 ${gaps.join('、')} 号位` : '我方五个号位都已经落人';
 	const summary = `第 ${state.nextStep} 手：${turnText}。我方还剩 ${remaining.ours.bans} 禁 ${remaining.ours.picks} 选，对方还剩 ${remaining.theirs.bans} 禁 ${remaining.theirs.picks} 选；${tailText}。${gapText}，当前估值 ${pct(ourBase.total / 5)}。`;
+	const compositionParts = COMPOSITION_TARGETS.map((dim) => `${dim.label} ${ourProfile.values[dim.key] ?? 0}/${dim.target}`);
+	compositionParts.push(`清场 ${ourProfile.aoe}/${enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE}`);
+	const compositionText = `阵容维度：${compositionParts.join('、')}${enemySummon ? '（对面是幻象/召唤体系，清场要求提高）' : ''}`;
 
 	return {
 		action: state.action,
@@ -499,5 +616,6 @@ export function advise(input: AdviseInput): Advice | null {
 		lineup: ourBase.slots,
 		candidates: candidates.slice(0, limit),
 		summary,
+		composition: { text: compositionText, enemySummon },
 	};
 }
