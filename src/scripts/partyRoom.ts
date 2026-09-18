@@ -1342,7 +1342,7 @@ function bindEvents(): void {
 		const tool = target.dataset.hostTool as TeamOp['kind'] | undefined;
 		if (!tool) return;
 		// 这几个都没有参数，`kind` 直接对上协议里的 `kind`，省一层映射。
-		if (tool === 'autoForm' || tool === 'randomize' || tool === 'byRoll' || tool === 'addTeam' || tool === 'clearRolls') {
+		if (tool === 'autoForm' || tool === 'randomize' || tool === 'byRoll' || tool === 'add' || tool === 'clearRolls') {
 			sendToRoom({ t: 'team', op: { kind: tool } });
 		}
 	});

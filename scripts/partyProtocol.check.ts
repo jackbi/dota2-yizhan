@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { decodeClientMessage, decodeLobbyMessage, decodeServerMessage, encodeMessage } from '../src/lib/partyProtocol.ts';
 
 /**
@@ -66,6 +67,20 @@ const id = 'a1b2c3d4e5f60718';
 	assert.equal(decodeClientMessage(JSON.stringify({ t: 'team', op: { kind: 'rename', teamId: 't1' } })), null, '改名缺 name 要拒');
 	assert.equal(decodeClientMessage(JSON.stringify({ t: 'team', op: { kind: 'nonsense' } })), null);
 	ok('team：房主工具逐个能解析，缺字段/未知 op 被拒');
+}
+
+// 页面上的房主工具按钮名必须就是协议里的 kind。
+// `data-host-tool` 的值被直接当成 op 发出去（见 partyRoom.ts 的事件委托），所以 HTML 与协议
+// 是两个文件里的同一份名单。曾经「新增队伍」写的是 `addTeam`、协议里却叫 `add`：类型检查会报
+// "此比较似乎是无意的"，而**浏览器里是静默失灵**——点下去只换来一个 bad-message，页面上什么都不说。
+{
+	const page = readFileSync(new URL('../src/pages/party.astro', import.meta.url), 'utf8');
+	const tools = [...page.matchAll(/data-host-tool="([^"]+)"/g)].map((match) => match[1]);
+	assert.ok(tools.length >= 5, `party.astro 里只找到 ${tools.length} 个 data-host-tool，选择器多半写坏了`);
+	for (const tool of tools) {
+		assert.ok(decodeClientMessage(JSON.stringify({ t: 'team', op: { kind: tool } })), `data-host-tool="${tool}" 不是协议认得的 kind`);
+	}
+	ok(`party.astro：${tools.length} 个房主工具按钮名与协议一致`);
 }
 
 // 聊天：空串与非字符串都不该进房间
