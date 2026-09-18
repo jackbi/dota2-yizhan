@@ -126,4 +126,13 @@ assert.ok(!script.includes('draft-bans-'), 'BP 板不该再有独立的禁用区
 assert.ok(!script.includes('draft-picks-'), 'BP 板不该再有独立的挑选区');
 assert.match(script, /cell\.dataset\.action = entry\.action/, '每一行都要带上是禁用还是挑选');
 
+/**
+ * 英雄池照客户端的排法：四个属性各占一列并排，每列里是竖版头像墙 45×80。
+ * 第一版是四组上下堆叠的横版大图，一屏只看得到半组，挑人要来回滚。
+ */
+assert.match(page, /\.pool-root\s*\{[^}]*grid-template-columns:\s*repeat\(4,/, '四个属性要并排成四列');
+assert.match(page, /\.pool-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*45px\)/, '头像格要按 45 宽定宽排');
+assert.match(page, /\.hero-tile\s*\{[^}]*width:\s*45px[^}]*height:\s*80px/, '头像格要是 45×80 的竖版');
+assert.ok(!page.includes('aspect-ratio: 16 / 10'), '头像格改成定高之后不该再留宽高比');
+
 console.log(`draftPage 断言通过（${pageIds.size} 个 id，脚本引用 ${queriedIds.size} 个）`);

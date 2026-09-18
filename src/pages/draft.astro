@@ -133,9 +133,14 @@ const matchLabel = (match: EsportsMatch): string => {
 			<span id="draft-banner-detail" class="text-xs text-faint"></span>
 		</div>
 
-		<div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-			<!-- 英雄池 -->
-			<div id="draft-pool-panel" class="rounded-2xl border border-line bg-surface/60 p-4">
+		<div class="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+			<!--
+				左列：英雄池 + 建议。建议紧挨着池子放，因为候选卡片点一下就是录入这一手，
+				眼睛和鼠标都不用跑到另一栏去；顺带把左列的高度撑起来，跟右边的 BP 板差不多齐。
+			-->
+			<div class="flex min-w-0 flex-col gap-5">
+				<!-- 英雄池 -->
+				<div id="draft-pool-panel" class="rounded-2xl border border-line bg-surface/60 p-4">
 				<div class="mb-3 flex flex-wrap items-center gap-x-6 gap-y-3">
 					<label class="flex items-center gap-2 text-xs text-muted">
 						搜索
@@ -158,8 +163,33 @@ const matchLabel = (match: EsportsMatch): string => {
 					</div>
 					<span id="draft-pool-count" class="ml-auto text-xs text-faint"></span>
 				</div>
-				<div id="draft-pool" class="pool-root" aria-label="英雄池"></div>
-				<p id="draft-pool-hint" class="mt-3 text-xs text-faint"></p>
+					<div id="draft-pool" class="pool-root" aria-label="英雄池"></div>
+					<p id="draft-pool-hint" class="mt-3 text-xs text-faint"></p>
+				</div>
+
+				<!-- 建议 -->
+				<section class="rounded-2xl border border-line bg-surface/60 p-4" aria-label="建议">
+					<!--
+						轮到对面时这块是主界面：AI 替对面落子。默认自动出招，想自己代打就取消上面的勾选，
+						这时按钮会露出来，由人点一下。
+					-->
+					<div id="draft-ai-move" class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-sm" style="display: none">
+						<span id="draft-ai-who" class="text-cream"></span>
+						<span id="draft-ai-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
+						<button id="draft-ai-play" type="button" class="filter-chip" style="display: none">让 AI 走这一手</button>
+					</div>
+					<div class="flex flex-wrap items-center gap-3">
+						<button id="draft-advice-toggle" type="button" class="filter-chip" aria-expanded="false" aria-controls="draft-advice-body">看建议（不剧透）</button>
+						<!-- 初值用内联 style：Tailwind 的 `hidden` 类优先级更高，脚本摘不掉，元素会永远是隐藏的。 -->
+						<button id="draft-advice-ai" type="button" class="filter-chip" style="display: none">让 AI 解释这几手</button>
+						<span id="draft-advice-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
+					</div>
+					<div id="draft-advice-body" style="display: none">
+						<p id="draft-advice-summary" class="mt-4 text-sm text-cream"></p>
+						<div id="draft-lineup" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5"></div>
+						<div id="draft-advice-cards" class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3"></div>
+					</div>
+				</section>
 			</div>
 
 			<!-- BP 板 -->
@@ -183,30 +213,6 @@ const matchLabel = (match: EsportsMatch): string => {
 				<p class="mt-2 text-xs text-faint">一行一手，中间是手号；禁用打叉变灰，挑选是头像，顺序与客户端一致。</p>
 			</div>
 		</div>
-
-		<!-- 建议 -->
-		<section class="mt-5 rounded-2xl border border-line bg-surface/60 p-4" aria-label="建议">
-			<!--
-				轮到对面时这块是主界面：AI 替对面落子。默认自动出招，想自己代打就取消上面的勾选，
-				这时按钮会露出来，由人点一下。
-			-->
-			<div id="draft-ai-move" class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line bg-surface-2/60 px-3 py-2 text-sm" style="display: none">
-				<span id="draft-ai-who" class="text-cream"></span>
-				<span id="draft-ai-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
-				<button id="draft-ai-play" type="button" class="filter-chip" style="display: none">让 AI 走这一手</button>
-			</div>
-			<div class="flex flex-wrap items-center gap-3">
-				<button id="draft-advice-toggle" type="button" class="filter-chip" aria-expanded="false" aria-controls="draft-advice-body">看建议（不剧透）</button>
-				<!-- 初值用内联 style：Tailwind 的 `hidden` 类优先级更高，脚本摘不掉，元素会永远是隐藏的。 -->
-				<button id="draft-advice-ai" type="button" class="filter-chip" style="display: none">让 AI 解释这几手</button>
-				<span id="draft-advice-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
-			</div>
-			<div id="draft-advice-body" style="display: none">
-				<p id="draft-advice-summary" class="mt-4 text-sm text-cream"></p>
-				<div id="draft-lineup" class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5"></div>
-				<div id="draft-advice-cards" class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3"></div>
-			</div>
-		</section>
 
 		<!-- 设置 -->
 		<section class="mt-5 rounded-2xl border border-line bg-surface/60 p-4" aria-label="设置">
@@ -445,42 +451,36 @@ const matchLabel = (match: EsportsMatch): string => {
 		.draft-page .draft-board-grid {
 			flex: 1 1 auto;
 			min-height: 0;
-			/* 右边比左边矮时，把这一列居中，别在面板底部留一块空白。 */
-			justify-content: center;
-		}
-		/*
-		 * 右边比左边高的时候（挑选框放大之后就是），左边多出来的高度平分到四个属性组之间，
-		 * 而不是在卡片底部留一大块空白。
-		 */
-		.draft-page #draft-pool-panel {
-			display: flex;
-			flex-direction: column;
-		}
-		.draft-page .pool-root {
-			flex: 1 1 auto;
-			justify-content: space-between;
 		}
 	}
 
 	.hero-tile {
 		position: relative;
 		overflow: hidden;
-		border-radius: 0.375rem;
+		/* 竖版头像：45×80，跟客户端的英雄池一样，脸在格子里认得出来。 */
+		width: 45px;
+		height: 80px;
+		border-radius: 0.25rem;
 		border: 1px solid var(--color-line);
 		background: var(--color-surface-2);
-		aspect-ratio: 16 / 10;
 		transition: border-color 0.12s ease-in-out, transform 0.12s ease-in-out;
 	}
 
 	.pool-root {
-		display: flex;
-		flex-direction: column;
+		/*
+		 * 照客户端：四个属性各占一列并排，每列里是竖版头像墙。
+		 * 第一版是四组上下堆叠，一屏只看得到半组，挑人要来回滚。
+		 */
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		align-items: start;
 		gap: 0.75rem;
 	}
 	.pool-group {
 		display: flex;
 		flex-direction: column;
 		gap: 0.375rem;
+		min-width: 0;
 	}
 	.pool-group-title {
 		font-size: 0.7rem;
@@ -489,8 +489,10 @@ const matchLabel = (match: EsportsMatch): string => {
 	}
 	.pool-grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
-		gap: 0.375rem;
+		/* 定宽排：格子固定 45 宽，一行几个由列宽决定（1600 宽下每列六个）。 */
+		grid-template-columns: repeat(auto-fill, 45px);
+		justify-content: start;
+		gap: 3px;
 	}
 
 	.advice-card {
@@ -535,14 +537,19 @@ const matchLabel = (match: EsportsMatch): string => {
 		position: absolute;
 		inset-inline: 0;
 		bottom: 0;
-		padding: 0.15rem 0.25rem;
-		font-size: 0.625rem;
+		padding: 0.1rem 0.15rem;
+		font-size: 0.55rem;
 		line-height: 1.2;
+		/* 45px 宽塞四个字刚好，再长就省略，别把格子撑破。 */
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 		color: var(--color-cream);
 		background: linear-gradient(to top, rgb(0 0 0 / 0.72), rgb(0 0 0 / 0));
 	}
 	.hero-tile[data-used='ban'] {
-		filter: grayscale(1) brightness(0.55);
+		/* 与 BP 板上的禁用格同一档：再暗就认不出英雄了。 */
+		filter: brightness(0.68) saturate(0.8);
 	}
 	.hero-tile[data-used='pick'] {
 		filter: grayscale(0.6) brightness(0.7);
