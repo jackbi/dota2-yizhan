@@ -214,14 +214,36 @@ export interface OdTeam {
 	tag: string | null;
 }
 
+/** `/api/teams` 的一行：比 `OdTeam` 多一个「上一场什么时候打的」。 */
+interface OdTeamListEntry extends OdTeam {
+	last_match_time?: number | null;
+}
+
 let teamIndexPromise: Promise<Map<string, OdTeam>> | null = null;
 
 async function getTeamIndex(): Promise<Map<string, OdTeam>> {
 	teamIndexPromise ??= (async () => {
-		const list = (await cachedJson<OdTeam[]>('teams', `${API}/teams`, DAY_SECONDS)) ?? [];
+		const list = (await cachedJson<OdTeamListEntry[]>('teams', `${API}/teams`, DAY_SECONDS)) ?? [];
 		const index = new Map<string, OdTeam>();
+		/**
+		 * 同一个正规化队名撞到两个 id 是**真实存在**的：`/api/teams` 里既有现役的
+		 * 「Team Spirit」(7119388)，也有 2019 年那支「Team. Spirit」(2621843)——名字里的点
+		 * 被 `norm` 去掉之后，两者是同一个键。按数组顺序写会取到**后面**那个（旧的），
+		 * 表现不是报错，而是「这支队伍没有任何比赛」。
+		 *
+		 * 所以键相同就比「上一场什么时候打的」，留还在打的那个。
+		 */
+		const lastPlayed = new Map<string, number>();
+		const put = (key: string, team: OdTeam, at: number): void => {
+			const current = lastPlayed.get(key);
+			if (current !== undefined && current >= at) return;
+			index.set(key, team);
+			lastPlayed.set(key, at);
+		};
+
 		for (const team of list) {
-			if (team.name) index.set(`n:${norm(team.name)}`, team);
+			if (!team.name) continue;
+			put(`n:${norm(team.name)}`, { team_id: team.team_id, name: team.name, tag: team.tag ?? null }, team.last_match_time ?? 0);
 		}
 		// `/api/teams` 只给评分前 1000 的队伍，三线队往往只出现在 proMatches 里。
 		const pro = (await cachedJson<OdProMatch[]>('pro-matches', `${API}/proMatches`, 6 * 3600)) ?? [];
@@ -232,8 +254,8 @@ async function getTeamIndex(): Promise<Map<string, OdTeam>> {
 			];
 			for (const [name, id] of pairs) {
 				if (!name || !id) continue;
-				const key = `n:${norm(name)}`;
-				if (!index.has(key)) index.set(key, { team_id: id, name, tag: null });
+				// proMatches 里出现过的队伍一定打过最近的职业比赛，按开赛时间参与比较。
+				put(`n:${norm(name)}`, { team_id: id, name, tag: null }, match.start_time ?? 0);
 			}
 		}
 		// 队标单独一轮，避免短队标覆盖真实队名。
