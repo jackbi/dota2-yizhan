@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
 	CM_STEPS,
 	CM_STEP_COUNT,
+	CM_PHASE_STARTS,
 	DRAFT_BANS_PER_SIDE,
 	DRAFT_PICKS_PER_SIDE,
 	canPlay,
@@ -39,6 +40,9 @@ assert.equal(
 	'BF BF BS BS BF BS BS PF PS BF BF BS PS PF PF PS PS PF BF BS BF BS PF PS',
 	'24 手顺序被改动了。改之前先去核对 7.40 之后的官方补丁说明与真实比赛记录',
 );
+
+// 阶段起点由顺序表推出来，界面靠它在"禁用段/挑选段"之间留间距。
+assert.deepEqual(CM_PHASE_STARTS, [1, 8, 10, 13, 19, 23], '阶段起点不对，BP 板上的分段间距会错位');
 
 /** 各阶段是固定的 7 / 2 / 3 / 6 / 4 / 2，隔断错位会让「下一手是谁」整体偏一手。 */
 const phases: [string, number, number, string][] = [

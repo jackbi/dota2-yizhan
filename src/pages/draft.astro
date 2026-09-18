@@ -135,7 +135,7 @@ const matchLabel = (match: EsportsMatch): string => {
 
 		<div class="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
 			<!-- 英雄池 -->
-			<div class="rounded-2xl border border-line bg-surface/60 p-4">
+			<div id="draft-pool-panel" class="rounded-2xl border border-line bg-surface/60 p-4">
 				<div class="mb-3 flex flex-wrap items-center gap-x-6 gap-y-3">
 					<label class="flex items-center gap-2 text-xs text-muted">
 						搜索
@@ -328,20 +328,47 @@ const matchLabel = (match: EsportsMatch): string => {
 		color: var(--color-gold);
 	}
 	.draft-page .draft-board-grid {
-		display: grid;
+		display: flex;
+		flex-direction: column;
 		gap: 0.2rem;
-		grid-auto-rows: minmax(30px, 1fr);
 	}
 	.draft-page .draft-row {
 		align-items: stretch;
 	}
+	/*
+	 * 挑选框是**整只放大**的：宽高都比禁用框大一档（客户端里也是这个观感，
+	 * 禁用只是个缩略图加个叉，挑选才是看阵容的地方）。两边都朝中间的手号列贴齐，
+	 * 所以放大的只是外侧那一半，手号列不会跟着晃。
+	 * 并排布局里多出来的高度按这两个基数按比例分（flex-grow 22 : 32），比例保持不变。
+	 */
+	.draft-page .draft-row[data-action='ban'] {
+		--cell-width: 66%;
+		flex: 22 1 22px;
+		min-height: 22px;
+	}
+	.draft-page .draft-row[data-action='pick'] {
+		--cell-width: 92%;
+		flex: 32 1 32px;
+		min-height: 32px;
+	}
+	/* 阶段之间留一道缝：禁用段与挑选段交替，看的时候能一眼分段。 */
+	.draft-page .draft-row[data-phase-start='true'] {
+		margin-top: 0.35rem;
+	}
 	.draft-page .draft-cell {
 		position: relative;
 		overflow: hidden;
+		width: var(--cell-width, 100%);
 		min-height: 24px;
 		border-radius: 0.3rem;
 		border: 1px solid var(--color-line);
 		background: rgb(0 0 0 / 0.35);
+	}
+	.draft-page .draft-cell[data-side='radiant'] {
+		justify-self: end;
+	}
+	.draft-page .draft-cell[data-side='dire'] {
+		justify-self: start;
 	}
 	.draft-page .draft-cell img {
 		/*
@@ -361,7 +388,8 @@ const matchLabel = (match: EsportsMatch): string => {
 	}
 	/* 禁用：变灰再打一个叉，与客户端一致。 */
 	.draft-page .draft-cell[data-action='ban'][data-state='filled'] img {
-		filter: grayscale(1) brightness(0.5);
+		/* 别压太狠：禁用格本来就矮，再压黑就只剩一团墨，认不出是哪个英雄。 */
+		filter: brightness(0.68) saturate(0.8);
 	}
 	.draft-page .draft-cell[data-action='ban'][data-state='filled']::after {
 		content: '✕';
@@ -369,9 +397,10 @@ const matchLabel = (match: EsportsMatch): string => {
 		inset: 0;
 		display: grid;
 		place-items: center;
-		font-size: 0.85rem;
-		color: var(--color-dota-light);
-		text-shadow: 0 0 3px rgb(0 0 0 / 0.8);
+		font-size: 0.75rem;
+		line-height: 1;
+		color: #ff6b4a;
+		text-shadow: 0 0 2px rgb(0 0 0 / 0.95), 0 0 5px rgb(0 0 0 / 0.9);
 	}
 	.draft-page .draft-cell[data-side='radiant'] {
 		--cell-color: var(--radiant-color);
@@ -415,7 +444,18 @@ const matchLabel = (match: EsportsMatch): string => {
 		.draft-page .draft-board-grid {
 			flex: 1 1 auto;
 			min-height: 0;
-			grid-auto-rows: minmax(26px, 1fr);
+		}
+		/*
+		 * 右边比左边高的时候（挑选框放大之后就是），左边多出来的高度平分到四个属性组之间，
+		 * 而不是在卡片底部留一大块空白。
+		 */
+		.draft-page #draft-pool-panel {
+			display: flex;
+			flex-direction: column;
+		}
+		.draft-page .pool-root {
+			flex: 1 1 auto;
+			justify-content: space-between;
 		}
 	}
 

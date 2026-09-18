@@ -105,7 +105,6 @@ assert.ok(page.includes('class="draft-board '), 'BP 板要带 draft-board 类');
 assert.ok(page.includes('id="draft-board-grid"'), 'BP 板要有一个放 24 行的容器');
 assert.match(page, /@media \(min-width: 1280px\)/, '等高拉伸要放在 xl 断点里，否则移动端会被拉伸');
 assert.match(page, /\.draft-board-grid\s*\{[^}]*flex:\s*1 1 auto/, 'draft-board-grid 必须撑满面板高度');
-assert.match(page, /@media \(min-width: 1280px\)[\s\S]*grid-auto-rows:\s*minmax\(26px,\s*1fr\)/, '24 行要能平均分掉多余高度');
 assert.ok(page.includes('一行一手'), '文案要说明这张表是一行一手');
 assert.ok(!page.includes('min-w-56'), '比赛下拉不能用 min-w 定宽，会被最长的 option 撑破布局');
 assert.match(page, /id="draft-match"[^>]*class="[^"]*w-full[^"]*sm:w-72/, '比赛下拉要限宽');
@@ -115,6 +114,13 @@ assert.match(page, /id="draft-match"[^>]*class="[^"]*w-full[^"]*sm:w-72/, '比�
  * 这两条是用户对着客户端截图提的，改回去页面就不是那个东西了。
  */
 assert.match(page, /\.draft-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*2\.5rem\s*minmax\(0,\s*1fr\)/, '一行要排成"格子 + 手号 + 格子"');
+// 禁用格比挑选格矮：客户端的禁用是一张缩略图加个叉，挑选才是看阵容的地方。
+assert.match(page, /\.draft-row\[data-action='ban'\]\s*\{[^}]*--cell-width:\s*66%/, '禁用框要窄一档');
+assert.match(page, /\.draft-row\[data-action='ban'\]\s*\{[^}]*flex:\s*22 1 22px/, '禁用行要矮一档');
+assert.match(page, /\.draft-row\[data-action='pick'\]\s*\{[^}]*--cell-width:\s*92%/, '挑选框要宽一档');
+assert.match(page, /\.draft-row\[data-action='pick'\]\s*\{[^}]*flex:\s*32 1 32px/, '挑选行要高一些');
+assert.match(script, /row\.dataset\.action = entry\.action/, '每行要带上是禁用还是挑选，样式靠它分档');
+assert.match(page, /margin-top:\s*0\.35rem/, '阶段之间要留间距');
 assert.ok(page.includes('id="draft-label-radiant">天辉') && page.includes('id="draft-label-dire">夜魇'), '列头要写明天辉和夜魇');
 assert.match(page, /data-action='ban'\]\[data-state='filled'\]::after[\s\S]{0,80}✕/, '禁用格要打叉，和客户端一致');
 // 禁用与挑选必须在同一列里按手号混排，不能再分成"七个禁用 + 五个挑选"两段。

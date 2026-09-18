@@ -14,7 +14,7 @@ import {
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
 import { advise } from '../lib/draftScore.ts';
 import type { DraftSide } from '../lib/draftOrder.ts';
-import { CM_STEPS, canPlay, otherSide, play, sideOfOwner, skip, snapshot, undo } from '../lib/draftOrder.ts';
+import { CM_PHASE_STARTS, CM_STEPS, canPlay, otherSide, play, sideOfOwner, skip, snapshot, undo } from '../lib/draftOrder.ts';
 
 /**
  * 阵容分析页的客户端：录制 BP、算建议、可选地让 DeepSeek 解释。
@@ -289,6 +289,8 @@ if (data) {
 				const row = document.createElement('div');
 				row.className = 'draft-row';
 				row.dataset.step = String(entry.step);
+				row.dataset.action = entry.action;
+				if (CM_PHASE_STARTS.includes(entry.step)) row.dataset.phaseStart = 'true';
 
 				const left = document.createElement('div');
 				const middle = document.createElement('div');

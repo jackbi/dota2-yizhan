@@ -48,6 +48,13 @@ function parseOrder(): DraftStep[] {
 
 export const CM_STEPS: readonly DraftStep[] = parseOrder();
 export const CM_STEP_COUNT = CM_STEPS.length;
+/**
+ * 每个阶段的起始手号（1、8、10、13、19、23）：禁用段与挑选段交替，界面在这里留一点间距。
+ * 由顺序表推出来，不另写一份常量，免得哪天顺序改了这里忘了跟着改。
+ */
+export const CM_PHASE_STARTS: readonly number[] = CM_STEPS.filter(
+	(step, index) => index === 0 || step.action !== CM_STEPS[index - 1].action,
+).map((step) => step.step);
 /** 每队的 ban 与 pick 数，界面上的「还剩几手」按它算。 */
 export const DRAFT_BANS_PER_SIDE = 7;
 export const DRAFT_PICKS_PER_SIDE = 5;
