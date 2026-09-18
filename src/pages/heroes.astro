@@ -1,15 +1,11 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { ATTRIBUTES, fetchHeroList } from '../lib/heroApi';
+import { ATTRIBUTES, ATTRIBUTE_ICON, fetchHeroList } from '../lib/heroApi';
 import { formatIso } from '../lib/format';
 import { HERO_META_WINDOW_DAYS, fetchHeroMeta, stratzConfigured } from '../lib/stratzApi';
 
-const ATTR_ICON: Record<string, string> = {
-	STR: 'https://www.dota2.com.cn/herostatic/icons/hero_strength.png',
-	AGI: 'https://www.dota2.com.cn/herostatic/icons/hero_agility.png',
-	INT: 'https://www.dota2.com.cn/herostatic/icons/hero_intelligence.png',
-	UNI: '/hero-filters/universal.png',
-};
+/** 属性图标统一放在 heroApi 里，本页与阵容分析页共用同一份。 */
+const ATTR_ICON = ATTRIBUTE_ICON;
 
 /** 近一周英雄数据：没有 STRATZ_TOKEN、离线且无缓存时整块不展示。 */
 const meta = await fetchHeroMeta();
@@ -253,7 +249,7 @@ const metaPayload = JSON.stringify({
 <script type="application/json" id="hero-meta" set:html={metaPayload} is:inline />
 
 <script>
-	import { fetchHeroList } from '../lib/heroApi';
+	import { ATTRIBUTE_ICON, fetchHeroList } from '../lib/heroApi';
 
 	(() => {
 		const grid = document.getElementById('hero-grid');
@@ -281,12 +277,7 @@ const metaPayload = JSON.stringify({
 		};
 		const meta = readMeta();
 
-		const ATTR_ICON: Record<string, string> = {
-			STR: 'https://www.dota2.com.cn/herostatic/icons/hero_strength.png',
-			AGI: 'https://www.dota2.com.cn/herostatic/icons/hero_agility.png',
-			INT: 'https://www.dota2.com.cn/herostatic/icons/hero_intelligence.png',
-			UNI: '/hero-filters/universal.png',
-		};
+		const ATTR_ICON = ATTRIBUTE_ICON;
 
 		const esc = (s: string) =>
 			s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

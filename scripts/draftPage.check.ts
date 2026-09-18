@@ -134,5 +134,9 @@ assert.match(page, /\.pool-root\s*\{[^}]*grid-template-columns:\s*repeat\(4,/, '
 assert.match(page, /\.pool-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*45px\)/, '头像格要按 45 宽定宽排');
 assert.match(page, /\.hero-tile\s*\{[^}]*width:\s*45px[^}]*height:\s*80px/, '头像格要是 45×80 的竖版');
 assert.ok(!page.includes('aspect-ratio: 16 / 10'), '头像格改成定高之后不该再留宽高比');
+// 属性图标：分组标题与筛选按钮都要有，跟客户端一样。
+assert.ok(page.includes('ATTRIBUTE_ICON'), '属性图标要用 heroApi 里那一份，别各写一份');
+assert.match(script, /pool-group-icon/, '分组标题要渲染属性图标');
+assert.match(page, /\.pool-group-icon\s*\{[^}]*width:\s*14px/, '分组标题的图标要定尺寸');
 
 console.log(`draftPage 断言通过（${pageIds.size} 个 id，脚本引用 ${queriedIds.size} 个）`);

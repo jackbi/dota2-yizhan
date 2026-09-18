@@ -97,6 +97,20 @@ export const ATTRIBUTE_META: Record<Attribute, { label: string; color: string }>
 	UNI: { label: '全能', color: '#E0A93F' },
 };
 
+/**
+ * 属性图标。力量/敏捷/智力用官方站点那三张，全能官方没有对应图，用站内自己那张
+ * （`public/hero-filters/universal.png`，英雄页的筛选按钮也是它）。
+ *
+ * 放在这里而不是各页面各写一份：英雄页的筛选按钮、阵容分析的分组标题与筛选按钮
+ * 都要用，抄三份迟早会出现"某处改了一处没改"。
+ */
+export const ATTRIBUTE_ICON: Record<Attribute, string> = {
+	STR: 'https://www.dota2.com.cn/herostatic/icons/hero_strength.png',
+	AGI: 'https://www.dota2.com.cn/herostatic/icons/hero_agility.png',
+	INT: 'https://www.dota2.com.cn/herostatic/icons/hero_intelligence.png',
+	UNI: '/hero-filters/universal.png',
+};
+
 // role_levels 位置顺序（实测校准）：carry/support/nuker/disabler/jungler/durable/escape/pusher/initiator
 const ROLE_ORDER = ['carry', 'support', 'nuker', 'disabler', 'jungler', 'durable', 'escape', 'pusher', 'initiator'];
 export const ROLE_LABEL: Record<string, string> = {

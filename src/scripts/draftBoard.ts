@@ -3,6 +3,7 @@
  * `node --experimental-strip-types` 直接加载，Node 不做后缀补全。
  */
 import type { DraftData, DraftHero } from '../lib/draftData.ts';
+import { ATTRIBUTE_ICON } from '../lib/heroApi';
 import {
 	ADVICE_TARGET_COUNT,
 	DEEPSEEK_ENDPOINT,
@@ -197,7 +198,9 @@ if (data) {
 				title.className = 'pool-group-title';
 				const grid = document.createElement('div');
 				grid.className = 'pool-grid';
-				title.textContent = `${ATTR_LABEL[attr] ?? attr}（${data!.heroes.filter((hero) => hero.attr === attr).length}）`;
+				// 属性图标与文字一起放在标题里，跟客户端的英雄池一样。
+				const icon = ATTRIBUTE_ICON[attr as keyof typeof ATTRIBUTE_ICON] ?? '';
+				title.innerHTML = `${icon ? `<img class="pool-group-icon" src="${esc(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : ''}${esc(ATTR_LABEL[attr] ?? attr)}（${data!.heroes.filter((hero) => hero.attr === attr).length}）`;
 				group.append(title, grid);
 				poolRoot.append(group);
 				groups.set(attr, grid);

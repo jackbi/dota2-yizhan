@@ -2,6 +2,7 @@
 import Layout from '../layouts/Layout.astro';
 import { loadDraftData } from '../lib/draftData';
 import { formatMatchTime } from '../lib/format';
+import { ATTRIBUTE_ICON } from '../lib/heroApi';
 import { getTournaments } from '../lib/tournamentsApi';
 import type { EsportsMatch } from '../data/types';
 
@@ -149,10 +150,18 @@ const matchLabel = (match: EsportsMatch): string => {
 					<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="按属性筛选">
 						<span>属性</span>
 						<button type="button" data-attr="all" class="filter-chip" aria-pressed="true">全部</button>
-						<button type="button" data-attr="STR" class="filter-chip" aria-pressed="false">力量</button>
-						<button type="button" data-attr="AGI" class="filter-chip" aria-pressed="false">敏捷</button>
-						<button type="button" data-attr="INT" class="filter-chip" aria-pressed="false">智力</button>
-						<button type="button" data-attr="UNI" class="filter-chip" aria-pressed="false">全才</button>
+						<button type="button" data-attr="STR" class="filter-chip" aria-pressed="false" title="力量英雄">
+							<img src={ATTRIBUTE_ICON.STR} alt="" loading="lazy" referrerpolicy="no-referrer" />力量
+						</button>
+						<button type="button" data-attr="AGI" class="filter-chip" aria-pressed="false" title="敏捷英雄">
+							<img src={ATTRIBUTE_ICON.AGI} alt="" loading="lazy" referrerpolicy="no-referrer" />敏捷
+						</button>
+						<button type="button" data-attr="INT" class="filter-chip" aria-pressed="false" title="智力英雄">
+							<img src={ATTRIBUTE_ICON.INT} alt="" loading="lazy" referrerpolicy="no-referrer" />智力
+						</button>
+						<button type="button" data-attr="UNI" class="filter-chip" aria-pressed="false" title="全才英雄">
+							<img src={ATTRIBUTE_ICON.UNI} alt="" loading="lazy" referrerpolicy="no-referrer" />全才
+						</button>
 					</div>
 					<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="按号位筛选">
 						<span>号位</span>
@@ -483,9 +492,23 @@ const matchLabel = (match: EsportsMatch): string => {
 		min-width: 0;
 	}
 	.pool-group-title {
+		display: flex;
+		align-items: center;
+		gap: 0.35rem;
 		font-size: 0.7rem;
 		letter-spacing: 0.08em;
 		color: var(--color-muted);
+	}
+	.pool-group-icon {
+		width: 14px;
+		height: 14px;
+		flex: 0 0 auto;
+	}
+	/* 筛选按钮里的属性图标，比分组标题里的小一号。 */
+	.filter-chip img {
+		width: 12px;
+		height: 12px;
+		flex: 0 0 auto;
 	}
 	.pool-grid {
 		display: grid;
