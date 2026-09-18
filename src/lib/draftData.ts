@@ -1,4 +1,4 @@
-import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, resolveHeroNames } from '../data/heroTraits';
+import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, TEAMFIGHT_NAMES, resolveHeroNames } from '../data/heroTraits';
 import { ROLE_COUNT, fetchHeroList, fetchHeroProfile } from './heroApi';
 import { reportSource } from './dataHealth';
 import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
@@ -58,6 +58,8 @@ export interface DraftHero {
 	summon: boolean;
 	/** 有稳定的 AoE 清场能力（清幻象、清兵）。 */
 	aoe: boolean;
+	/** 团战点：范围伤害、群体控制或无视技能免疫的团战技能（人工名单，见 heroTraits）。 */
+	teamfight: boolean;
 	/** 近战还是远程：全近战的阵容线上会被压，远程位要单独算。 */
 	attack: 'melee' | 'ranged';
 	/**
@@ -140,9 +142,11 @@ export function loadDraftData(): Promise<DraftData> {
 		// 人工名单与英雄表对账：对不上的名字写进日志，不静默丢掉。
 		const summonNames = resolveHeroNames(SUMMON_ILLUSION_NAMES, base);
 		const aoeNames = resolveHeroNames(AOE_CLEAR_NAMES, base);
+		const teamfightNames = resolveHeroNames(TEAMFIGHT_NAMES, base);
 		const summonIds = summonNames.ids;
 		const aoeIds = aoeNames.ids;
-		const missedNames = [...summonNames.missing, ...aoeNames.missing];
+		const teamfightIds = teamfightNames.ids;
+		const missedNames = [...summonNames.missing, ...aoeNames.missing, ...teamfightNames.missing];
 
 		const heroes: DraftHero[] = base.map((hero) => {
 			const entry = meta?.heroes.get(hero.id);
@@ -169,6 +173,7 @@ export function loadDraftData(): Promise<DraftData> {
 				attack: profile?.attack ?? 'melee',
 				summon: summonIds.has(hero.id),
 				aoe: aoeIds.has(hero.id),
+				teamfight: teamfightIds.has(hero.id),
 				timeline: timeline?.get(hero.id) ?? [0, 0],
 			};
 		});

@@ -34,6 +34,9 @@ function hero(id: number, name: string, rates: (number | null)[]): DraftHero {
 		roles: [0, 0, 0, 0, 0, 0, 0, 0, 0],
 		summon: false,
 		aoe: false,
+		teamfight: false,
+		attack: 'melee',
+		timeline: [0, 0],
 	};
 }
 

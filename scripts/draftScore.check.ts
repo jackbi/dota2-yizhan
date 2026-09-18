@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { advise } from '../src/lib/draftScore.ts';
 import type { RecordedHand } from '../src/lib/draftOrder.ts';
-import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES } from '../src/data/heroTraits.ts';
+import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, TEAMFIGHT_NAMES } from '../src/data/heroTraits.ts';
 
 /**
  * 阵容分析打分层的自检。
@@ -31,7 +31,7 @@ function hero(
 	rates: (number | null)[],
 	pro: [number, number, number] = [0, 0, 0],
 	roles: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0],
-	traits: { summon?: boolean; aoe?: boolean; attack?: 'melee' | 'ranged'; timeline?: [number, number] } = {},
+	traits: { summon?: boolean; aoe?: boolean; teamfight?: boolean; attack?: 'melee' | 'ranged'; timeline?: [number, number] } = {},
 ): DraftHero {
 	return {
 		id,
@@ -44,6 +44,7 @@ function hero(
 		roles,
 		summon: Boolean(traits.summon),
 		aoe: Boolean(traits.aoe),
+		teamfight: Boolean(traits.teamfight),
 		attack: traits.attack ?? 'melee',
 		timeline: traits.timeline ?? [0, 0],
 	};
@@ -99,6 +100,18 @@ for (const [label, names] of [
 	assert.equal(new Set(names).size, names.length, `${label}名单里有重复的名字`);
 	// 单字英雄名是存在的（陈），所以只查"不像名字"的情况：空串、带空格、带标点。
 	for (const name of names) assert.ok(name.length >= 1 && name === name.trim() && !/[\s，、]/.test(name), `${label}名单里的「${name}」不像英雄名`);
+}
+
+/**
+ * 团战名单单列一条断言：它必须是能一眼看懂的强团战英雄。
+ * 这份名单是人定的（自动规则试过，把发条技师排在谜团前面，见 heroTraits 的注释），
+ * 所以只查最基本的两件事：名单够长、里面没有重复。
+ */
+assert.ok(TEAMFIGHT_NAMES.length >= 15, `团战名单太短（${TEAMFIGHT_NAMES.length} 个）`);
+assert.equal(new Set(TEAMFIGHT_NAMES).size, TEAMFIGHT_NAMES.length, '团战名单里有重复');
+for (const name of ['谜团', '术士', '寒冬飞龙', '凤凰', '黑暗贤者', '杰奇洛']) {
+	// 这几个是用户点名的参考：漏掉任何一个都说明名单被改坏了。
+	assert.ok(TEAMFIGHT_NAMES.includes(name), `团战名单缺了 ${name}`);
 }
 
 // ---------------------------------------------------------------- 第一手与先选权
@@ -272,6 +285,30 @@ assert.ok(!calmAdvice.composition.enemySummon, '没有体系英雄时不该说�
 assert.match(calmAdvice.composition.text, /清场 0\/1/, '没有体系时清场目标只要 1');
 
 // ---------------------------------------------------------------- 结构红线
+
+/**
+ * 团战：两个候选的角色等级、号位胜率、对位完全一样，只有一个在团战名单里。
+ * 阵容缺团战点时，名单里的那个必须排前面，并且依据里要写明补的是团战。
+ */
+// 角色等级全 0：这样两个候选唯一的差别就只有"在不在团战名单里"。
+const TF_ROLES = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+const tfHeroes = [
+	hero(501, [0.5, null, null, null, null], [0, 0, 0], TF_ROLES, { teamfight: true }),
+	hero(502, [0.5, null, null, null, null], [0, 0, 0], TF_ROLES),
+	hero(503, [0.5, null, null, null, null]),
+	hero(504, [0.5, null, null, null, null]),
+	hero(505, [0.5, null, null, null, null]),
+];
+const tfData: DraftData = { ...data, heroes: tfHeroes, matchups: {}, matchupPairs: 0 };
+const tfRecorded: RecordedHand[] = [null, null, null, null, null, null, null, 503, 504, null, null, null, 505];
+const tfAdvice = advise({ data: tfData, recorded: tfRecorded, ourSide: OUR, firstPicker: OUR });
+assert.ok(tfAdvice);
+assert.equal(tfAdvice.candidates[0]?.heroId, 501, '缺团战时，团战点要排在前面');
+assert.ok(
+	tfAdvice.candidates[0]?.reasons.some((line) => line.includes('团战')),
+	'依据里要写明补的是团战，实际：' + (tfAdvice.candidates[0]?.reasons.join(' / ') ?? ''),
+);
+assert.match(tfAdvice.composition.text, /团战 0\/2/, '结构现状里要列出团战点');
 
 /**
  * 这一组对应真实翻车：AI 选出过「斯温 + 幻影长矛手 + 龙骑士 + 赏金猎人 + 天涯墨客」，

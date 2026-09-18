@@ -86,6 +86,14 @@ const AOE_TARGET_VS_SUMMON = 2;
 
 /** 远程位：五个近战在线上会被压死，目标是至少两个能打的远程。 */
 const RANGED_TARGET = 2;
+/**
+ * 团战点：至少两个能在团战里定事的英雄（范围伤害、群体控制、无视技能免疫，名单见 `heroTraits`）。
+ *
+ * 团战不单独拍一个系数，而是拆成三块：这一项管"有没有人能干这个事"，
+ * 先手/控制/清场那几个维度管"这个人到底能做成什么"。上一套被吐槽的阵容（斯温+幻影长矛手+
+ * 龙骑士+赏金猎人+天涯墨客）在这一项上是 0/2。
+ */
+const TEAMFIGHT_TARGET = 2;
 /** 前/中/后期：至少有三个位置在该阶段不弱于同池中位（见 `TimelineContext`）。 */
 const PHASE_TARGET = 3;
 
@@ -388,6 +396,8 @@ interface StructureProfile {
 	/** 远程与清场（AoE）的人数。 */
 	ranged: number;
 	clear: number;
+	/** 团战点人数。 */
+	teamfight: number;
 	/** 前期、后期不弱于同池中位的人数。 */
 	phaseEarly: number;
 	phaseLate: number;
@@ -406,12 +416,13 @@ interface StructureProfile {
 function structureProfile(heroes: readonly DraftHero[], timeline: TimelineContext): StructureProfile {
 	const values: Record<string, number> = {};
 	for (const dim of COMPOSITION_TARGETS) values[dim.key] = 0;
-	const profile: StructureProfile = { values, ranged: 0, clear: 0, phaseEarly: 0, phaseLate: 0, greedyCore: 0, melee: 0, summon: false };
+	const profile: StructureProfile = { values, ranged: 0, clear: 0, teamfight: 0, phaseEarly: 0, phaseLate: 0, greedyCore: 0, melee: 0, summon: false };
 	for (const hero of heroes) {
 		for (const dim of COMPOSITION_TARGETS) values[dim.key] += hero.roles[dim.role] ?? 0;
 		if (hero.attack === 'ranged') profile.ranged += 1;
 		else profile.melee += 1;
 		if (hero.aoe) profile.clear += 1;
+		if (hero.teamfight) profile.teamfight += 1;
 		if ((hero.roles[ROLE_CARRY] ?? 0) >= 2 && (hero.roles[ROLE_SUPPORT] ?? 0) === 0) profile.greedyCore += 1;
 		if (hero.summon) profile.summon = true;
 		// 曲线为 0 表示没拿到这个英雄的曲线，不参与前后期计数。
@@ -439,6 +450,7 @@ function structureScore(profile: StructureProfile, enemySummon: boolean): Struct
 		return Math.min(value, dim.target) / dim.target;
 	});
 	dims.push(Math.min(profile.ranged, RANGED_TARGET) / RANGED_TARGET);
+	dims.push(Math.min(profile.teamfight, TEAMFIGHT_TARGET) / TEAMFIGHT_TARGET);
 	dims.push(Math.min(profile.clear, enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE) / (enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE));
 	dims.push(Math.min(profile.phaseEarly, PHASE_TARGET) / PHASE_TARGET);
 	dims.push(Math.min(profile.phaseLate, PHASE_TARGET) / PHASE_TARGET);
@@ -454,7 +466,8 @@ interface StructureDelta {
 	/** 这一手对结构得分的影响（正数=变好）。 */
 	delta: number;
 	/** 填得最多的那个缺口，用来写正面依据。 */
-	fill: { label: string; current: number; target: number; supply: number } | null;
+	/** 填上的缺口，最多两条（控制 + 团战这种组合要能一起说出来）。 */
+	fills: { label: string; current: number; target: number; supply: number }[];
 	/** 踩到的红线，用来写风险。 */
 	violation: { label: string; count: number; cap: number } | null;
 }
@@ -479,6 +492,7 @@ function structureDelta(candidate: DraftHero, ours: readonly DraftHero[], timeli
 			supply: candidate.roles[dim.role] ?? 0,
 		})),
 		{ label: '远程', current: beforeProfile.ranged, target: RANGED_TARGET, supply: candidate.attack === 'ranged' ? 1 : 0 },
+		{ label: '团战', current: beforeProfile.teamfight, target: TEAMFIGHT_TARGET, supply: candidate.teamfight ? 1 : 0 },
 		{
 			label: '清场',
 			current: beforeProfile.clear,
@@ -512,7 +526,7 @@ function structureDelta(candidate: DraftHero, ours: readonly DraftHero[], timeli
 
 	return {
 		delta: after.score - before.score,
-		fill: fills[0] && fills[0].filled > 0 ? fills[0] : null,
+		fills: fills.filter((dim) => dim.filled > 0).slice(0, 2),
 		violation: violation ? { label: violation.label, count: violation.count, cap: violation.cap } : null,
 	};
 }
@@ -658,8 +672,10 @@ export function advise(input: AdviseInput): Advice | null {
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
 			const structure = structureDelta(hero, ourHeroes, timeline, enemySummon);
-			if (structure.fill) {
-				reasons.push(`补上阵容缺的${structure.fill.label}（本方 ${structure.fill.current}/${structure.fill.target}，它能给 ${structure.fill.supply}）`);
+			if (structure.fills.length > 0) {
+				const labels = structure.fills.map((dim) => dim.label).join('、');
+				const detail = structure.fills.map((dim) => `${dim.label} ${dim.current}/${dim.target}，它能给 ${dim.supply}`).join('；');
+				reasons.push(`补上阵容缺的${labels}（${detail}）`);
 			}
 			if (proText) reasons.push(proText);
 			// 结构扣分要写进风险：光说"补了什么"会让一个把阵容带歪的选择显得很好。
@@ -701,8 +717,10 @@ export function advise(input: AdviseInput): Advice | null {
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
 		// 对面拿到它能补上他们缺的维度，也算威胁。
 		const structureForThem = structureDelta(hero, theirHeroes, timeline, ourHeroes.some((item) => item.summon));
-		if (structureForThem.fill) {
-			reasons.push(`对面拿到它正好补上他们的${structureForThem.fill.label}（他们 ${structureForThem.fill.current}/${structureForThem.fill.target}）`);
+		if (structureForThem.fills.length > 0) {
+			const labels = structureForThem.fills.map((dim) => dim.label).join('、');
+			const detail = structureForThem.fills.map((dim) => `${dim.label} ${dim.current}/${dim.target}`).join('；');
+			reasons.push(`对面拿到它正好补上他们的${labels}（${detail}）`);
 		}
 		if (ownGain > 0) reasons.push(`我们自己拿它可以涨 ${((ownGain * 100) / 5).toFixed(2)} 个百分点`);
 		if (proText) reasons.push(proText);
@@ -731,6 +749,7 @@ export function advise(input: AdviseInput): Advice | null {
 	/** 界面上那行结构现状：拿分项 + 红线 + 时间曲线，一次说清"这套阵容缺什么、怕什么"。 */
 	const structureParts = COMPOSITION_TARGETS.map((dim) => `${dim.label} ${ourProfile.values[dim.key] ?? 0}/${dim.target}`);
 	structureParts.push(`远程 ${ourProfile.ranged}/${RANGED_TARGET}`);
+	structureParts.push(`团战 ${ourProfile.teamfight}/${TEAMFIGHT_TARGET}`);
 	structureParts.push(`清场 ${ourProfile.clear}/${enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE}`);
 	structureParts.push(`纯核 ${ourProfile.greedyCore}/${STRUCTURE_CAPS[0].cap}`);
 	structureParts.push(`近战 ${ourProfile.melee}/${STRUCTURE_CAPS[1].cap}`);
