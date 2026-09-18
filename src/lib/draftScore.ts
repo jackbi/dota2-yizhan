@@ -8,6 +8,8 @@ import type { DraftAction, DraftOwner, DraftSide, RecordedHand } from './draftOr
 import { CM_STEPS, snapshot, sideOfOwner } from './draftOrder.ts';
 import type { HeroMatchups } from './draftMatchup.ts';
 import { matchupRate } from './draftMatchup.ts';
+import type { FoeForm } from './draftFoe.ts';
+import { foeHeroLine, foeHighlights } from './draftFoe.ts';
 
 /**
  * 阵容分析的打分层：**先把候选和依据算出来，再交给模型排序和解释**。
@@ -52,7 +54,7 @@ const CONTEST_CAP = 3;
  * 这个系数没有客观标准，是拍的：对位数据本身是高分路人局的口径，波动也不小，
  * 所以给建议时始终把对位的原始数字写在依据里，让人能自己判断值不值。
  */
-const COUNTER_WEIGHT = 1.5;
+export const COUNTER_WEIGHT = 1.5;
 
 // 官方角色标签的下标，顺序见 `heroApi.ROLE_ORDER`（核心/辅助/爆发/控制/打野/耐久/逃生/推进/先手）。
 const ROLE_CARRY = 0;
@@ -121,7 +123,7 @@ const CAP_PENALTY_SCALE = 2;
  * 这里取 0.3，意味着一手"把阵容结构从及格线拉到好"的差别，和"某个号位胜率高 2 个百分点"
  * 相当；而踩红线（第四个近战、第三个纯核）扣的分足以让它排到替代方案后面。
  */
-const COMPOSITION_WEIGHT = 0.3;
+export const COMPOSITION_WEIGHT = 0.3;
 
 interface PoolHero {
 	hero: DraftHero;
@@ -136,7 +138,7 @@ interface RateContext {
 	foeIds: readonly number[];
 }
 
-interface CounterSummary {
+export interface CounterSummary {
 	/** 与对面已选英雄的平均胜率偏差（正数代表好打）。没有可用对位时为 0。 */
 	delta: number;
 	/** 用上的对位数。 */
@@ -227,6 +229,11 @@ export interface LineupSlot {
 	/** 预计站这个号位的人。 */
 	hero: DraftHero | null;
 	rate: number;
+	/**
+	 * 不含对位加成的号位胜率。复盘要把「号位强」和「对位强」分开说，
+	 * 所以两个口径都得留着；建议面板只用 `rate`。
+	 */
+	baseRate?: number;
 	/** 这一手已经拿到手（true），还是估计以后能补上（false）。 */
 	settled: boolean;
 }
@@ -363,6 +370,13 @@ export interface Advice {
 	/** 我方阵容现状：已经到手的人，加上各号位预计能补到谁。 */
 	lineup: LineupSlot[];
 	candidates: AdviceCandidate[];
+	/**
+	 * 对面近期真的在拿、且**不在** `candidates` 前几名里的英雄。
+	 *
+	 * 单独一栏而不是并进 `candidates`：全局号位胜率与「这支队爱用什么」是两种依据，
+	 * 混在一起排会让其中一种悄悄决定顺序。界面上分开放，模型两边都能挑。
+	 */
+	foeCandidates: AdviceCandidate[];
 	/** 一句话总体判断，界面直接显示。 */
 	summary: string;
 	/** 阵容能力维度的现状与缺口，界面上单列一行；也是模型判断"这一手补什么"的依据。 */
@@ -390,7 +404,7 @@ function timelineContext(pool: readonly PoolHero[]): TimelineContext {
 	return { early: median(early), late: median(late) };
 }
 
-interface StructureProfile {
+export interface StructureProfile {
 	/** 控制/爆发/先手/上高/前排/辅助，都是官方角色等级之和。 */
 	values: Record<string, number>;
 	/** 远程与清场（AoE）的人数。 */
@@ -538,6 +552,13 @@ export interface AdviseInput {
 	firstPicker: DraftSide;
 	/** 返回几个候选。 */
 	limit?: number;
+	/** 对面近期的英雄偏好；没有就按「不认识这支队」算。 */
+	foeForm?: FoeForm | null;
+	/**
+	 * 这份偏好属于哪一边，默认 `theirs`（对面）。
+	 * 替对面落子时传 `ours`：同一个队的数据，人称要翻过来。
+	 */
+	foeSide?: 'ours' | 'theirs';
 }
 
 const pct = (rate: number): string => `${(rate * 100).toFixed(1)}%`;
@@ -594,6 +615,8 @@ function positionRisk(hero: DraftHero, position: number, matches: number): strin
  */
 export function advise(input: AdviseInput): Advice | null {
 	const { data, recorded, ourSide, firstPicker } = input;
+	const foeForm = input.foeForm ?? null;
+	const foeSide = input.foeSide ?? 'theirs';
 	const limit = input.limit ?? 5;
 	const state = snapshot(recorded);
 	if (state.done || !state.action || !state.owner || data.heroes.length === 0) return null;
@@ -668,6 +691,9 @@ export function advise(input: AdviseInput): Advice | null {
 					: `${position} 号位近 ${data.windowDays} 天胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 				`现在拿：五号位估值 ${pct(ourBase.total / 5)} → ${pct(oursAfter.total / 5)}`,
 			];
+			// 对面近期真拿过的英雄单独点一句：这一手是抢对面的熟手，还是与我们无关。
+			const foeLine = foeHeroLine(foeForm, hero.id, foeSide);
+			if (foeLine) reasons.push(foeLine);
 			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
@@ -713,6 +739,9 @@ export function advise(input: AdviseInput): Advice | null {
 				: `对面拿它打 ${position} 号位的话，该号位胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 			`禁掉它，对面阵容估值 ${pct(theirBase.total / 5)} → ${pct((theirBase.total - threat) / 5)}`,
 		];
+		// 对面的熟手优先禁：这一句是他们近期比赛里的次数与胜率，不是「版本强势」的转述。
+		const foeLine = foeHeroLine(foeForm, hero.id, foeSide);
+		if (foeLine) reasons.push(foeLine);
 		const counter = counterSummary(data.matchups, hero.id, ourIds);
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
 		// 对面拿到它能补上他们缺的维度，也算威胁。
@@ -737,6 +766,13 @@ export function advise(input: AdviseInput): Advice | null {
 	}
 
 	candidates.sort((a, b) => b.ranking - a.ranking);
+	/** 已经排进候选前列的，不再重复出现在「对面擅长」那一栏。 */
+	const shown = candidates.slice(0, limit);
+	const shownIds = new Set(shown.map((candidate) => candidate.heroId));
+	const byHeroId = new Map(candidates.map((candidate) => [candidate.heroId, candidate]));
+	const foeCandidates = foeHighlights(foeForm)
+		.map((row) => byHeroId.get(row.heroId))
+		.filter((candidate): candidate is AdviceCandidate => candidate !== undefined && !shownIds.has(candidate.heroId));
 
 	const gaps = ourBase.slots.filter((slot) => !slot.settled).map((slot) => slot.position);
 	const turnText = `${ownerIsOurs ? '我方' : '对方'}${state.action === 'ban' ? '禁用' : '挑选'}`;
@@ -765,8 +801,98 @@ export function advise(input: AdviseInput): Advice | null {
 		remaining,
 		tail,
 		lineup: ourBase.slots,
-		candidates: candidates.slice(0, limit),
+		candidates: shown,
+		foeCandidates,
 		summary,
 		composition: { text: compositionText, enemySummon },
 	};
+}
+
+// ---------------------------------------------------------------- 双方阵容锁定的对比
+
+/**
+ * 一套阵容的侧写，给「双方都选完之后」的复盘用。
+ *
+ * 与 `advise` 同源：同一套号位分配、同一个结构画像、同一个对位口径。
+ * 这样「边打边给的建议」和「打完了给的复盘」不会各用一套标准。
+ */
+export interface LineupReport {
+	/** 五个号位分别落在谁身上；没人的位置 `hero` 是 null、胜率按中性值算。 */
+	slots: LineupSlot[];
+	/** 五个号位胜率之和，**只含号位本身**（不含对位加成）。 */
+	baseTotal: number;
+	/** 五个号位胜率之和，含对位加成。界面上的「平均号位胜率」用它除以 5。 */
+	total: number;
+	profile: StructureProfile;
+	/** 结构分：维度满意度减去红线惩罚，可能为负。 */
+	structure: number;
+	/** 这套阵容每个人对对面五个人平均下来的对位偏差之和。 */
+	counter: CounterSummary;
+}
+
+export function lineupReport(data: DraftData, heroIds: readonly number[], foeIds: readonly number[]): LineupReport | null {
+	const byId = new Map(data.heroes.map((hero) => [hero.id, hero]));
+	const owned = idsToPool(byId, heroIds);
+	if (owned.length === 0) return null;
+
+	const ctx: RateContext = { matchups: data.matchups, foeIds };
+	const assignment = bestAssignment(owned, ctx);
+	const slots: LineupSlot[] = [];
+	let baseTotal = 0;
+	let total = 0;
+	for (let position = 1; position <= 5; position += 1) {
+		const index = assignment.positions.findIndex((assigned) => assigned === position);
+		const entry = index >= 0 ? owned[index] : undefined;
+		const rate = entry ? rateAt(entry, position, ctx) : NEUTRAL_WIN_RATE;
+		const base = entry ? entry.rates[position - 1] ?? NEUTRAL_WIN_RATE : NEUTRAL_WIN_RATE;
+		baseTotal += base;
+		total += rate;
+		slots.push({ position, hero: entry?.hero ?? null, rate, baseRate: base, settled: Boolean(entry) });
+	}
+
+	// 时间曲线的基准取全池中位：两边都选完了，「还能补到谁」已经不是问题。
+	const timeline = timelineContext(data.heroes.map(toPoolHero));
+	const heroes = owned.map((entry) => entry.hero);
+	const profile = structureProfile(heroes, timeline);
+	const structure = structureScore(profile, foeIds.some((id) => byId.get(id)?.summon ?? false));
+	return { slots, baseTotal, total, profile, structure: structure.score, counter: lineupCounter(data.matchups, heroIds, foeIds) };
+}
+
+/** 一套阵容对另一套阵容的对位偏差：每个英雄对对面五个人的平均值，再按人数相加。 */
+export function lineupCounter(matchups: HeroMatchups | undefined, heroIds: readonly number[], foeIds: readonly number[]): CounterSummary {
+	const details: CounterSummary['details'] = [];
+	let delta = 0;
+	let pairs = 0;
+	let games = 0;
+	for (const heroId of heroIds) {
+		const one = counterSummary(matchups, heroId, foeIds);
+		if (one.pairs === 0) continue;
+		delta += one.delta;
+		pairs += one.pairs;
+		games += one.games;
+		details.push(...one.details);
+	}
+	details.sort((a, b) => b.games - a.games);
+	return { delta, pairs, games, details };
+}
+
+/**
+ * 阵容能力维度的展示口径：标签、当前值、参考值。
+ *
+ * 打分与「双方对比」共用一份，免得同一个维度在两处说法不一致
+ * （打分看「补上了多少」，复盘看「两边谁多」）。
+ */
+export function compositionDimensions(profile: StructureProfile, enemySummon: boolean): { key: string; label: string; value: number; target: number }[] {
+	const rows = COMPOSITION_TARGETS.map((dim) => ({
+		key: dim.key,
+		label: dim.label,
+		value: profile.values[dim.key] ?? 0,
+		target: dim.target,
+	}));
+	rows.push({ key: 'ranged', label: '远程', value: profile.ranged, target: RANGED_TARGET });
+	rows.push({ key: 'teamfight', label: '团战点', value: profile.teamfight, target: TEAMFIGHT_TARGET });
+	rows.push({ key: 'clear', label: '清场', value: profile.clear, target: enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE });
+	rows.push({ key: 'phaseEarly', label: '前期不弱', value: profile.phaseEarly, target: PHASE_TARGET });
+	rows.push({ key: 'phaseLate', label: '后期不弱', value: profile.phaseLate, target: PHASE_TARGET });
+	return rows;
 }

@@ -290,6 +290,18 @@ export async function resolveTeam(team: TeamRef): Promise<OdTeam | null> {
 	return null;
 }
 
+/**
+ * 队伍名/队标 → 队伍 id 的紧凑索引，给阵容分析页「手动填队名」那条路用。
+ *
+ * 键与 `resolveTeam` **完全一致**（`n:` 是队名、`t:` 是队标，值都过了 `norm`），
+ * 免得页面上查表和这里解析队伍变成两套口径。几十 KB，构建期烘焙成一份静态 JSON，
+ * 前端用到时再拉——没必要塞进每个页面的首屏。
+ */
+export async function getTeamNameIndex(): Promise<[string, number][]> {
+	const index = await getTeamIndex();
+	return [...index].map(([key, team]) => [key, team.team_id]);
+}
+
 // ---------------------------------------------------------------- 队员名单
 
 interface OdMember {

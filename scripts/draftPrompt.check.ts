@@ -6,8 +6,11 @@ import {
 	buildAdviceMessages,
 	buildChatRequest,
 	buildSystemPrompt,
+	buildVerdictMessages,
 	parseAdviceReply,
+	parseVerdictReply,
 } from '../src/lib/draftPrompt.ts';
+import { buildVerdict } from '../src/lib/draftVerdict.ts';
 
 /**
  * 提示词与回复解析的自检。
@@ -103,6 +106,63 @@ for (const candidate of started.candidates) {
 assert.ok(!user.includes('undefined'), '提示词里出现了 undefined，说明有字段没取到');
 assert.ok(!user.includes('NaN'), '提示词里出现了 NaN');
 
+/**
+ * 对面近期的英雄偏好：这是**唯一**来自「这支队」而不是「全服」的依据，
+ * 所以三件事都要盯住——有数据时必须出现、没有数据时整段不出现（不给模型留空位去编）、
+ * 以及英雄列表本身要带上场次与胜率。
+ */
+{
+	const foeForm = {
+		name: 'Team Spirit',
+		windowDays: 30,
+		matches: 12,
+		decided: 10,
+		wins: 6,
+		heroes: [{ heroId: 3, picks: 8, decided: 6, wins: 5, bansAgainst: 4 }],
+	};
+	const shared = { data, advice: started, selfTeam: 'Team XG', foeTeam: 'Team Spirit', recorded: [], ourSide: 'radiant' as const, firstPicker: 'radiant' as const };
+
+	const [foeSystem, foeUser] = buildAdviceMessages({ ...shared, foeForm }, 'ours');
+	assert.match(foeSystem.content, /对面近期比赛记录/, '系统提示词要说清对面有近期记录时怎么用');
+	assert.match(foeUser.content, /对面（Team Spirit）近期爱用（近 30 天 12 场，6 胜 4 负）/, '要带上对面的场次与胜负');
+	assert.match(foeUser.content, /英雄 #?3|马格纳斯/, '要把英雄名列出来');
+	assert.match(foeUser.content, /8 场（5 胜 1 负，胜率 83\.3%）/, '要给场次与胜率');
+	assert.match(foeUser.content, /对手禁过它 4 次/, '被禁次数也要给');
+
+	const [, plainUser] = buildAdviceMessages({ ...shared, foeForm: null }, 'ours');
+	assert.ok(!plainUser.content.includes('近期爱用'), '没有对面数据时不该出现这一段');
+
+	const [themSystem, themUser] = buildAdviceMessages({ ...shared, foeForm }, 'theirs');
+	assert.match(themUser.content, /你自己近期爱用/, '替对面落子时同一份数据要说成"你自己"');
+	assert.match(themSystem.content, /你自己近期爱用/, '对手模式也要交代这条规则');
+	console.log('  ✓ 对面近期偏好：有数据才出现，人称随视角翻，数字齐全');
+}
+
+/**
+ * 「对面擅长」那一栏单独给候补席位，而不是并进号位胜率的排序里：
+ * 对面拿手的英雄常常排不进前几名，但它恰恰是这一手最该禁的对象。
+ */
+{
+	const foeForm = {
+		name: 'Team Spirit',
+		windowDays: 30,
+		matches: 12,
+		decided: 10,
+		wins: 6,
+		heroes: [{ heroId: 3, picks: 8, decided: 6, wins: 5, bansAgainst: 4 }],
+	};
+	const narrowed = advise({ data, recorded: [], ourSide: 'radiant', firstPicker: 'radiant', limit: 2, foeForm });
+	assert.ok(narrowed, '需要一份可用的建议');
+	const seat = [...narrowed.candidates, ...narrowed.foeCandidates].find((candidate) => candidate.heroId === 3);
+	assert.ok(seat, '对面常拿的英雄必须能在候选里被挑到，否则模型没机会禁它');
+	assert.match(seat.reasons.join(' '), /对面（Team Spirit）近 30 天拿了 8 场/, '依据里要写清是这支队的场次');
+	assert.ok(
+		narrowed.foeCandidates.every((foe) => !narrowed.candidates.some((candidate) => candidate.heroId === foe.heroId)),
+		'两栏不能出现同一个英雄',
+	);
+	console.log('  ✓ 对面擅长单列一栏：能进候选，且不与前排重复');
+}
+
 // 样本跨版本时必须说明白：否则模型会把新旧混算的胜率当成"当前版本共识"。
 const straddling = buildAdviceMessages({
 	advice: started,
@@ -196,5 +256,42 @@ const many = parseAdviceReply(
 );
 assert.ok(many);
 assert.equal(many.picks.length, ADVICE_TARGET_COUNT, `最多保留 ${ADVICE_TARGET_COUNT} 条`);
+
+/**
+ * 阵容复盘的提示词与解析。这里不判断"分析得好不好"，只钉住两件会静默出错的事：
+ * 模型有没有被允许自己给胜率（不行——那会与本站算好的数字打架），以及回复解析的容错边界。
+ */
+{
+	const verdict = buildVerdict({
+		data,
+		// 两边都用同一套英雄：这份自检只关心提示词怎么拼，不关心阵容本身强不强。
+		ourIds: [1, 2, 3, 4, 5],
+		theirIds: [1, 2, 3, 4, 5],
+		ourSide: 'radiant',
+		selfTeam: 'Team XG',
+		foeTeam: 'Team Spirit',
+	});
+	assert.ok(verdict, '需要一份可用的复盘的输入');
+	const [system, user] = buildVerdictMessages({ verdict: verdict!, data, selfTeam: 'Team XG', foeTeam: 'Team Spirit' });
+	assert.match(system.content, /不要自己给一个胜率/, '必须明确禁止模型自己造胜率');
+	assert.match(system.content, /对线/, '要求覆盖的角度里要有对线期');
+	assert.match(system.content, /JSON/, '要求 JSON 输出');
+	assert.match(user.content, /Team XG/, '要带上我方阵容与队名');
+	assert.match(user.content, /Team Spirit/, '要带上对面阵容与队名');
+	assert.match(user.content, /胜率（代码算的，原样引用）/, '胜率要标明是代码算的');
+	assert.match(user.content, /50\.0%/, '镜像阵容的胜率是 50/50，必须写进提示词');
+	assert.match(user.content, /平均号位胜率/, '要把维度对比给模型');
+	assert.ok(!/undefined|NaN/.test(user.content), '提示词里出现了 undefined/NaN');
+
+	const good = parseVerdictReply('{"summary":"双方节奏不同","points":[{"dimension":"对线","text":"一边更强"}]}');
+	assert.equal(good?.points.length, 1);
+	assert.equal(good?.points[0]?.dimension, '对线');
+	// 模型偶尔会把 points 写成字符串数组，或者套一层代码块，这些都要能读出来。
+	assert.equal(parseVerdictReply('```json\n{"summary":"x","points":["对线":"y"]}\n```'), null, '坏 JSON 要当没结果');
+	assert.equal(parseVerdictReply('{"summary":"x","points":["只有正文"]}')?.points[0]?.text, '只有正文');
+	assert.equal(parseVerdictReply('{"summary":"","points":[]}'), null, '全空当没结果');
+	assert.equal(parseVerdictReply('抱歉，我想不出来'), null, '不是 JSON 就丢掉');
+	console.log('  ✓ 复盘提示词禁止模型自造胜率，解析容错边界清晰');
+}
 
 console.log('draftPrompt 全部断言通过');

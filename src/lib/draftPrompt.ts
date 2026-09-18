@@ -2,10 +2,13 @@
  * 相对导入带 `.ts` 后缀：这一层要能被 `scripts/draftPrompt.check.ts` 直接用
  * `node --experimental-strip-types` 加载，Node 不做后缀补全。
  */
-import type { DraftData } from './draftData.ts';
+import type { DraftData, DraftHero } from './draftData.ts';
 import type { Advice } from './draftScore.ts';
 import type { RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, sideOfOwner } from './draftOrder.ts';
+import type { FoeForm } from './draftFoe.ts';
+import { foeHighlights, foeRecordLine, foeWinRate } from './draftFoe.ts';
+import type { DraftVerdict, VerdictRow } from './draftVerdict.ts';
 
 /**
  * 提示词与回复解析。**这一层不联网**，只管把打分层算出来的东西摆成模型好用的样子，
@@ -55,24 +58,41 @@ export interface PromptInput {
 	/** 我方阵营与先选方阵营，用来把每一手翻成"我方/对面"。 */
 	ourSide: 'radiant' | 'dire';
 	firstPicker: 'radiant' | 'dire';
+	/**
+	 * 对面近期的英雄偏好。有它就多一段依据，没有就整段不出——**不给模型留空位**，
+	 * 免得它拿「据说这支队爱打团」这种印象来填空。
+	 */
+	foeForm?: FoeForm | null;
 }
 
-/** 把候选摆成表格样式的纯文本，模型对不齐的 JSON 反而更容易漏读字段。 */
-function renderCandidates(input: PromptInput): string {
-	const byId = new Map(input.data.heroes.map((hero) => [hero.id, hero]));
-	return input.advice.candidates
-		.map((candidate) => {
-			const hero = byId.get(candidate.heroId);
-			const name = hero ? `${hero.name}（${hero.nameEn}）` : `英雄 #${candidate.heroId}`;
-			const rate = candidate.hasSample ? `${(candidate.rate * 100).toFixed(1)}%` : '无样本';
-			const lines = [
-				`- heroId=${candidate.heroId} ${name}：建议 ${candidate.position} 号位，该号位胜率 ${rate}`,
-				...candidate.reasons.map((reason) => `  依据：${reason}`),
-				`  风险：${candidate.risk}`,
-			];
-			return lines.join('\n');
-		})
-		.join('\n');
+/**
+ * 把候选摆成表格样式的纯文本，模型对不齐的 JSON 反而更容易漏读字段。
+ *
+ * 两段：上面是打分层算出来的排序，下面是**对面近期真拿过、但没排进前列**的那些。
+ * 分成两段而不是合成一段，是因为它们依据不同——混着排等于让「谁更熟」悄悄参与排序。
+ */
+function renderCandidates(input: PromptInput, role: PromptRole): string {
+	const list = (rows: readonly Advice['candidates'][number][]): string => {
+		const byId = new Map(input.data.heroes.map((hero) => [hero.id, hero]));
+		return rows
+			.map((candidate) => {
+				const hero = byId.get(candidate.heroId);
+				const name = hero ? `${hero.name}（${hero.nameEn}）` : `英雄 #${candidate.heroId}`;
+				const rate = candidate.hasSample ? `${(candidate.rate * 100).toFixed(1)}%` : '无样本';
+				const lines = [
+					`- heroId=${candidate.heroId} ${name}：建议 ${candidate.position} 号位，该号位胜率 ${rate}`,
+					...candidate.reasons.map((reason) => `  依据：${reason}`),
+					`  风险：${candidate.risk}`,
+				];
+				return lines.join('\n');
+			})
+			.join('\n');
+	};
+
+	const main = list(input.advice.candidates);
+	if (input.advice.foeCandidates.length === 0) return main;
+	const whose = role === 'theirs' ? '你自己' : '对面';
+	return `${main}\n\n（以下 ${input.advice.foeCandidates.length} 个是${whose}近期真拿过的，没排进上面的顺序，同样可以挑）：\n${list(input.advice.foeCandidates)}`;
 }
 
 /** 已录的 BP，按手号列出来，被跳过的注明跳过。 */
@@ -99,6 +119,30 @@ function renderLineup(input: PromptInput): string {
 			return `${slot.position} 号位：${name}（${mark}，胜率 ${(slot.rate * 100).toFixed(1)}%）`;
 		})
 		.join('\n');
+}
+
+/**
+ * 对面近期的使用习惯。**只给场次、胜负、被禁次数**，不给任何「招牌英雄」式的判断：
+ * 按队伍统计分不出位置，说成招牌就是替数据下结论。
+ *
+ * 这段数据来自对面**最近的真实比赛**，模型引用它时说的话是可以核对的，
+ * 和白名单外的「我记得这支队伍爱用某某」有本质区别，所以这一段在提示词里单独成块。
+ */
+function renderFoe(input: PromptInput, role: PromptRole): string {
+	const form = input.foeForm;
+	if (!form || form.matches === 0) return '';
+	const byId = new Map(input.data.heroes.map((hero) => [hero.id, hero]));
+	const lines = foeHighlights(form, 8).map((hero) => {
+		const info = byId.get(hero.heroId);
+		const name = info ? `${info.name}（${info.nameEn}）` : `英雄 #${hero.heroId}`;
+		const rate = foeWinRate(hero);
+		const record = rate === null ? '胜负未记录' : `${hero.wins} 胜 ${hero.decided - hero.wins} 负，胜率 ${(rate * 100).toFixed(1)}%`;
+		return `- heroId=${hero.heroId} ${name}：${hero.picks} 场（${record}），对手禁过它 ${hero.bansAgainst} 次`;
+	});
+	if (lines.length === 0) return '';
+	// 替对面落子时，这份数据是「你自己」的，人称要跟着翻，否则模型会把两方读反。
+	const whose = role === 'theirs' ? '你自己近期爱用' : `对面（${form.name.trim() || '对方'}）近期爱用`;
+	return [`${whose}（${foeRecordLine(form)}）：`, ...lines].join('\n');
 }
 
 /**
@@ -138,6 +182,8 @@ export function buildSystemPrompt(role: PromptRole = 'ours'): string {
 			'4. 理由是给对手看的，用第二人称写：用"你们"指对手（屏幕前的人），用"我"指你自己。',
 			'   例如"禁掉你们的四号位高胜率点，把你们的阵容估值压下来"。就算数据里出现"对面"这个词，',
 			'   那也是从你的角度算的，写进理由时要改成人话。',
+			'5. 「你自己近期爱用」那几个英雄是你熟的东西：挑选时优先在里面补自己的缺口，禁用时掐对面最想要的。',
+			'   熟只代表你敢拿、胜率高，不代表它这一手就比别的强——依据里的场次与胜率要照实引用。',
 			'',
 			'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
 			'{"picks":[{"heroId":1,"position":2,"reason":"…","risk":"…"}],"summary":"…"}',
@@ -155,7 +201,10 @@ export function buildSystemPrompt(role: PromptRole = 'ours'): string {
 		'   你不知道这些数据之外的任何统计，也不要去回忆版本强弱，绝对不要编造数字。',
 		'3. 每条理由不超过两句，直接说这一手为什么拿它、为什么是现在。',
 		'4. 如果这一手是禁用，理由要说明对面拿走它会造成什么；如果是挑选，说明它补上了哪个号位。',
-		'5. 用简体中文，不要客套话，不要标题和列表符号。',
+		'5. 有对面近期比赛记录时，他们拿得多、胜率高的英雄，禁用优先级要往前提（`禁`掉对面熟手的价值',
+		'   不等于它在全局胜率里排第几）；挑选时如果候选里正好有对面的熟手，说明这一手还顺带压住了他们。',
+		'   只知道这些场次与胜率，不要凭印象说某支队「爱打团」「习惯四保一」。',
+		'6. 用简体中文，不要客套话，不要标题和列表符号。',
 		'',
 		'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
 		'{"picks":[{"heroId":1,"position":2,"reason":"…","risk":"…"}],"summary":"…"}',
@@ -169,6 +218,7 @@ export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): 
 	const theirs = input.foeTeam.trim() || '对面';
 	const action = advice.action === 'ban' ? '禁用' : '挑选';
 	const turn = advice.ours ? `轮到${ours}${action}` : `轮到${theirs}${action}（我方要预判对面会怎么动）`;
+	const foe = renderFoe(input, role);
 
 	return [
 		// 替对面落子时，数据是从对面的角度算的，先把人称交代清楚，免得模型把两方搞反。
@@ -185,9 +235,10 @@ export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): 
 		'',
 		'已经录进去的 BP：',
 		renderRecorded(input),
+		...(foe ? ['', foe] : []),
 		'',
 		`候选（只能从这些里挑 ${ADVICE_TARGET_COUNT} 个，按推荐程度排序）：`,
-		renderCandidates(input),
+		renderCandidates(input, role),
 	].join('\n');
 }
 
@@ -200,6 +251,151 @@ export function buildAdviceMessages(input: PromptInput, role: PromptRole = 'ours
 
 /** 单次回复的 token 上限。关掉思考之后实测一次约 290 个 token，900 留了足够余量。 */
 export const ADVICE_MAX_TOKENS = 900;
+
+// ---------------------------------------------------------------- 双方阵容的复盘
+
+/**
+ * 复盘提示词。与出主意那份的关键区别：这里**没有下一手**，所以不要求它在候选里挑，
+ * 只要求它把已经算好的对比讲成人话。胜率由代码给定，明令不许自己改——
+ * 模型最像样的失败就是「我觉得这阵容七三开」，那与本项目「数字必须可核对」的前提冲突。
+ */
+export interface VerdictPromptInput {
+	verdict: DraftVerdict;
+	data: DraftData;
+	selfTeam: string;
+	foeTeam: string;
+	/** 对面近期的英雄偏好，用来解释「他们拿到的熟手」。 */
+	foeForm?: FoeForm | null;
+}
+
+export function buildVerdictSystemPrompt(): string {
+	return [
+		'你是 DOTA2 职业战队的教练。这一局双方的阵容**已经选完**，你要做的是复盘这套对局，不是再给 BP 建议。',
+		'',
+		'你必须遵守：',
+		'1. 只引用用户给出的数字（平均号位胜率、对位偏差、各个能力维度、结构分、时间曲线、对面近期英雄）。',
+		'   你不知道这些之外的任何统计，也不要去回忆版本强弱，绝对不要编造数字。',
+		'2. 胜率是代码算好的，原样引用（写成"我方 53.2% 对 46.8%"），**不要自己给一个胜率**。',
+		'3. 覆盖这五个角度，每个角度一到两句：对线期（谁的分路更占优）、团战（先手/控制/范围伤害/清场）、',
+		'   前后期曲线（谁该压节奏、谁该拖）、推进与守高、以及双方的核心矛盾（一边靠什么赢、另一边怎么破）。',
+		'4. 两边都要给出**赢的路径**（谁先手、谁输出、什么时候打）和**最怕什么**，不要只讲一边。',
+		'5. 能力维度只做横向对比；判不出高低就说持平，不要为了有观点而硬分出强弱。',
+		'6. 用简体中文，不要客套话，不要标题和列表符号。',
+		'',
+		'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
+		'{"summary":"一两句话的整体判断","points":[{"dimension":"对线","text":"…"}]}',
+		'points 给 4 到 6 条，dimension 用中文短语（对线、团战、节奏、推进、破局……）。',
+	].join('\n');
+}
+
+function renderVerdictLineup(side: { label: string; rows: { position: number; hero: DraftHero | null; rate: number }[] }): string {
+	return side.rows
+		.map((row) => {
+			const name = row.hero ? `${row.hero.name}（${row.hero.nameEn}）` : '（空）';
+			return `${row.position} 号位 ${name}：该号位胜率 ${(row.rate * 100).toFixed(1)}%`;
+		})
+		.join('\n');
+}
+
+function renderVerdictRows(rows: readonly VerdictRow[]): string {
+	return rows.map((row) => `- ${row.text}`).join('\n');
+}
+
+export function buildVerdictUserPrompt(input: VerdictPromptInput): string {
+	const { verdict, data } = input;
+	const ours = input.selfTeam.trim() || '我方';
+	const theirs = input.foeTeam.trim() || '对面';
+	const foe = input.foeForm
+		? foeHighlights(input.foeForm, 8).map((hero) => {
+				const info = data.heroes.find((item) => item.id === hero.heroId);
+				const rate = foeWinRate(hero);
+				return `- heroId=${hero.heroId} ${info ? info.name : `英雄 #${hero.heroId}`}：${hero.picks} 场${rate === null ? '' : `，胜率 ${(rate * 100).toFixed(1)}%`}`;
+			})
+		: [];
+
+	return [
+		`对局：${ours} vs ${theirs}。双方阵容已锁：`,
+		'',
+		`${ours}：`,
+		renderVerdictLineup(verdict.ours),
+		'',
+		`${theirs}：`,
+		renderVerdictLineup(verdict.theirs),
+		'',
+		// 胜率给的是「我方视角」，先把人称交代清楚，免得它把两边写反。
+		`胜率（代码算的，原样引用）：${ours} ${(verdict.winRate.ours * 100).toFixed(1)}% 对 ${(verdict.winRate.theirs * 100).toFixed(1)}% ${theirs}。`,
+		`它由号位偏差 ${(verdict.edge.position * 100).toFixed(1)} 与对位偏差 ${(verdict.edge.counter * 100).toFixed(1)} 相加得到（百分点）。`,
+		'',
+		`维度对比（${ours} : ${theirs}）：`,
+		renderVerdictRows(verdict.rows),
+		verdict.foePicks.length > 0
+			? ['', `${theirs} 这套里拿到的近期熟手：`, ...verdict.foePicks.map((pick) => `- ${pick.hero.name}：近窗口 ${pick.picks} 场${pick.rate === null ? '' : `，胜率 ${(pick.rate * 100).toFixed(1)}%`}`)].join('\n')
+			: '',
+		foe.length > 0 ? ['', `${theirs} 近期的英雄偏好（窗口内的前几个）：`, ...foe].join('\n') : '',
+		'',
+		'口径与限制：',
+		...verdict.notes.map((note) => `- ${note}`),
+	].filter((line) => line !== '').join('\n');
+}
+
+export function buildVerdictMessages(input: VerdictPromptInput): PromptMessage[] {
+	return [
+		{ role: 'system', content: buildVerdictSystemPrompt() },
+		{ role: 'user', content: buildVerdictUserPrompt(input) },
+	];
+}
+
+/**
+ * 复盘要写五个角度、每条一到两句，比"给一手建议"长得多。
+ * 上限给 1400（建议那边是 900）：思考同样是关掉的，实测 6 条约 700 个 token，
+ * 留一倍余量免得输出被截断成半句。
+ */
+export const VERDICT_MAX_TOKENS = 1400;
+
+export interface ParsedVerdict {
+	summary: string;
+	points: { dimension: string; text: string }[];
+}
+
+/**
+ * 解析复盘回复。容错口径与 `parseAdviceReply` 一致（剥围栏、截最外层花括号），
+ * 但**不要求** dimension 是预定义的那几个：模型按场上情况挑角度是合理的，
+ * 只要每条的正文非空。全空就当这次没有结果，界面退回纯数字对比。
+ */
+export function parseVerdictReply(raw: string): ParsedVerdict | null {
+	if (!raw) return null;
+	const withoutFence = raw.replace(/```(?:json)?/gi, '');
+	const start = withoutFence.indexOf('{');
+	const end = withoutFence.lastIndexOf('}');
+	if (start < 0 || end <= start) return null;
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(withoutFence.slice(start, end + 1));
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object') return null;
+
+	const body = parsed as { summary?: unknown; points?: unknown };
+	const points: ParsedVerdict['points'] = [];
+	for (const item of Array.isArray(body.points) ? body.points : []) {
+		if (typeof item === 'string') {
+			const text = item.trim();
+			if (text) points.push({ dimension: '', text });
+			continue;
+		}
+		if (!item || typeof item !== 'object') continue;
+		const row = item as { dimension?: unknown; text?: unknown };
+		const text = typeof row.text === 'string' ? row.text.trim() : '';
+		if (!text) continue;
+		points.push({ dimension: typeof row.dimension === 'string' ? row.dimension.trim() : '', text });
+	}
+
+	const summary = typeof body.summary === 'string' ? body.summary.trim() : '';
+	if (!summary && points.length === 0) return null;
+	return { summary, points: points.slice(0, 8) };
+}
 
 export interface ChatRequestOptions {
 	model: string;
