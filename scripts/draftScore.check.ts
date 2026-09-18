@@ -107,7 +107,8 @@ for (const [label, names] of [
  * 这份名单是人定的（自动规则试过，把发条技师排在谜团前面，见 heroTraits 的注释），
  * 所以只查最基本的两件事：名单够长、里面没有重复。
  */
-assert.ok(TEAMFIGHT_NAMES.length >= 15, `团战名单太短（${TEAMFIGHT_NAMES.length} 个）`);
+// 名单要覆盖整个英雄池里的团战点，不是挑几个例子：低于 25 个就说明被砍过。
+assert.ok(TEAMFIGHT_NAMES.length >= 25, `团战名单太短（${TEAMFIGHT_NAMES.length} 个）`);
 assert.equal(new Set(TEAMFIGHT_NAMES).size, TEAMFIGHT_NAMES.length, '团战名单里有重复');
 for (const name of ['谜团', '术士', '寒冬飞龙', '凤凰', '黑暗贤者', '杰奇洛']) {
 	// 这几个是用户点名的参考：漏掉任何一个都说明名单被改坏了。
