@@ -112,6 +112,7 @@ if (data) {
 	// ---------------------------------------------------------------- DOM
 
 	const poolRoot = element<HTMLDivElement>('draft-pool');
+	const boardGrid = element<HTMLDivElement>('draft-board-grid');
 	const poolCount = element<HTMLSpanElement>('draft-pool-count');
 	const poolHint = element<HTMLParagraphElement>('draft-pool-hint');
 	const bannerStep = element<HTMLSpanElement>('draft-banner-step');
@@ -263,57 +264,81 @@ if (data) {
 		// ------------------------------------------------------------ BP 板
 
 		interface SlotRef {
-			button: HTMLButtonElement;
-			step: number;
+			/** 这一手落子/落禁用的那个格子。另一边留空占位，保持三列对齐。 */
+			cell: HTMLDivElement;
+			row: HTMLDivElement;
+			/** 手号下面那行字：只有当前手才写"禁用/挑选"，其余留空，跟客户端一样。 */
+			actionEl: HTMLSpanElement;
 		}
 		const slots = new Map<number, SlotRef>();
+		/** 上一次建表用的是哪边先选：先选权一改，两侧归属整体镜像，表要重建。 */
+		let builtFor: TeamSide | null = null;
 
+		/**
+		 * 建 24 行：天辉一列、夜魇一列、中间夹手号，**一行一手**按顺序往下走。
+		 * 客户端就是这么排的，好处是听解说报"第 12 手"时能直接找到那一行，
+		 * 也不用在"先七个禁用再五个挑选"里来回换算。
+		 */
 		function buildBoard(): void {
-			for (const side of ['radiant', 'dire'] as TeamSide[]) {
-				const bans = element<HTMLDivElement>(`draft-bans-${side}`);
-				const picks = element<HTMLDivElement>(`draft-picks-${side}`);
-				if (!bans || !picks) continue;
-				bans.innerHTML = '';
-				picks.innerHTML = '';
-				for (const entry of CM_STEPS) {
-					const ownerSide = sideOfOwner(entry.owner, firstPickerSide());
-					if (ownerSide !== side) continue;
-					const button = document.createElement('div');
-					button.className = 'draft-slot';
-					button.dataset.step = String(entry.step);
-					button.innerHTML = `<span class="draft-slot-number">${entry.step}</span>`;
-					(entry.action === 'ban' ? bans : picks).append(button);
-					slots.set(entry.step, { button, step: entry.step });
-				}
+			if (!boardGrid) return;
+			boardGrid.innerHTML = '';
+			slots.clear();
+			const first = firstPickerSide();
+			for (const entry of CM_STEPS) {
+				const side = sideOfOwner(entry.owner, first);
+				const row = document.createElement('div');
+				row.className = 'draft-row';
+				row.dataset.step = String(entry.step);
+
+				const left = document.createElement('div');
+				const middle = document.createElement('div');
+				const right = document.createElement('div');
+				middle.className = 'draft-step';
+				middle.innerHTML = `<span>${entry.step}</span><span class="draft-step-action"></span>`;
+				const actionEl = middle.querySelector('.draft-step-action') as HTMLSpanElement;
+
+				const cell = side === 'radiant' ? left : right;
+				cell.className = 'draft-cell';
+				cell.dataset.side = side;
+				cell.dataset.action = entry.action;
+				cell.title = `${side === 'radiant' ? '天辉' : '夜魇'} · 第 ${entry.step} 手${entry.action === 'ban' ? '禁用' : '挑选'}`;
+
+				row.append(left, middle, right);
+				boardGrid.append(row);
+				slots.set(entry.step, { cell, row, actionEl });
 			}
+			builtFor = first;
 		}
 
 		function syncBoard(): void {
 			const state = snapshotNow();
-			// 先选权一改，两列的归属就变了，格子要重建。
-			if (slots.size !== 24) buildBoard();
+			if (builtFor !== firstPickerSide() || slots.size !== CM_STEPS.length) buildBoard();
+			const current = state.done ? -1 : state.nextStep;
+
 			for (const [step, ref] of slots) {
 				const heroId = recorded[step - 1];
 				const hero = typeof heroId === 'number' ? heroById.get(heroId) : undefined;
-				const current = state.done ? false : state.nextStep === step;
-				ref.button.dataset.current = String(current);
 				if (hero) {
-					ref.button.dataset.state = 'filled';
-					ref.button.innerHTML = `<img src="${hero.img}" alt="${hero.name}" loading="lazy" referrerpolicy="no-referrer" /><span class="draft-slot-number">${step}</span>`;
+					ref.cell.dataset.state = 'filled';
+					ref.cell.innerHTML = `<img src="${esc(hero.img)}" alt="${esc(hero.name)}" loading="lazy" referrerpolicy="no-referrer" />`;
 				} else {
-					ref.button.dataset.state = 'empty';
-					ref.button.innerHTML = `<span class="draft-slot-number">${step}</span>`;
+					ref.cell.dataset.state = 'empty';
+					ref.cell.innerHTML = '';
 				}
+				ref.row.dataset.current = String(step === current);
+				// 24 行都写"禁/选"会把中间那列塞满，只在当前手标出来就够看了。
+				ref.actionEl.textContent = step === current ? (ref.cell.dataset.action === 'ban' ? '禁用' : '挑选') : '';
 			}
+
+			// 列头固定写阵营名，队名与我方/先选的标记挂在旁边，跟客户端一致。
 			const radiantLabel = element<HTMLSpanElement>('draft-label-radiant');
 			const direLabel = element<HTMLSpanElement>('draft-label-dire');
-			if (radiantLabel) radiantLabel.textContent = sideLabel('radiant');
-			if (direLabel) direLabel.textContent = sideLabel('dire');
+			if (radiantLabel) radiantLabel.textContent = '天辉';
+			if (direLabel) direLabel.textContent = '夜魇';
 			for (const side of ['radiant', 'dire'] as TeamSide[]) {
 				const badge = element<HTMLSpanElement>(`draft-badge-${side}`);
 				if (!badge) continue;
-				const bits: string[] = [];
-				if (side === ourSide) bits.push('我方');
+				const bits = [sideLabel(side)];
 				if (side === firstPickerSide()) bits.push('先选');
 				badge.textContent = bits.join(' · ');
 			}

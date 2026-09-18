@@ -102,13 +102,24 @@ assert.match(script, /async function askModelForOpponentMove[\s\S]*?catch \{[\s\
  *    （实测 390px 视口下页面被撑到 534px）。
  */
 assert.ok(page.includes('class="draft-board '), 'BP 板要带 draft-board 类');
-assert.ok(page.includes('class="draft-board-grid '), 'BP 板的栅格要带 draft-board-grid 类');
+assert.ok(page.includes('id="draft-board-grid"'), 'BP 板要有一个放 24 行的容器');
 assert.match(page, /@media \(min-width: 1280px\)/, '等高拉伸要放在 xl 断点里，否则移动端会被拉伸');
 assert.match(page, /\.draft-board-grid\s*\{[^}]*flex:\s*1 1 auto/, 'draft-board-grid 必须撑满面板高度');
-assert.match(page, /\.draft-picks\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/, '挑选区必须是单列');
-assert.match(page, /\.draft-bans\s*\{[^}]*grid-template-columns:\s*repeat\(4,/, '禁用区四列小格');
-assert.match(page, /\.draft-picks \.draft-slot\s*\{[^}]*min-height:\s*52px/, '挑选格要有高度下限，别在小屏被压没');
+assert.match(page, /@media \(min-width: 1280px\)[\s\S]*grid-auto-rows:\s*minmax\(26px,\s*1fr\)/, '24 行要能平均分掉多余高度');
+assert.ok(page.includes('一行一手'), '文案要说明这张表是一行一手');
 assert.ok(!page.includes('min-w-56'), '比赛下拉不能用 min-w 定宽，会被最长的 option 撑破布局');
 assert.match(page, /id="draft-match"[^>]*class="[^"]*w-full[^"]*sm:w-72/, '比赛下拉要限宽');
+
+/**
+ * 右侧 BP 板照客户端的排法：天辉一列、夜魇一列、中间夹手号，一行一手。
+ * 这两条是用户对着客户端截图提的，改回去页面就不是那个东西了。
+ */
+assert.match(page, /\.draft-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*2\.5rem\s*minmax\(0,\s*1fr\)/, '一行要排成"格子 + 手号 + 格子"');
+assert.ok(page.includes('id="draft-label-radiant">天辉') && page.includes('id="draft-label-dire">夜魇'), '列头要写明天辉和夜魇');
+assert.match(page, /data-action='ban'\]\[data-state='filled'\]::after[\s\S]{0,80}✕/, '禁用格要打叉，和客户端一致');
+// 禁用与挑选必须在同一列里按手号混排，不能再分成"七个禁用 + 五个挑选"两段。
+assert.ok(!script.includes('draft-bans-'), 'BP 板不该再有独立的禁用区');
+assert.ok(!script.includes('draft-picks-'), 'BP 板不该再有独立的挑选区');
+assert.match(script, /cell\.dataset\.action = entry\.action/, '每一行都要带上是禁用还是挑选');
 
 console.log(`draftPage 断言通过（${pageIds.size} 个 id，脚本引用 ${queriedIds.size} 个）`);
