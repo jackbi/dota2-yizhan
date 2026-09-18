@@ -52,7 +52,8 @@ interface State {
 	 *
 	 * 斗鱼与虎牙默认都走直链 + `<video>`（见 `playDirect`），只有解析失败、自动播放被拦，
 	 * 或者用户自己切过来时才用 iframe。虎牙原先默认嵌它官方的纯播放器页，改掉的原因是那页
-	 * 只给约 10 分钟试看（见 `lib/liveStream.ts` 的 `parseHuyaStream`）。
+	 * 只给约 10 分钟试看——现在当兜底用，就得靠 `?inPc=1` 把试看关掉（见 `data/site.ts`
+	 * 的 `embedUrl()`），**别把那个参数当成可选的美化项删掉**。
 	 */
 	iframeKeys: string[];
 }
@@ -93,9 +94,9 @@ const DIRECT_PLATFORMS = new Set<Platform>(['douyu', 'huya']);
  * | 斗鱼 | `#js-player-video` | (32, 0) | 813×457 | `relative`，会滚走 |
  *
  * **虎牙不需要裁切**：它只在「直链播不动」时才嵌官方播放器页
- * `liveshare.huya.com/iframe/{房间号}`（见 `data/site.ts` 的 `embedUrl()`），那一页本身就是
- * 画面 + 一条控制条，铺满即可。所以 `CROP` 里没有虎牙——`cropSpecOf('huya')` 返回 undefined，
- * 虎牙格子走「正常铺满」那条路。
+ * `liveshare.huya.com/iframe/{房间号}?inPc=1`（见 `data/site.ts` 的 `embedUrl()`），那一页
+ * 本身就是画面 + 一组**悬停才出现**的控制（暂停/刷新/音量），铺满即可。所以 `CROP` 里没有虎牙
+ * ——`cropSpecOf('huya')` 返回 undefined，虎牙格子走「正常铺满」那条路。
  * （之前的写死值是 `#J_playerMain`、(90,60)、785×442，虎牙页头 `fixed` 吸顶得留 60px；
  * 那套连同它的偏移微调都已经删掉，别再照着老注释往回加。）
  *
@@ -450,9 +451,11 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 
 		/*
 	 * 两个平台现在都默认直链自播，`<iframe>` 只在下述两种情况出现：直链解析不出来，或用户
-	 * 自己切了过去。虎牙那种兜底嵌的是它官方播放器页，**控制条贴在底部**（暂停/刷新/弹幕/音量），
-	 * 我们那个「打开直播间」原先固定挂右下角，实测正好盖在音量滑杆和清晰度上（见截图），
-	 * 所以按平台换个位置：虎牙放进标题栏，斗鱼保持右下角（它底部是裁出来的播放器区域，不冲突）。
+	 * 自己切了过去。虎牙那种兜底嵌的是它官方播放器页（带 `?inPc=1`，界面是虎牙客户端的那个），
+	 * 它的控制组在**右上角**且悬停才出现；而它以前那版底部控制条（暂停/刷新/弹幕/音量）会把我们
+	 * 固定挂右下角的「打开直播间」盖住（实测正好压在音量滑杆和清晰度上，见截图）。
+	 * 于是按平台分位置：虎牙放进标题栏（两种界面下都不会打架），斗鱼保持右下角
+	 * （它底部是裁出来的播放器区域，不冲突）。
 		 */
 		const huya = r.platform === 'huya';
 		const openLink = (cls: string): string =>
