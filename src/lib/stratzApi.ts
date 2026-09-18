@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
+import type { HeroMatchups } from './draftMatchup';
 import { createPace } from './pace';
 import { resolveStratzEndpoint } from './stratzEndpoint';
 
@@ -481,4 +482,109 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 		return meta;
 	})();
 	return heroMetaPromise;
+}
+
+// ---------------------------------------------------------------- 英雄对位（克制）
+
+/**
+ * 对位数据的两个门槛。
+ *
+ * 500 场是样本下限：300 场的胜率，95% 置信区间就有 ±5.7 个百分点，比要看的偏差还大。
+ * 4% 是偏差下限：只留明显好打或明显难打的对位，接近五五开的不参与打分，
+ * 免得建议里塞一堆等于没说的依据。
+ */
+export const MATCHUP_MIN_GAMES = 500;
+export const MATCHUP_MIN_DEVIATION = 0.04;
+/** 对位数据按周滚动，一天一次足够，也少给中转添麻烦。 */
+const MATCHUP_TTL_SECONDS = 24 * 3600;
+/** 一次查几个英雄。实测接口支持 heroIds 数组，10 个一批，127 个英雄只发 13 次请求。 */
+const MATCHUP_CHUNK = 10;
+
+// 数据形状与查询放在 draftMatchup 里：那一层要同时给构建期和浏览器用，不能带 Node 依赖。
+export type { HeroMatchups };
+
+export interface HeroMatchupData {
+	pairs: HeroMatchups;
+	/** 留存的对位数，页面上用来说明覆盖面。 */
+	pairCount: number;
+}
+
+interface RawMatchupHero {
+	heroId?: number | null;
+	vs?: { heroId2?: number | null; matchCount?: number | null; winCount?: number | null }[] | null;
+}
+
+/**
+ * `bracketBasicIds` 用与英雄页相同的高分局口径；`winCount` 是**所查英雄**的胜场
+ * （实测：单英雄 126 个对位的 winCount 之和等于它的总胜率乘总场次，误差在万分之几）。
+ */
+const MATCHUP_DOCUMENT = `query Matchups($heroIds: [Short], $bracket: [RankBracketBasicEnum], $take: Int) {
+	heroStats {
+		matchUp(heroIds: $heroIds, bracketBasicIds: $bracket, take: $take) {
+			heroId
+			vs { heroId2 matchCount winCount }
+		}
+	}
+}`;
+
+let matchupPromise: Promise<HeroMatchupData | null> | null = null;
+
+/**
+ * 取英雄对位数据，构建期一次。
+ *
+ * 缓存键带上英雄集合的规模与首尾 id：英雄池变了（新英雄上线）就重新抓，否则复用当天的结果。
+ * 单飞，一次构建只跑一轮。
+ */
+export function fetchHeroMatchups(heroIds: readonly number[]): Promise<HeroMatchupData | null> {
+	matchupPromise ??= (async () => {
+		const ids = [...new Set(heroIds)].filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b);
+		if (ids.length === 0) return null;
+		const before = networkFetches;
+		const key = `hero-matchups-${ids.length}-${ids[0]}-${ids[ids.length - 1]}`;
+
+		const data = await cached<HeroMatchupData>(key, MATCHUP_TTL_SECONDS, async () => {
+			const pairs: HeroMatchups = {};
+			for (let index = 0; index < ids.length; index += MATCHUP_CHUNK) {
+				const chunk = ids.slice(index, index + MATCHUP_CHUNK);
+				const result = await query<{ heroStats: { matchUp: RawMatchupHero[] | null } }>(MATCHUP_DOCUMENT, {
+					heroIds: chunk,
+					bracket: [HERO_META_BRACKET],
+					take: 200,
+				});
+				for (const hero of result?.heroStats?.matchUp ?? []) {
+					const a = hero.heroId;
+					if (typeof a !== 'number') continue;
+					for (const row of hero.vs ?? []) {
+						const b = row.heroId2;
+						const games = row.matchCount ?? 0;
+						const wins = row.winCount ?? 0;
+						if (typeof b !== 'number' || a === b || games < MATCHUP_MIN_GAMES) continue;
+						const rate = wins / games;
+						if (Math.abs(rate - 0.5) < MATCHUP_MIN_DEVIATION) continue;
+						const [low, high] = a < b ? [a, b] : [b, a];
+						const lowRate = a < b ? rate : 1 - rate;
+						const pairKey = `${low}-${high}`;
+						const existing = pairs[pairKey];
+						// 两个方向都查到同一条对位时以样本大的那次为准。
+						if (!existing || games > existing[0]) pairs[pairKey] = [games, Number(lowRate.toFixed(3))];
+					}
+				}
+			}
+			const pairCount = Object.keys(pairs).length;
+			return pairCount > 0 ? { pairs, pairCount } : null;
+		});
+
+		if (!data) {
+			await reportSource('stratz-matchup', 'STRATZ 英雄对位', 'empty', '请求未拿到数据（限流、挑战页或接口异常）');
+			return null;
+		}
+		await reportSource(
+			'stratz-matchup',
+			'STRATZ 英雄对位',
+			networkFetches > before ? 'fresh' : 'cache',
+			`${data.pairCount} 个对位（场次 ≥ ${MATCHUP_MIN_GAMES}、偏差 ≥ ${(MATCHUP_MIN_DEVIATION * 100).toFixed(0)}%）`,
+		);
+		return data;
+	})();
+	return matchupPromise;
 }

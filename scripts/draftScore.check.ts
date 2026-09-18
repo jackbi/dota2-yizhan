@@ -60,6 +60,8 @@ const data: DraftData = {
 	minPositionMatches: 200,
 	heroes: HEROES,
 	proSample: { picks: 620, bans: 532 },
+	matchups: {},
+	matchupPairs: 0,
 	hasPositionData: true,
 	hasProData: true,
 };
@@ -138,6 +140,51 @@ assert.equal(settled[0]?.position, 4, '8 号只有四号位样本，应落在四
 assert.match(ourBan.summary, /还缺/, '阵容有缺口时要在总体判断里说出来');
 
 // ---------------------------------------------------------------- 边界
+
+// ---------------------------------------------------------------- 克制
+
+/**
+ * 这一组专门验"克制有没有真的进排序"：两个候选的号位胜率**完全一样**，
+ * 只有对位不同（201 好打对面的 203，202 被 203 打），好打的那个必须排在前面。
+ *
+ * 用同一个号位胜率是刻意的：只要排序出现差别，差别就只可能来自对位。
+ */
+const counterHeroes = [hero(201, [0.5, null, null, null, null]), hero(202, [0.5, null, null, null, null]), hero(203, [0.5, null, null, null, null]), hero(204, [0.5, null, null, null, null]), hero(205, [0.5, null, null, null, null])];
+const counterData: DraftData = {
+	...data,
+	heroes: counterHeroes,
+	// 键是"小 id-大 id"，值是低 id 一方的胜率：201 打 203 赢 60%，202 打 203 只赢 40%。
+	matchups: { '201-203': [2000, 0.6], '202-203': [2000, 0.4] },
+	matchupPairs: 2,
+};
+// 前七手跳过，第 8 手我方拿 204，第 9 手对面拿 203，10-12 跳过，第 13 手对面再拿 205，现在第 14 手轮到我方挑选。
+const counterRecorded: RecordedHand[] = [null, null, null, null, null, null, null, 204, 203, null, null, null, 205];
+const counterAdvice = advise({ data: counterData, recorded: counterRecorded, ourSide: OUR, firstPicker: OUR });
+assert.ok(counterAdvice, '这一手应该有建议');
+assert.equal(counterAdvice.step, 14);
+assert.equal(counterAdvice.action, 'pick');
+const good = counterAdvice.candidates.find((candidate) => candidate.heroId === 201);
+const bad = counterAdvice.candidates.find((candidate) => candidate.heroId === 202);
+assert.ok(good && bad, '两个候选都要在列表里');
+assert.ok(good.ranking > bad.ranking, `好打对面的候选排得更靠前（${good.ranking} 应大于 ${bad.ranking}）`);
+assert.equal(counterAdvice.candidates[0]?.heroId, 201, '候选顺序应由克制决定');
+assert.ok(
+	good.reasons.some((line) => line.includes('对阵对面已选') && line.includes('60.0%')),
+	'依据里要写清对位胜率，实际：' + good.reasons.join(' / '),
+);
+assert.ok(good.reasons.some((line) => line.includes('203')), '依据里要带上对手是哪几个英雄');
+assert.ok(
+	bad.reasons.some((line) => line.includes('40.0%')),
+	'被打的那个也要如实写出来，实际：' + bad.reasons.join(' / '),
+);
+
+// 没有对位数据时，同样的局面不该出现克制那条依据（退回只按号位胜率算）。
+const noCounter = advise({ data: { ...counterData, matchups: {}, matchupPairs: 0 }, recorded: counterRecorded, ourSide: OUR, firstPicker: OUR });
+assert.ok(noCounter);
+assert.ok(
+	!noCounter.candidates.some((candidate) => candidate.reasons.some((line) => line.includes('对位'))),
+	'没数据时不该写出对位依据',
+);
 
 // 走满 24 手之后没有"下一手"。
 const full: RecordedHand[] = HEROES.map((item) => item.id).concat(Array.from({ length: 14 }, (_, index) => 100 + index));

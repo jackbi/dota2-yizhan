@@ -6,6 +6,8 @@
 import type { DraftData, DraftHero } from './draftData.ts';
 import type { DraftAction, DraftOwner, DraftSide, RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, snapshot, sideOfOwner } from './draftOrder.ts';
+import type { HeroMatchups } from './draftMatchup.ts';
+import { matchupRate } from './draftMatchup.ts';
 
 /**
  * 阵容分析的打分层：**先把候选和依据算出来，再交给模型排序和解释**。
@@ -40,11 +42,59 @@ const NEUTRAL_WIN_RATE = 0.5;
  */
 const CONTEST_CAP = 3;
 
+/**
+ * 克制在总估值里的权重。
+ *
+ * 估值的尺度是"五个号位胜率之和"，一个号位的胜率差 5 个百分点就是 0.05。
+ * 对位偏差取 1.5 倍，于是一个 5 个百分点的克制优势约等于给整套阵容加 0.075，
+ * 和换一个号位人选带来的差别同一个量级，不会盖过号位胜率本身。
+ *
+ * 这个系数没有客观标准，是拍的：对位数据本身是高分路人局的口径，波动也不小，
+ * 所以给建议时始终把对位的原始数字写在依据里，让人能自己判断值不值。
+ */
+const COUNTER_WEIGHT = 1.5;
+
 interface PoolHero {
 	hero: DraftHero;
 	/** 按号位索引（0 是一号位）的胜率，样本不足处为 null。 */
 	rates: (number | null)[];
 	matches: number[];
+}
+
+/** 打分时要看的对手阵容：对面已经选了谁，就按这些对位来算克制。 */
+interface RateContext {
+	matchups: HeroMatchups | undefined;
+	foeIds: readonly number[];
+}
+
+interface CounterSummary {
+	/** 与对面已选英雄的平均胜率偏差（正数代表好打）。没有可用对位时为 0。 */
+	delta: number;
+	/** 用上的对位数。 */
+	pairs: number;
+	/** 这些对位的总场次。 */
+	games: number;
+	/** 每个可用对位的明细，按场次从多到少，用来写依据。 */
+	details: { heroId: number; rate: number; games: number }[];
+}
+
+/**
+ * 一个英雄面对对面已选的这几个英雄，对位数据怎么说。
+ *
+ * 平均的是**偏差**而不是胜率：没有对位记录的对手不参与，免得把"没有样本"算成五五开。
+ * 一件要说明的事：这里不区分分路，四号位和对面一号位的对位也算在里面，
+ * 所以它是个粗口径的克制信号，不是分路克制。
+ */
+function counterSummary(matchups: HeroMatchups | undefined, heroId: number, foeIds: readonly number[]): CounterSummary {
+	const details: CounterSummary['details'] = [];
+	for (const foeId of foeIds) {
+		const cell = matchupRate(matchups, heroId, foeId);
+		if (cell) details.push({ heroId: foeId, rate: cell.rate, games: cell.games });
+	}
+	if (details.length === 0) return { delta: 0, pairs: 0, games: 0, details: [] };
+	details.sort((a, b) => b.games - a.games);
+	const delta = details.reduce((sum, row) => sum + (row.rate - 0.5), 0) / details.length;
+	return { delta, pairs: details.length, games: details.reduce((sum, row) => sum + row.games, 0), details };
 }
 
 function toPoolHero(hero: DraftHero): PoolHero {
@@ -58,9 +108,14 @@ function toPoolHero(hero: DraftHero): PoolHero {
 	return { hero, rates, matches };
 }
 
-/** 已经落在某方手上的英雄在某个号位上的胜率；没有样本按中性。 */
-function rateAt(entry: PoolHero, position: number): number {
-	return entry.rates[position - 1] ?? NEUTRAL_WIN_RATE;
+/**
+ * 某个英雄在某个号位上的"有效胜率"：号位胜率再加上对位上的加减。
+ * 号位没有样本时按中性，再叠对位；对位也没有时就是中性值。
+ */
+function rateAt(entry: PoolHero, position: number, ctx: RateContext): number {
+	const base = entry.rates[position - 1] ?? NEUTRAL_WIN_RATE;
+	const counter = counterSummary(ctx.matchups, entry.hero.id, ctx.foeIds);
+	return base + counter.delta * COUNTER_WEIGHT;
 }
 
 /**
@@ -70,7 +125,7 @@ function rateAt(entry: PoolHero, position: number): number {
  * 超过五个时只分配前五个：调用方本来就该先判断"这一方是不是已经挑满了"，
  * 这里只是不让越界变成崩溃。
  */
-function bestAssignment(entries: readonly PoolHero[]): { positions: number[]; total: number } {
+function bestAssignment(entries: readonly PoolHero[], ctx: RateContext): { positions: number[]; total: number } {
 	const list = entries.slice(0, 5);
 	const used = new Array(5).fill(false);
 	const picked = new Array(list.length).fill(0);
@@ -89,7 +144,7 @@ function bestAssignment(entries: readonly PoolHero[]): { positions: number[]; to
 			if (used[position - 1]) continue;
 			used[position - 1] = true;
 			picked[index] = position;
-			walk(index + 1, total + rateAt(list[index], position));
+			walk(index + 1, total + rateAt(list[index], position, ctx));
 			used[position - 1] = false;
 		}
 	};
@@ -126,12 +181,24 @@ interface GapSlot {
  * 五个号位**一起**填，已经填过的英雄不再参与后面的号位：分开算的话，同一个英雄会同时出现在
  * 四号位和五号位的"预计能补到"里，界面上看起来像多了一个人。
  */
-function fillGaps(pool: readonly PoolHero[], hasOwner: ReadonlySet<number>, used: ReadonlySet<number>, contested: number): Map<number, GapSlot> {
+function fillGaps(
+	pool: readonly PoolHero[],
+	hasOwner: ReadonlySet<number>,
+	used: ReadonlySet<number>,
+	contested: number,
+	ctx: RateContext,
+): Map<number, GapSlot> {
 	const optionsAt = (position: number, taken: ReadonlySet<number>) =>
 		pool
 			.filter((entry) => !taken.has(entry.hero.id))
-			.map((entry) => ({ entry, rate: entry.rates[position - 1] }))
-			.filter((row): row is { entry: PoolHero; rate: number } => typeof row.rate === 'number')
+			// 排序口径要和打分一致（号位胜率 + 对位加成），否则"预计能补到谁"和"该不该现在拿"会打架。
+			.map((entry) => ({
+				entry,
+				rate: entry.rates[position - 1],
+				delta: counterSummary(ctx.matchups, entry.hero.id, ctx.foeIds).delta,
+			}))
+			.filter((row): row is { entry: PoolHero; rate: number; delta: number } => typeof row.rate === 'number')
+			.map((row) => ({ entry: row.entry, rate: row.rate + row.delta * COUNTER_WEIGHT }))
 			.sort((a, b) => b.rate - a.rate);
 
 	const gaps = new Map<number, GapSlot>();
@@ -171,19 +238,25 @@ function idsToPool(byId: ReadonlyMap<number, DraftHero>, ids: readonly number[])
  * 估一套阵容：已经拿到的人按最优方式落位，还没落人的号位按"被打劫之后还能补到谁"折价。
  * `contested` 是对面剩下的挑选手数（调用方已经封顶）。
  */
-function estimate(pool: readonly PoolHero[], ownedIds: readonly number[], byId: ReadonlyMap<number, DraftHero>, contested: number): Estimate {
+function estimate(
+	pool: readonly PoolHero[],
+	ownedIds: readonly number[],
+	byId: ReadonlyMap<number, DraftHero>,
+	contested: number,
+	ctx: RateContext,
+): Estimate {
 	const owned = idsToPool(byId, ownedIds);
-	const assignment = bestAssignment(owned);
+	const assignment = bestAssignment(owned, ctx);
 	const used = new Set(ownedIds);
 	const hasOwner = new Set(assignment.positions);
-	const gaps = fillGaps(pool, hasOwner, used, contested);
+	const gaps = fillGaps(pool, hasOwner, used, contested, ctx);
 	const slots: LineupSlot[] = [];
 
 	for (let position = 1; position <= 5; position += 1) {
 		const ownerIndex = assignment.positions.findIndex((assigned) => assigned === position);
 		if (ownerIndex >= 0) {
 			const entry = owned[ownerIndex];
-			slots.push({ position, hero: entry.hero, rate: rateAt(entry, position), settled: true });
+			slots.push({ position, hero: entry.hero, rate: rateAt(entry, position, ctx), settled: true });
 			continue;
 		}
 		const gap = gaps.get(position) ?? { position, hero: null, rate: 0 };
@@ -242,6 +315,47 @@ function noise(matches: number): string {
 }
 
 /**
+ * 把对位结果写成一句依据。
+ *
+ * 列名字时按样本从多到少取前三个，样本列出来，是因为这种"平均胜率"最容易让人忘记
+ * 它背后有多少场：两个对位、每个几百场，和一个对位一万场，可信度差着量级。
+ */
+function counterText(
+	counter: CounterSummary,
+	foeIds: readonly number[],
+	byId: ReadonlyMap<number, DraftHero>,
+	prefix: string,
+): string {
+	const names = counter.details
+		.slice(0, 3)
+		.map((row) => byId.get(row.heroId)?.name ?? `英雄 #${row.heroId}`)
+		.join('、');
+	const rest = foeIds.length > counter.details.length ? `，另有 ${foeIds.length - counter.details.length} 个对手没有可用对位` : '';
+	return `${prefix} ${names}${rest}：平均胜率 ${pct(0.5 + counter.delta)}（覆盖 ${counter.games.toLocaleString('zh-CN')} 场）`;
+}
+
+/**
+ * 号位这件事的风险提示。
+ *
+ * 建议的号位来自"五个号位胜率之和最大"的分配，可能落在英雄的次级位置上（它的主位置
+ * 已经被别人占着）。这种情况要写出来：一个英雄在四号位有 58% 胜率但只有 300 场样本，
+ * 和一个在三号位打了一万场的英雄，可信度不是一回事。
+ */
+function positionRisk(hero: DraftHero, position: number, matches: number): string {
+	const base = `样本 ${matches.toLocaleString('zh-CN')} 场，胜率波动约 ${noise(matches)} 个百分点`;
+	let main: { position: number; matches: number } | null = null;
+	for (let index = 0; index < 5; index += 1) {
+		const cell = hero.positions[index];
+		if (!cell) continue;
+		if (!main || cell[0] > main.matches) main = { position: index + 1, matches: cell[0] };
+	}
+	if (main && main.position !== position && main.matches > matches * 2) {
+		return `${base}；它本周主要打 ${main.position} 号位（${main.matches.toLocaleString('zh-CN')} 场），放在 ${position} 号位是次级位置`;
+	}
+	return base;
+}
+
+/**
  * 给当前这一手出建议。顺序走完、或者一份英雄数据都没有时返回 null，
  * 调用方按"这次给不出建议"处理，不要挡住录制。
  */
@@ -285,8 +399,14 @@ export function advise(input: AdviseInput): Advice | null {
 	const contestedByUs = Math.min(CONTEST_CAP, remaining.theirs.picks);
 	const contestedByThem = Math.min(CONTEST_CAP, remaining.ours.picks);
 
-	const ourBase = estimate(pool, ourIds, byId, contestedByUs);
-	const theirBase = estimate(pool, theirIds, byId, contestedByThem);
+	/**
+	 * 两边的对位口径各看对方的阵容：我们的阵容按"对面已经选了谁"评估，
+	 * 对面的阵容按"我们已经选了谁"评估。
+	 */
+	const ourCtx: RateContext = { matchups: data.matchups, foeIds: theirIds };
+	const theirCtx: RateContext = { matchups: data.matchups, foeIds: ourIds };
+	const ourBase = estimate(pool, ourIds, byId, contestedByUs, ourCtx);
+	const theirBase = estimate(pool, theirIds, byId, contestedByThem, theirCtx);
 	/** 有一方已经挑满五个人时，再算"多拿一个"没有意义，也不能拿去分配号位。 */
 	const oursFull = ourIds.length >= 5;
 	const theirsFull = theirIds.length >= 5;
@@ -297,8 +417,8 @@ export function advise(input: AdviseInput): Advice | null {
 		const proText = hero.pro[0] + hero.pro[2] > 0 ? `职业样本里出场 ${hero.pro[0]} 次、被禁 ${hero.pro[2]} 次` : '';
 
 		if (state.action === 'pick') {
-			const oursAfter = oursFull ? ourBase : estimate(pool, [...ourIds, hero.id], byId, contestedByUs);
-			const assignment = bestAssignment(idsToPool(byId, [...ourIds, hero.id]));
+			const oursAfter = oursFull ? ourBase : estimate(pool, [...ourIds, hero.id], byId, contestedByUs, ourCtx);
+			const assignment = bestAssignment(idsToPool(byId, [...ourIds, hero.id]), ourCtx);
 			const position = assignment.positions[assignment.positions.length - 1] ?? 1;
 			const rate = entry.rates[position - 1];
 			const matches = entry.matches[position - 1];
@@ -308,6 +428,9 @@ export function advise(input: AdviseInput): Advice | null {
 					: `${position} 号位近 ${data.windowDays} 天胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 				`现在拿：五号位估值 ${pct(ourBase.total / 5)} → ${pct(oursAfter.total / 5)}`,
 			];
+			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
+			const counter = counterSummary(data.matchups, hero.id, theirIds);
+			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
 			if (proText) reasons.push(proText);
 			candidates.push({
 				heroId: hero.id,
@@ -319,17 +442,17 @@ export function advise(input: AdviseInput): Advice | null {
 				risk:
 					rate === null
 						? '这个号位几乎没有高分局样本，估值只能当参考'
-						: `样本 ${matches.toLocaleString('zh-CN')} 场，胜率波动约 ${noise(matches)} 个百分点`,
+						: positionRisk(hero, position, matches),
 			});
 			continue;
 		}
 
 		// 禁用：对面拿了能涨多少（威胁），我们自己拿了能涨多少（该不该留）。
-		const theirsAfter = theirsFull ? theirBase : estimate(pool, [...theirIds, hero.id], byId, contestedByThem);
-		const oursAfter = oursFull ? ourBase : estimate(pool, [...ourIds, hero.id], byId, contestedByUs);
+		const theirsAfter = theirsFull ? theirBase : estimate(pool, [...theirIds, hero.id], byId, contestedByThem, theirCtx);
+		const oursAfter = oursFull ? ourBase : estimate(pool, [...ourIds, hero.id], byId, contestedByUs, ourCtx);
 		const threat = theirsAfter.total - theirBase.total;
 		const ownGain = oursAfter.total - ourBase.total;
-		const assignment = bestAssignment(idsToPool(byId, [...theirIds, hero.id]));
+		const assignment = bestAssignment(idsToPool(byId, [...theirIds, hero.id]), theirCtx);
 		const position = assignment.positions[assignment.positions.length - 1] ?? 1;
 		const rate = entry.rates[position - 1];
 		const matches = entry.matches[position - 1];
@@ -339,6 +462,8 @@ export function advise(input: AdviseInput): Advice | null {
 				: `对面拿它打 ${position} 号位的话，该号位胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 			`禁掉它，对面阵容估值 ${pct(theirBase.total / 5)} → ${pct((theirBase.total - threat) / 5)}`,
 		];
+		const counter = counterSummary(data.matchups, hero.id, ourIds);
+		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
 		if (ownGain > 0) reasons.push(`我们自己拿它可以涨 ${((ownGain * 100) / 5).toFixed(2)} 个百分点`);
 		if (proText) reasons.push(proText);
 		candidates.push({

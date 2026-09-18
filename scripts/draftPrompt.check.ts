@@ -48,6 +48,8 @@ const data: DraftData = {
 		hero(5, '水晶室女', [null, null, null, null, 0.53]),
 	],
 	proSample: { picks: 620, bans: 532 },
+	matchups: {},
+	matchupPairs: 0,
 	hasPositionData: true,
 	hasProData: true,
 };
@@ -70,6 +72,7 @@ const messages = buildAdviceMessages({
 const system = buildSystemPrompt();
 assert.match(system, /只能从/, '系统提示词必须限制候选范围');
 assert.match(system, /绝对不要编造/, '系统提示词必须禁止编数字');
+assert.match(system, /对位胜率/, '允许引用的字段里要包含对位胜率，否则模型不敢用它');
 assert.match(system, /JSON/, '系统提示词必须要求 JSON 输出');
 assert.match(system, /heroId/, '系统提示词要给出输出的字段名');
 assert.equal(messages[0]?.role, 'system');

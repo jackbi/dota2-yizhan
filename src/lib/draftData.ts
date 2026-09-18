@@ -2,7 +2,14 @@ import { fetchHeroList } from './heroApi';
 import { reportSource } from './dataHealth';
 import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
 import { fetchPatchUpdates } from './patchesApi';
-import { HERO_META_BRACKET_LABEL, HERO_META_WINDOW_DAYS, fetchHeroMeta, stratzFetchCount } from './stratzApi';
+import {
+	HERO_META_BRACKET_LABEL,
+	HERO_META_WINDOW_DAYS,
+	fetchHeroMatchups,
+	fetchHeroMeta,
+	stratzFetchCount,
+} from './stratzApi';
+import type { HeroMatchups } from './draftMatchup';
 
 /**
  * 阵容分析要用的一份数据。
@@ -53,6 +60,10 @@ export interface DraftData {
 	heroes: DraftHero[];
 	/** 职业样本总量，页面上用来说明"这点样本只能当热度看"。 */
 	proSample: { picks: number; bans: number };
+	/** 英雄对位（克制）数据：键 `小id-大id`，值 [场次, 小 id 一方胜率]。 */
+	matchups: HeroMatchups;
+	/** 留存的对位数；0 表示这次没拿到，打分里就不算克制这一项。 */
+	matchupPairs: number;
 	/** 两类数据的可用性，缺哪一类界面上就少一类建议依据。 */
 	hasPositionData: boolean;
 	hasProData: boolean;
@@ -132,6 +143,9 @@ export function loadDraftData(): Promise<DraftData> {
 		const hasProData = proPicks > 0 || proBans > 0;
 		const fetched = stratzFetchCount() + openDotaFetchCount() > before;
 
+		// 对位数据依赖英雄集合，只能等英雄表拿到之后再抓。
+		const matchups = await fetchHeroMatchups(heroes.map((hero) => hero.id));
+
 		const patch = toPatch(patchList);
 
 		await reportSource(
@@ -140,7 +154,7 @@ export function loadDraftData(): Promise<DraftData> {
 			// 一份英雄都拿不到才算空；其余按"这轮有没有真的联网抓过"区分新数据与缓存，
 			// 不按有没有号位样本来判断——那会把"吃了缓存"说成"新抓的"。
 			heroes.length === 0 ? 'empty' : fetched ? 'fresh' : 'cache',
-			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；职业样本 ${proPicks} 出场 / ${proBans} 被禁；版本 ${patch.version || '未知'}`,
+			`${heroes.length} 个英雄；号位样本${hasPositionData ? '可用' : '缺失'}；对位 ${matchups?.pairCount ?? 0} 对；职业样本 ${proPicks} 出场 / ${proBans} 被禁；版本 ${patch.version || '未知'}`,
 		);
 
 		return {
@@ -151,6 +165,8 @@ export function loadDraftData(): Promise<DraftData> {
 			minPositionMatches: MIN_POSITION_MATCHES,
 			heroes,
 			proSample: { picks: proPicks, bans: proBans },
+			matchups: matchups?.pairs ?? {},
+			matchupPairs: matchups?.pairCount ?? 0,
 			hasPositionData,
 			hasProData,
 		};
