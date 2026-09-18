@@ -90,6 +90,17 @@ assert.match(script, /'theirs'/, '替对面落子要用对手模式的提示词'
 assert.match(script, /const why = reason \|\| '按号位胜率与剩余手数判断'/, '模型没给理由时要退回数据决策的说明');
 assert.match(script, /async function askModelForOpponentMove[\s\S]*?catch \{[\s\S]*?return null;/, '模型调用失败要返回 null，由调用方退回数据决策');
 
+/**
+ * 两处提示词组装都必须按"视角"传队名（`selfTeam` / `foeTeam`）。
+ *
+ * 这里踩过：`PromptInput` 的字段从 `ourTeam/theirTeam` 改成视角命名之后，只改了替对面落子的
+ * 那一处，"让 AI 解释这几手"还在传旧字段名——类型上是错的，运行时 `input.selfTeam.trim()`
+ * 直接抛异常。所以把这几条钉在这里。
+ */
+assert.ok((script.match(/selfTeam:/g) ?? []).length >= 2, '两处提示词组装都要传 selfTeam');
+assert.ok((script.match(/foeTeam:/g) ?? []).length >= 2, '两处提示词组装都要传 foeTeam');
+assert.ok(!/data!\s*[.,)]/.test(script), '不要用 data! 压类型：收窄后取个别名（draft）');
+
 // ---------------------------------------------------------------- 布局约束
 
 /**

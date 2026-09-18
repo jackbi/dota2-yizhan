@@ -84,6 +84,13 @@ const data = readData();
 const stored = loadStored();
 
 if (data) {
+	/**
+	 * 收窄后的别名：`data` 是 `DraftData | null`，顶层的 `if (data)` 收窄**不会**带进
+	 * `run()` 这个闭包里，所以以前在几个地方用 `draft` 硬压，漏掉一处就是编译错误
+	 * （真实漏过一次：`explainWithModel` 里那一处）。这里一次性固定成非空类型，
+	 * 下面一律用 `draft`，不再出现感叹号。
+	 */
+	const draft: DraftData = data;
 	const heroById = new Map(data.heroes.map((hero) => [hero.id, hero]));
 
 	let recorded: (number | null)[] = Array.isArray(stored.recorded) ? stored.recorded.slice(0, 24) : [];
@@ -201,12 +208,12 @@ if (data) {
 				grid.className = 'pool-grid';
 				// 属性图标与文字一起放在标题里，跟客户端的英雄池一样。
 				const icon = ATTRIBUTE_ICON[attr as keyof typeof ATTRIBUTE_ICON] ?? '';
-				title.innerHTML = `${icon ? `<img class="pool-group-icon" src="${esc(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : ''}${esc(ATTR_LABEL[attr] ?? attr)}（${data!.heroes.filter((hero) => hero.attr === attr).length}）`;
+				title.innerHTML = `${icon ? `<img class="pool-group-icon" src="${esc(icon)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : ''}${esc(ATTR_LABEL[attr] ?? attr)}（${draft.heroes.filter((hero) => hero.attr === attr).length}）`;
 				group.append(title, grid);
 				poolRoot.append(group);
 				groups.set(attr, grid);
 			}
-			for (const hero of data!.heroes) {
+			for (const hero of draft.heroes) {
 				const tile = document.createElement('button');
 				tile.type = 'button';
 				tile.className = 'hero-tile';
@@ -232,7 +239,7 @@ if (data) {
 			const position = positionFilter === 'all' ? null : Number(positionFilter);
 			let visible = 0;
 
-			for (const hero of data!.heroes) {
+			for (const hero of draft.heroes) {
 				const tile = tiles.get(hero.id);
 				if (!tile) continue;
 				const usedAt = state.used.get(hero.id);
@@ -254,7 +261,7 @@ if (data) {
 				}
 			}
 
-			if (poolCount) poolCount.textContent = `显示 ${visible} / ${data!.heroes.length} 个英雄`;
+			if (poolCount) poolCount.textContent = `显示 ${visible} / ${draft.heroes.length} 个英雄`;
 		}
 
 		function applyFilters(): void {
@@ -375,7 +382,7 @@ if (data) {
 		// ------------------------------------------------------------ 建议
 
 		function currentAdvice(): Advice | null {
-			return advise({ data: data!, recorded, ourSide, firstPicker: firstPickerSide(), limit: 5 });
+			return advise({ data: draft, recorded, ourSide, firstPicker: firstPickerSide(), limit: 5 });
 		}
 
 		function renderAdvice(): void {
@@ -519,7 +526,7 @@ if (data) {
 			aiBusy = true;
 			syncAiBlock();
 			try {
-				const enemyAdvice = advise({ data: data!, recorded, ourSide: turn.side, firstPicker: firstPickerSide(), limit: 5 });
+				const enemyAdvice = advise({ data: draft, recorded, ourSide: turn.side, firstPicker: firstPickerSide(), limit: 5 });
 				if (!enemyAdvice || enemyAdvice.candidates.length === 0) {
 					lastAiMove = '这一步没有可用候选，撤销或跳过后再来';
 					aiStallStep = snapshotNow().nextStep;
@@ -555,7 +562,7 @@ if (data) {
 				const messages = buildAdviceMessages(
 					{
 						advice: enemyAdvice,
-						data: data!,
+						data: draft,
 						// 视角翻转：从对面看，它自己是"我方"，屏幕前的人是"对面"。
 						selfTeam: theirTeam,
 						foeTeam: ourTeam,
@@ -797,9 +804,10 @@ if (data) {
 			}
 			const messages = buildAdviceMessages({
 				advice,
-				data,
-				ourTeam,
-				theirTeam,
+				data: draft,
+				// 给我方出主意：视角里的"自己"就是屏幕前的人。
+				selfTeam: ourTeam,
+				foeTeam: theirTeam,
 				recorded,
 				ourSide,
 				firstPicker: firstPickerSide(),
