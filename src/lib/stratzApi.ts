@@ -578,7 +578,7 @@ export function fetchHeroMatchups(heroIds: readonly number[]): Promise<HeroMatch
 			await reportSource('stratz-matchup', 'STRATZ 英雄对位', 'empty', '请求未拿到数据（限流、挑战页或接口异常）');
 			return null;
 		}
-		await reportSource(
+	await reportSource(
 			'stratz-matchup',
 			'STRATZ 英雄对位',
 			networkFetches > before ? 'fresh' : 'cache',
@@ -587,4 +587,100 @@ export function fetchHeroMatchups(heroIds: readonly number[]): Promise<HeroMatch
 		return data;
 	})();
 	return matchupPromise;
+}
+
+// ---------------------------------------------------------------- 时间曲线（前中后期）
+
+/**
+ * 曲线取哪两个切点：5 分钟与 35 分钟。
+ *
+ * `groupByTime` 返回的是**累计口径**（所有打到该分钟的对局），所以绝对值不是"前五分钟的表现"，
+ * 而是"这场打到至少 N 分钟时这个英雄的胜率"。两点相减才是我们要的：
+ * 拖得越久越强，还是越拖越弱。
+ */
+const TIMELINE_EARLY_MINUTE = 5;
+const TIMELINE_LATE_MINUTE = 35;
+/** 切点上的样本下限：低于这个数就当这个英雄没有可用曲线。 */
+const TIMELINE_MIN_MATCHES = 500;
+const TIMELINE_TTL_SECONDS = 6 * 3600;
+
+/** 英雄 id → [5 分钟切点胜率, 35 分钟切点胜率]。 */
+export type HeroTimeline = Map<number, [number, number]>;
+
+interface RawTimelineRow {
+	heroId?: number | null;
+	time?: number | null;
+	matchCount?: number | null;
+	winCount?: number | null;
+}
+
+const TIMELINE_DOCUMENT = `query HeroTimeline($bracket: [RankBracketBasicEnum]) {
+	heroStats {
+		stats(bracketBasicIds: $bracket, groupByTime: true) {
+			heroId
+			time
+			matchCount
+			winCount
+		}
+	}
+}`;
+
+let timelinePromise: Promise<HeroTimeline | null> | null = null;
+
+/**
+ * 全部英雄的时间曲线，构建期一次。拿不到就返回 null，打分里就不算时间这一项。
+ */
+export function fetchHeroTimeline(): Promise<HeroTimeline | null> {
+	timelinePromise ??= (async () => {
+		const before = networkFetches;
+		const rows = await cached<RawTimelineRow[]>('hero-timeline', TIMELINE_TTL_SECONDS, async () => {
+			const data = await query<{ heroStats: { stats: RawTimelineRow[] | null } }>(TIMELINE_DOCUMENT, {
+				bracket: [HERO_META_BRACKET],
+			});
+			const list = data?.heroStats?.stats;
+			return list && list.length > 0 ? list : null;
+		});
+		if (!rows || rows.length === 0) {
+			await reportSource('stratz-timeline', 'STRATZ 时间曲线', 'empty', '请求未拿到数据（限流、挑战页或接口异常）');
+			return null;
+		}
+
+		const pick = (list: RawTimelineRow[], minute: number): [number, number] | null => {
+			// 取最接近该分钟的切点（接口给的是逐分钟 0..35）。
+			let best: RawTimelineRow | null = null;
+			for (const row of list) {
+				if (typeof row.time !== 'number' || typeof row.matchCount !== 'number' || row.matchCount <= 0) continue;
+				if (row.matchCount < TIMELINE_MIN_MATCHES) continue;
+				if (!best || Math.abs(row.time - minute) < Math.abs((best.time ?? 0) - minute)) best = row;
+			}
+			if (!best || typeof best.matchCount !== 'number' || best.matchCount <= 0) return null;
+			return [best.winCount ?? 0, best.matchCount];
+		};
+
+		const byHero = new Map<number, RawTimelineRow[]>();
+		for (const row of rows) {
+			if (typeof row.heroId !== 'number') continue;
+			const bucket = byHero.get(row.heroId);
+			if (bucket) bucket.push(row);
+			else byHero.set(row.heroId, [row]);
+		}
+
+		const out: HeroTimeline = new Map();
+		for (const [heroId, list] of byHero) {
+			const early = pick(list, TIMELINE_EARLY_MINUTE);
+			const late = pick(list, TIMELINE_LATE_MINUTE);
+			if (!early || !late) continue;
+			out.set(heroId, [Number((early[0] / early[1]).toFixed(3)), Number((late[0] / late[1]).toFixed(3))]);
+		}
+		if (out.size === 0) return null;
+
+		await reportSource(
+			'stratz-timeline',
+			'STRATZ 时间曲线',
+			networkFetches > before ? 'fresh' : 'cache',
+			`${out.size} 个英雄的 ${TIMELINE_EARLY_MINUTE} / ${TIMELINE_LATE_MINUTE} 分钟切点（切点样本 ≥ ${TIMELINE_MIN_MATCHES}）`,
+		);
+		return out;
+	})();
+	return timelinePromise;
 }

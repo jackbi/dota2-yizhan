@@ -1,5 +1,5 @@
 import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, resolveHeroNames } from '../data/heroTraits';
-import { ROLE_COUNT, fetchHeroList, fetchHeroRoles } from './heroApi';
+import { ROLE_COUNT, fetchHeroList, fetchHeroProfile } from './heroApi';
 import { reportSource } from './dataHealth';
 import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
 import { fetchPatchUpdates } from './patchesApi';
@@ -8,6 +8,7 @@ import {
 	HERO_META_WINDOW_DAYS,
 	fetchHeroMatchups,
 	fetchHeroMeta,
+	fetchHeroTimeline,
 	stratzFetchCount,
 } from './stratzApi';
 import type { HeroMatchups } from './draftMatchup';
@@ -57,6 +58,13 @@ export interface DraftHero {
 	summon: boolean;
 	/** 有稳定的 AoE 清场能力（清幻象、清兵）。 */
 	aoe: boolean;
+	/** 近战还是远程：全近战的阵容线上会被压，远程位要单独算。 */
+	attack: 'melee' | 'ranged';
+	/**
+	 * 时间曲线：[打到 5 分钟时的胜率, 打到 35 分钟时的胜率]。
+	 * 两个数相减就是"这个英雄越拖越强还是越拖越弱"，拿不到时是 [0, 0]。
+	 */
+	timeline: [number, number];
 }
 
 export interface DraftData {
@@ -109,8 +117,9 @@ export function loadDraftData(): Promise<DraftData> {
 			fetchProHeroStats(),
 			fetchPatchUpdates().catch(() => []),
 		]);
-		// 官方角色标签来自每个英雄的详情，与英雄页共用同一份去重缓存。
-		const roles = await fetchHeroRoles().catch(() => new Map<number, number[]>());
+		// 官方角色标签与攻击类型来自每个英雄的详情，与英雄页共用同一份去重缓存。
+		const profiles = await fetchHeroProfile().catch(() => new Map());
+		const timeline = await fetchHeroTimeline();
 
 		let proPicks = 0;
 		let proBans = 0;
@@ -147,7 +156,7 @@ export function loadDraftData(): Promise<DraftData> {
 				if (!current || stat.matches > current[0]) positions[index] = [stat.matches, stat.wins];
 			}
 			const pro = proStats.get(hero.id);
-			const roleLevels = roles.get(hero.id);
+			const profile = profiles.get(hero.id);
 			return {
 				id: hero.id,
 				name: hero.name,
@@ -156,9 +165,11 @@ export function loadDraftData(): Promise<DraftData> {
 				img: hero.img,
 				positions,
 				pro: pro ? [pro.picks, pro.wins, pro.bans] : [0, 0, 0],
-				roles: roleLevels && roleLevels.length === ROLE_COUNT ? roleLevels : new Array(ROLE_COUNT).fill(0),
+				roles: profile?.roles.length === ROLE_COUNT ? profile.roles : new Array(ROLE_COUNT).fill(0),
+				attack: profile?.attack ?? 'melee',
 				summon: summonIds.has(hero.id),
 				aoe: aoeIds.has(hero.id),
+				timeline: timeline?.get(hero.id) ?? [0, 0],
 			};
 		});
 

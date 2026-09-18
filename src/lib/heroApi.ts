@@ -230,17 +230,24 @@ export async function fetchHeroList(): Promise<HeroListEntry[]> {
 /** 官方角色标签的顺序与等级长度（9 项，等级 0-3）。 */
 export const ROLE_COUNT = ROLE_ORDER.length;
 
+export interface HeroProfile {
+	/** 官方角色等级，顺序见 `ROLE_ORDER`。 */
+	roles: number[];
+	/** 近战还是远程。 */
+	attack: Attack;
+}
+
 /**
- * 每个英雄的官方角色等级，用于阵容分析的能力维度（控制/爆发/先手/推进/耐久/辅助/核心/机动）。
+ * 每个英雄的官方角色等级与攻击类型，用于阵容分析的结构判断。
  *
  * 这份标签是 Valve 自己给的，比手写"谁有控谁有爆发"稳：英雄池改了、某个英雄重做了，
  * 数据feed 会跟着变，不用我们维护。
  *
  * 拿不到某个英雄时按全 0 处理（等于这个英雄在能力维度上不加分），不因为一个英雄断了整批。
  */
-export async function fetchHeroRoles(): Promise<Map<number, number[]>> {
+export async function fetchHeroProfile(): Promise<Map<number, HeroProfile>> {
 	const list = await fetchHeroList();
-	const out = new Map<number, number[]>();
+	const out = new Map<number, HeroProfile>();
 	const chunkSize = 8;
 	for (let index = 0; index < list.length; index += chunkSize) {
 		const chunk = list.slice(index, index + chunkSize);
@@ -248,12 +255,12 @@ export async function fetchHeroRoles(): Promise<Map<number, number[]>> {
 			chunk.map(async (hero) => {
 				try {
 					const detail = await loadHeroDetail(hero.id);
-					out.set(
-						hero.id,
-						ROLE_ORDER.map((_, roleIndex) => Number(detail?.role_levels?.[roleIndex] ?? 0)),
-					);
+					out.set(hero.id, {
+						roles: ROLE_ORDER.map((_, roleIndex) => Number(detail?.role_levels?.[roleIndex] ?? 0)),
+						attack: detail?.attack_capability === 2 ? 'ranged' : 'melee',
+					});
 				} catch {
-					out.set(hero.id, new Array(ROLE_COUNT).fill(0));
+					out.set(hero.id, { roles: new Array(ROLE_COUNT).fill(0), attack: 'melee' });
 				}
 			}),
 		);

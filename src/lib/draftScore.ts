@@ -55,6 +55,8 @@ const CONTEST_CAP = 3;
 const COUNTER_WEIGHT = 1.5;
 
 // 官方角色标签的下标，顺序见 `heroApi.ROLE_ORDER`（核心/辅助/爆发/控制/打野/耐久/逃生/推进/先手）。
+const ROLE_CARRY = 0;
+const ROLE_SUPPORT = 1;
 const ROLE_NUKER = 2;
 const ROLE_DISABLER = 3;
 const ROLE_DURABLE = 5;
@@ -62,11 +64,12 @@ const ROLE_PUSHER = 7;
 const ROLE_INITIATOR = 8;
 
 /**
- * 一套五人的阵容，各能力维度的目标值（官方角色等级之和）。
+ * 阵容结构：拿分项与红线。
  *
- * 目标怎么定的：控制与爆发各要 4（大概相当于两个 2 级或一个 3 级加一个 1 级），
- * 先手、上高、前排各要 2（有一个像样的就够）。这是"别选出五个只会打钱的"的底线，
- * 不是"达标就赢"，所以只占估值里很小的一块。
+ * 拿分项是"有没有"（控制/爆发/先手/上高/前排/辅助/远程/清场 + 前中后期各有几个人不弱），
+ * 红线是"过没过量"。**只奖不罚是不够的**：上一版只检查缺口，结果选出了
+ * 斯温 + 幻影长矛手 + 龙骑士 + 赏金猎人 + 天涯墨客这种"四个近战、三个吃资源、没有清场"的阵容，
+ * 它在缺口检查里居然是达标的。所以过量要单独扣分，而且扣得比补缺口更重。
  */
 const COMPOSITION_TARGETS = [
 	{ key: 'control', label: '控制', role: ROLE_DISABLER, target: 4 },
@@ -74,19 +77,43 @@ const COMPOSITION_TARGETS = [
 	{ key: 'initiate', label: '先手', role: ROLE_INITIATOR, target: 2 },
 	{ key: 'push', label: '上高', role: ROLE_PUSHER, target: 2 },
 	{ key: 'front', label: '前排', role: ROLE_DURABLE, target: 2 },
+	{ key: 'support', label: '辅助', role: ROLE_SUPPORT, target: 4 },
 ] as const;
 
 /** 清场（AoE）：对面有幻象/召唤体系时要求两个点，否则一个。 */
 const AOE_TARGET_BASE = 1;
 const AOE_TARGET_VS_SUMMON = 2;
 
+/** 远程位：五个近战在线上会被压死，目标是至少两个能打的远程。 */
+const RANGED_TARGET = 2;
+/** 前/中/后期：至少有三个位置在该阶段不弱于同池中位（见 `TimelineContext`）。 */
+const PHASE_TARGET = 3;
+
 /**
- * 能力维度在总估值里的权重：把一整套缺口都补满时给到这么多。
+ * 红线。超了要扣分，扣分权重比补缺口大：
+ * - **纯核**（核心等级 ≥ 2 且一点辅助都没有）最多 2 个：三个以上都在等资源，线上与中期必然崩；
+ * - **近战**最多 3 个：四个近战意味着线上没人换血、打团也排不开。
  *
- * 与号位胜率同尺度（一个号位胜率差 5 个百分点 = 0.05），所以"补上一个缺的控制"
- * 大约相当于某个号位人选好 1 个百分点，够影响排序，但不至于盖过胜率与对位。
+ * 「纯核」的判定按实测数据定：官方角色等级里几乎没有英雄是核心 3（斯温、幻影长矛手、
+ * 龙骑士都只到 2），所以原先把红线画在 3 上等于没有红线——那套被吐槽的阵容一个都没拦住。
+ * 改成"核心 ≥ 2 且辅助 = 0"，三个核心的阵容仍然放行（1/2/3 号位本来就都是核心），
+ * 但第四个吃资源的就会被扣下去。
  */
-const COMPOSITION_WEIGHT = 0.12;
+const STRUCTURE_CAPS = [
+	{ key: 'greedyCore', label: '纯核', cap: 2, count: (profile: StructureProfile) => profile.greedyCore },
+	{ key: 'melee', label: '近战', cap: 3, count: (profile: StructureProfile) => profile.melee },
+] as const;
+/** 红线扣分的倍率：超一格扣的分，比补一格缺口拿到的分更重。 */
+const CAP_PENALTY_SCALE = 2;
+
+/**
+ * 阵容结构在总估值里的权重。
+ *
+ * 与号位胜率同尺度（一个号位胜率差 5 个百分点 = 0.05，五个号位合计最多差 0.25）：
+ * 这里取 0.3，意味着一手"把阵容结构从及格线拉到好"的差别，和"某个号位胜率高 2 个百分点"
+ * 相当；而踩红线（第四个近战、第三个纯核）扣的分足以让它排到替代方案后面。
+ */
+const COMPOSITION_WEIGHT = 0.3;
 
 interface PoolHero {
 	hero: DraftHero;
@@ -334,72 +361,160 @@ export interface Advice {
 	composition: { text: string; enemySummon: boolean };
 }
 
-interface CompositionProfile {
-	/** 各维度当前值（官方角色等级之和）。 */
+/** 时间曲线的比较基准：同池中位，避免拿绝对值硬比（不同版本、不同分段都在变）。 */
+interface TimelineContext {
+	early: number;
+	late: number;
+}
+
+/** 中位数。样本为空时返回 0，调用方按"没有基准"处理。 */
+function median(values: number[]): number {
+	if (values.length === 0) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/** 池子里所有英雄的前/后期切点中位，作为"不弱于中位"的基准线。 */
+function timelineContext(pool: readonly PoolHero[]): TimelineContext {
+	const early = pool.map((entry) => entry.hero.timeline?.[0] ?? 0).filter((value) => value > 0);
+	const late = pool.map((entry) => entry.hero.timeline?.[1] ?? 0).filter((value) => value > 0);
+	return { early: median(early), late: median(late) };
+}
+
+interface StructureProfile {
+	/** 控制/爆发/先手/上高/前排/辅助，都是官方角色等级之和。 */
 	values: Record<string, number>;
-	/** 清场点数（有 AoE 的英雄个数）。 */
-	aoe: number;
-	/** 这一方是不是幻象/召唤体系。 */
+	/** 远程与清场（AoE）的人数。 */
+	ranged: number;
+	clear: number;
+	/** 前期、后期不弱于同池中位的人数。 */
+	phaseEarly: number;
+	phaseLate: number;
+	/** 红线：纯核（核心 ≥ 2 且没有辅助等级）人数与近战人数。 */
+	greedyCore: number;
+	melee: number;
 	summon: boolean;
 }
 
 /**
- * 算一套阵容的能力画像。
+ * 算一套阵容的结构画像。
  *
- * 用的是官方角色标签的等级之和，不是"有几个英雄会控制"：
+ * 能力维度用官方角色标签的等级之和，不是"有几个英雄会控制"：
  * 一个 3 级控制（如沙王）和一个 1 级控制，在阵容里的分量本来就不同。
  */
-function compositionProfile(heroes: readonly DraftHero[], vsSummon: boolean): CompositionProfile {
+function structureProfile(heroes: readonly DraftHero[], timeline: TimelineContext): StructureProfile {
 	const values: Record<string, number> = {};
 	for (const dim of COMPOSITION_TARGETS) values[dim.key] = 0;
-	let aoe = 0;
-	let summon = false;
+	const profile: StructureProfile = { values, ranged: 0, clear: 0, phaseEarly: 0, phaseLate: 0, greedyCore: 0, melee: 0, summon: false };
 	for (const hero of heroes) {
 		for (const dim of COMPOSITION_TARGETS) values[dim.key] += hero.roles[dim.role] ?? 0;
-		if (hero.aoe) aoe += 1;
-		if (hero.summon) summon = true;
+		if (hero.attack === 'ranged') profile.ranged += 1;
+		else profile.melee += 1;
+		if (hero.aoe) profile.clear += 1;
+		if ((hero.roles[ROLE_CARRY] ?? 0) >= 2 && (hero.roles[ROLE_SUPPORT] ?? 0) === 0) profile.greedyCore += 1;
+		if (hero.summon) profile.summon = true;
+		// 曲线为 0 表示没拿到这个英雄的曲线，不参与前后期计数。
+		const earlyRate = hero.timeline?.[0] ?? 0;
+		const lateRate = hero.timeline?.[1] ?? 0;
+		if (earlyRate > 0 && earlyRate >= timeline.early) profile.phaseEarly += 1;
+		if (lateRate > 0 && lateRate >= timeline.late) profile.phaseLate += 1;
 	}
-	void vsSummon;
-	return { values, aoe, summon };
+	return profile;
 }
 
-/** 目标值：清场目标取决于对面是不是幻象/召唤体系。 */
-const targetOf = (key: string, enemySummon: boolean): number => {
-	if (key === 'aoe') return enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE;
-	return COMPOSITION_TARGETS.find((dim) => dim.key === key)?.target ?? 0;
-};
+interface StructureScore {
+	/** 总分：满意度减去红线惩罚，可能为负。 */
+	score: number;
+	/** 达标程度（0-1）：各拿分项"填满比例"的平均。 */
+	satisfaction: number;
+	/** 红线惩罚（0 起，越大越糟）。 */
+	penalty: number;
+}
 
-const labelOf = (key: string): string => (key === 'aoe' ? '清场' : (COMPOSITION_TARGETS.find((dim) => dim.key === key)?.label ?? key));
+/** 一套阵容的结构得分。**过量要扣分**，这是上一版缺的那一半。 */
+function structureScore(profile: StructureProfile, enemySummon: boolean): StructureScore {
+	const dims: number[] = COMPOSITION_TARGETS.map((dim) => {
+		const value = profile.values[dim.key] ?? 0;
+		return Math.min(value, dim.target) / dim.target;
+	});
+	dims.push(Math.min(profile.ranged, RANGED_TARGET) / RANGED_TARGET);
+	dims.push(Math.min(profile.clear, enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE) / (enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE));
+	dims.push(Math.min(profile.phaseEarly, PHASE_TARGET) / PHASE_TARGET);
+	dims.push(Math.min(profile.phaseLate, PHASE_TARGET) / PHASE_TARGET);
+	const satisfaction = dims.reduce((sum, value) => sum + value, 0) / dims.length;
+
+	const penalties = STRUCTURE_CAPS.map((cap) => Math.max(0, cap.count(profile) - cap.cap) / cap.cap);
+	const penalty = penalties.reduce((sum, value) => sum + value, 0) / penalties.length;
+
+	return { score: satisfaction - CAP_PENALTY_SCALE * penalty, satisfaction, penalty };
+}
+
+interface StructureDelta {
+	/** 这一手对结构得分的影响（正数=变好）。 */
+	delta: number;
+	/** 填得最多的那个缺口，用来写正面依据。 */
+	fill: { label: string; current: number; target: number; supply: number } | null;
+	/** 踩到的红线，用来写风险。 */
+	violation: { label: string; count: number; cap: number } | null;
+}
 
 /**
- * 这一手能补上阵容多少缺口。
+ * 把一个候选代进阵容，看结构是变好还是变差。
  *
- * 只看**缺口**：阵容已经有三四个控制的时候，再选一个控不会加分，
- * 否则"堆同类"反而成了最优解。
+ * 和上一版的区别：这里比的是**整队结构分**，所以第四个近战、第三个纯核会被算成负收益，
+ * 而不是像过去那样"只要还有别的缺口就继续加分"。
  */
-function compositionGain(candidate: DraftHero, ours: readonly DraftHero[], enemySummon: boolean): { gain: number; label: string; supply: number; current: number; target: number } | null {
-	const profile = compositionProfile(ours, enemySummon);
-	const dims: { key: string; current: number; target: number; supply: number }[] = COMPOSITION_TARGETS.map((dim) => ({
-		key: dim.key,
-		current: profile.values[dim.key] ?? 0,
-		target: dim.target,
-		supply: candidate.roles[dim.role] ?? 0,
-	}));
-	dims.push({
-		key: 'aoe',
-		current: profile.aoe,
-		target: enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE,
-		supply: candidate.aoe ? 1 : 0,
-	});
+function structureDelta(candidate: DraftHero, ours: readonly DraftHero[], timeline: TimelineContext, enemySummon: boolean): StructureDelta {
+	const before = structureScore(structureProfile(ours, timeline), enemySummon);
+	const after = structureScore(structureProfile([...ours, candidate], timeline), enemySummon);
 
-	const needs = dims.map((dim) => ({ ...dim, need: Math.max(0, dim.target - dim.current), filled: Math.min(Math.max(0, dim.target - dim.current), dim.supply) }));
-	const totalNeed = needs.reduce((sum, dim) => sum + dim.need, 0);
-	if (totalNeed === 0) return null;
-	const gain = needs.reduce((sum, dim) => sum + dim.filled, 0) / totalNeed;
-	if (gain <= 0) return null;
-	// 选填得最多的那一项写进依据；并列时按维度顺序（控制在前）。
-	const best = [...needs].sort((a, b) => b.filled - a.filled)[0];
-	return { gain, label: labelOf(best.key), supply: best.supply, current: best.current, target: best.target };
+	const beforeProfile = structureProfile(ours, timeline);
+	/** 拿分项要和 `structureScore` 里那套完全一致，否则"补了什么"会说错。 */
+	const dims = [
+		...COMPOSITION_TARGETS.map((dim) => ({
+			label: dim.label,
+			current: beforeProfile.values[dim.key] ?? 0,
+			target: dim.target,
+			supply: candidate.roles[dim.role] ?? 0,
+		})),
+		{ label: '远程', current: beforeProfile.ranged, target: RANGED_TARGET, supply: candidate.attack === 'ranged' ? 1 : 0 },
+		{
+			label: '清场',
+			current: beforeProfile.clear,
+			target: enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE,
+			supply: candidate.aoe ? 1 : 0,
+		},
+		{
+			label: '前期',
+			current: beforeProfile.phaseEarly,
+			target: PHASE_TARGET,
+			supply: (candidate.timeline?.[0] ?? 0) > 0 && (candidate.timeline?.[0] ?? 0) >= timeline.early ? 1 : 0,
+		},
+		{
+			label: '后期',
+			current: beforeProfile.phaseLate,
+			target: PHASE_TARGET,
+			supply: (candidate.timeline?.[1] ?? 0) > 0 && (candidate.timeline?.[1] ?? 0) >= timeline.late ? 1 : 0,
+		},
+	];
+	const fills = dims
+		.map((dim) => ({ ...dim, filled: Math.min(Math.max(0, dim.target - dim.current), dim.supply) }))
+		.sort((a, b) => b.filled - a.filled);
+
+	// 红线：候选把哪一项推过了上限。只看"越过"的那一格，已经在红线外的阵容不再重复扣。
+	const violation =
+		STRUCTURE_CAPS.map((cap) => {
+			const count = cap.count(structureProfile([...ours, candidate], timeline));
+			const previous = cap.count(beforeProfile);
+			return { label: cap.label, count, cap: cap.cap, crossed: count > cap.cap && count > previous };
+		}).find((item) => item.crossed) ?? null;
+
+	return {
+		delta: after.score - before.score,
+		fill: fills[0] && fills[0].filled > 0 ? fills[0] : null,
+		violation: violation ? { label: violation.label, count: violation.count, cap: violation.cap } : null,
+	};
 }
 
 export interface AdviseInput {
@@ -515,7 +630,9 @@ export function advise(input: AdviseInput): Advice | null {
 	const ourHeroes = ourIds.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
 	const theirHeroes = theirIds.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
 	const enemySummon = theirHeroes.some((hero) => hero.summon);
-	const ourProfile = compositionProfile(ourHeroes, enemySummon);
+	/** 前后期基准取同池中位：不拿绝对值硬比（不同版本、不同分段都在变）。 */
+	const timeline = timelineContext(pool);
+	const ourProfile = structureProfile(ourHeroes, timeline);
 	/** 有一方已经挑满五个人时，再算"多拿一个"没有意义，也不能拿去分配号位。 */
 	const oursFull = ourIds.length >= 5;
 	const theirsFull = theirIds.length >= 5;
@@ -540,20 +657,27 @@ export function advise(input: AdviseInput): Advice | null {
 			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
-			const comp = compositionGain(hero, ourHeroes, enemySummon);
-			if (comp) reasons.push(`补上阵容缺的${comp.label}（本方 ${comp.current}/${comp.target}，它能给 ${comp.supply}）`);
+			const structure = structureDelta(hero, ourHeroes, timeline, enemySummon);
+			if (structure.fill) {
+				reasons.push(`补上阵容缺的${structure.fill.label}（本方 ${structure.fill.current}/${structure.fill.target}，它能给 ${structure.fill.supply}）`);
+			}
 			if (proText) reasons.push(proText);
+			// 结构扣分要写进风险：光说"补了什么"会让一个把阵容带歪的选择显得很好。
+			const structureRisk = structure.violation
+				? `会让阵容变成 ${structure.violation.count} 个${structure.violation.label}（上限 ${structure.violation.cap}）`
+				: '';
 			candidates.push({
 				heroId: hero.id,
 				position,
 				rate: rate ?? NEUTRAL_WIN_RATE,
 				hasSample: rate !== null,
-				ranking: oursAfter.total - ourBase.total + (comp?.gain ?? 0) * COMPOSITION_WEIGHT,
+				ranking: oursAfter.total - ourBase.total + structure.delta * COMPOSITION_WEIGHT,
 				reasons,
 				risk:
-					rate === null
+					structureRisk ||
+					(rate === null
 						? '这个号位几乎没有高分局样本，估值只能当参考'
-						: positionRisk(hero, position, matches),
+						: positionRisk(hero, position, matches)),
 			});
 			continue;
 		}
@@ -576,8 +700,10 @@ export function advise(input: AdviseInput): Advice | null {
 		const counter = counterSummary(data.matchups, hero.id, ourIds);
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
 		// 对面拿到它能补上他们缺的维度，也算威胁。
-		const compForThem = compositionGain(hero, theirHeroes, ourHeroes.some((item) => item.summon));
-		if (compForThem) reasons.push(`对面拿到它正好补上他们的${compForThem.label}（他们 ${compForThem.current}/${compForThem.target}）`);
+		const structureForThem = structureDelta(hero, theirHeroes, timeline, ourHeroes.some((item) => item.summon));
+		if (structureForThem.fill) {
+			reasons.push(`对面拿到它正好补上他们的${structureForThem.fill.label}（他们 ${structureForThem.fill.current}/${structureForThem.fill.target}）`);
+		}
 		if (ownGain > 0) reasons.push(`我们自己拿它可以涨 ${((ownGain * 100) / 5).toFixed(2)} 个百分点`);
 		if (proText) reasons.push(proText);
 		candidates.push({
@@ -586,7 +712,7 @@ export function advise(input: AdviseInput): Advice | null {
 			rate: rate ?? NEUTRAL_WIN_RATE,
 			hasSample: rate !== null,
 			// 自己更想要的英雄先不急着禁：威胁减去一半的自身收益。
-			ranking: threat + (compForThem?.gain ?? 0) * COMPOSITION_WEIGHT - ownGain * 0.5,
+			ranking: threat + structureForThem.delta * COMPOSITION_WEIGHT - ownGain * 0.5,
 			reasons,
 			risk: ownGain > threat ? '我们自己拿它收益更大，后面还轮得到的话可以考虑留' : '禁用只是止损，补不上我们自己阵容的缺口',
 		});
@@ -602,9 +728,15 @@ export function advise(input: AdviseInput): Advice | null {
 			: `最后一手禁用归${tail.ban === 'ours' ? '我方' : '对方'}、最后一手挑选归${tail.pick === 'ours' ? '我方' : '对方'}`;
 	const gapText = gaps.length > 0 ? `我方还缺 ${gaps.join('、')} 号位` : '我方五个号位都已经落人';
 	const summary = `第 ${state.nextStep} 手：${turnText}。我方还剩 ${remaining.ours.bans} 禁 ${remaining.ours.picks} 选，对方还剩 ${remaining.theirs.bans} 禁 ${remaining.theirs.picks} 选；${tailText}。${gapText}，当前估值 ${pct(ourBase.total / 5)}。`;
-	const compositionParts = COMPOSITION_TARGETS.map((dim) => `${dim.label} ${ourProfile.values[dim.key] ?? 0}/${dim.target}`);
-	compositionParts.push(`清场 ${ourProfile.aoe}/${enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE}`);
-	const compositionText = `阵容维度：${compositionParts.join('、')}${enemySummon ? '（对面是幻象/召唤体系，清场要求提高）' : ''}`;
+	/** 界面上那行结构现状：拿分项 + 红线 + 时间曲线，一次说清"这套阵容缺什么、怕什么"。 */
+	const structureParts = COMPOSITION_TARGETS.map((dim) => `${dim.label} ${ourProfile.values[dim.key] ?? 0}/${dim.target}`);
+	structureParts.push(`远程 ${ourProfile.ranged}/${RANGED_TARGET}`);
+	structureParts.push(`清场 ${ourProfile.clear}/${enemySummon ? AOE_TARGET_VS_SUMMON : AOE_TARGET_BASE}`);
+	structureParts.push(`纯核 ${ourProfile.greedyCore}/${STRUCTURE_CAPS[0].cap}`);
+	structureParts.push(`近战 ${ourProfile.melee}/${STRUCTURE_CAPS[1].cap}`);
+	structureParts.push(`前期不弱 ${ourProfile.phaseEarly}/${PHASE_TARGET}`);
+	structureParts.push(`后期不弱 ${ourProfile.phaseLate}/${PHASE_TARGET}`);
+	const compositionText = `阵容结构：${structureParts.join('、')}${enemySummon ? '（对面是幻象/召唤体系，清场要求提高）' : ''}`;
 
 	return {
 		action: state.action,

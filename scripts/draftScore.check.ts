@@ -31,7 +31,7 @@ function hero(
 	rates: (number | null)[],
 	pro: [number, number, number] = [0, 0, 0],
 	roles: number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0],
-	traits: { summon?: boolean; aoe?: boolean } = {},
+	traits: { summon?: boolean; aoe?: boolean; attack?: 'melee' | 'ranged'; timeline?: [number, number] } = {},
 ): DraftHero {
 	return {
 		id,
@@ -44,6 +44,8 @@ function hero(
 		roles,
 		summon: Boolean(traits.summon),
 		aoe: Boolean(traits.aoe),
+		attack: traits.attack ?? 'melee',
+		timeline: traits.timeline ?? [0, 0],
 	};
 }
 
@@ -268,6 +270,45 @@ const calmAdvice = advise({
 assert.ok(calmAdvice);
 assert.ok(!calmAdvice.composition.enemySummon, '没有体系英雄时不该说是体系阵容');
 assert.match(calmAdvice.composition.text, /清场 0\/1/, '没有体系时清场目标只要 1');
+
+// ---------------------------------------------------------------- 结构红线
+
+/**
+ * 这一组对应真实翻车：AI 选出过「斯温 + 幻影长矛手 + 龙骑士 + 赏金猎人 + 天涯墨客」，
+ * 四个近战、三个吃资源的核心、没有清场。当时的打分只检查"缺口"（控制/爆发够不够），
+ * 这种阵容在缺口检查里居然是达标的，所以必须把"过量"单独扣分。
+ *
+ * 构造：队长已经有两个纯核（核心等级 3）、三个近战，现在两个候选号位胜率与对位完全相同，
+ * 只有一个会把阵容推过红线 —— 过线的那个必须排在后面，并且风险里要说清楚。
+ */
+const CARRY_ROLES = [3, 0, 2, 0, 0, 0, 0, 0, 0]; // 纯核（核心 3、爆发 2）
+const SUPPORT_ROLES = [0, 3, 0, 2, 0, 0, 0, 0, 0]; // 辅助
+const capHeroes = [
+	hero(401, [0.5, null, null, null, null], [0, 0, 0], CARRY_ROLES, { attack: 'melee' }),
+	hero(402, [0.5, null, null, null, null], [0, 0, 0], CARRY_ROLES, { attack: 'melee' }),
+	hero(403, [0.5, null, null, null, null], [0, 0, 0], CARRY_ROLES, { attack: 'melee' }), // 第三个纯核
+	hero(404, [0.5, null, null, null, null], [0, 0, 0], SUPPORT_ROLES, { attack: 'ranged' }), // 辅助+远程
+	hero(405, [0.5, null, null, null, null]), // 对面的第一个
+	hero(406, [0.5, null, null, null, null]), // 对面的第二个
+];
+const capData: DraftData = { ...data, heroes: capHeroes, matchups: {}, matchupPairs: 0 };
+// 第 8 手我方 401、第 9 手对面 405、第 13 手对面 406、第 14 手我方 402 → 第 15 手轮到我方挑选
+const capRecorded: RecordedHand[] = [null, null, null, null, null, null, null, 401, 405, null, null, null, 406, 402];
+const capAdvice = advise({ data: capData, recorded: capRecorded, ourSide: OUR, firstPicker: OUR });
+assert.ok(capAdvice, '这一手应该有建议');
+assert.equal(capAdvice.step, 15);
+assert.equal(capAdvice.action, 'pick');
+
+const thirdCarry = capAdvice.candidates.find((candidate) => candidate.heroId === 403);
+const supportPick = capAdvice.candidates.find((candidate) => candidate.heroId === 404);
+assert.ok(thirdCarry && supportPick, '两个候选都要在');
+assert.match(capAdvice.composition.text, /纯核 2\/2/, '结构现状要显示纯核已经到上限');
+assert.ok(
+	supportPick.ranking > thirdCarry.ranking,
+	`补辅助的候选要排在第三个纯核前面（${supportPick.ranking} 应大于 ${thirdCarry.ranking}）`,
+);
+assert.equal(capAdvice.candidates[0]?.heroId, 404, '首选应该是补辅助+远程的那个');
+assert.match(thirdCarry.risk, /3 个纯核/, '过红线的候选要在风险里写清后果，实际：' + thirdCarry.risk);
 
 // 走满 24 手之后没有"下一手"。
 const full: RecordedHand[] = HEROES.map((item) => item.id).concat(Array.from({ length: 14 }, (_, index) => 100 + index));
