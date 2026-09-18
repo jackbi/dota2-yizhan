@@ -336,20 +336,21 @@ const matchLabel = (match: EsportsMatch): string => {
 		align-items: stretch;
 	}
 	/*
-	 * 挑选框是**整只放大**的：宽高都比禁用框大一档（客户端里也是这个观感，
-	 * 禁用只是个缩略图加个叉，挑选才是看阵容的地方）。两边都朝中间的手号列贴齐，
-	 * 所以放大的只是外侧那一半，手号列不会跟着晃。
-	 * 并排布局里多出来的高度按这两个基数按比例分（flex-grow 22 : 32），比例保持不变。
+	 * 框按客户端的实测尺寸写死：禁用 55×30、挑选 70×40。挑选框是禁用框整只放大一档的
+	 * 观感，禁用只是个缩略图加个叉，挑选才是看阵容的地方。
+	 * 两边都朝中间的手号列贴齐，尺寸变化只影响外侧那一半，手号列不会跟着晃。
 	 */
 	.draft-page .draft-row[data-action='ban'] {
-		--cell-width: 66%;
-		flex: 22 1 22px;
-		min-height: 22px;
+		--cell-width: 55px;
+		--cell-height: 30px;
 	}
 	.draft-page .draft-row[data-action='pick'] {
-		--cell-width: 92%;
-		flex: 32 1 32px;
-		min-height: 32px;
+		--cell-width: 70px;
+		--cell-height: 40px;
+	}
+	.draft-page .draft-row {
+		/* 尺寸写死之后行不再伸缩，多出来的高度留给面板（左边会把它分到属性组之间）。 */
+		flex: 0 0 auto;
 	}
 	/* 阶段之间留一道缝：禁用段与挑选段交替，看的时候能一眼分段。 */
 	.draft-page .draft-row[data-phase-start='true'] {
@@ -359,7 +360,7 @@ const matchLabel = (match: EsportsMatch): string => {
 		position: relative;
 		overflow: hidden;
 		width: var(--cell-width, 100%);
-		min-height: 24px;
+		height: var(--cell-height, 30px);
 		border-radius: 0.3rem;
 		border: 1px solid var(--color-line);
 		background: rgb(0 0 0 / 0.35);
@@ -444,6 +445,8 @@ const matchLabel = (match: EsportsMatch): string => {
 		.draft-page .draft-board-grid {
 			flex: 1 1 auto;
 			min-height: 0;
+			/* 右边比左边矮时，把这一列居中，别在面板底部留一块空白。 */
+			justify-content: center;
 		}
 		/*
 		 * 右边比左边高的时候（挑选框放大之后就是），左边多出来的高度平分到四个属性组之间，

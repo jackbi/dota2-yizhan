@@ -115,10 +115,8 @@ assert.match(page, /id="draft-match"[^>]*class="[^"]*w-full[^"]*sm:w-72/, '比�
  */
 assert.match(page, /\.draft-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*2\.5rem\s*minmax\(0,\s*1fr\)/, '一行要排成"格子 + 手号 + 格子"');
 // 禁用格比挑选格矮：客户端的禁用是一张缩略图加个叉，挑选才是看阵容的地方。
-assert.match(page, /\.draft-row\[data-action='ban'\]\s*\{[^}]*--cell-width:\s*66%/, '禁用框要窄一档');
-assert.match(page, /\.draft-row\[data-action='ban'\]\s*\{[^}]*flex:\s*22 1 22px/, '禁用行要矮一档');
-assert.match(page, /\.draft-row\[data-action='pick'\]\s*\{[^}]*--cell-width:\s*92%/, '挑选框要宽一档');
-assert.match(page, /\.draft-row\[data-action='pick'\]\s*\{[^}]*flex:\s*32 1 32px/, '挑选行要高一些');
+assert.match(page, /\.draft-row\[data-action='ban'\]\s*\{[^}]*--cell-width:\s*55px[^}]*--cell-height:\s*30px/, '禁用框要是 55×30');
+assert.match(page, /\.draft-row\[data-action='pick'\]\s*\{[^}]*--cell-width:\s*70px[^}]*--cell-height:\s*40px/, '挑选框要是 70×40');
 assert.match(script, /row\.dataset\.action = entry\.action/, '每行要带上是禁用还是挑选，样式靠它分档');
 assert.match(page, /margin-top:\s*0\.35rem/, '阶段之间要留间距');
 assert.ok(page.includes('id="draft-label-radiant">天辉') && page.includes('id="draft-label-dire">夜魇'), '列头要写明天辉和夜魇');
