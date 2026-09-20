@@ -327,9 +327,32 @@ Runtime 侧遇到中转自己回的 401（两边口令不一致）会直接说�
 
 内容页都是构建期抓取 + 预渲染，所以**内容的新鲜度 = 你多久重建一次**。`.cache/` 的 TTL
 表（直播状态 5 分钟、新闻/社区/赛程 30 分钟、Reddit 1 小时…）决定的是「这一轮要重新抓
-哪些」，它需要一个触发者——而仓库里**没有任何 CI 或定时配置**，这件事得自己接上。
+哪些」，它需要一个触发者。
+
+**Cloudflare Workers 这条路已经接好了**：`.github/workflows/rebuild.yml` 每 30 分钟
+（cron `17,47 * * * *`）跑一轮 `pnpm check` → `astro build` → `wrangler deploy`，
+也能用 `workflow_dispatch` 手动跑一次。换仓库或换账号时需要配五条 repo secret：
+
+| secret | 用途 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | 部署。用 Cloudflare 的「Edit Cloudflare Workers」模板生成 |
+| `CLOUDFLARE_ACCOUNT_ID` | 部署。`wrangler whoami` 输出里的那串 |
+| `STRATZ_RELAY_URL` / `STRATZ_RELAY_TOKEN` | 构建期取 STRATZ（同上面「客户端」一节） |
+| `LIQUIPEDIA_CONTACT` | Liquipedia 要求 User-Agent 里带联系方式 |
+
+`.cache/` 用 `actions/cache` 滚动接上一轮，所以每轮只有过期的源会重抓。**第一轮是冷构建**：
+实测在 GitHub runner 上 3 分 31 秒，17 个源全部抓到，斗鱼/虎牙/OpenDota 都通，不需要代理。
+Worker 上已有的 secret（`SESSION_SECRET` 等）不受 `wrangler deploy` 影响。
+
+两件要有心理准备的事：定时任务在**仓库 60 天没有任何活动**之后会被 GitHub 自动停用（会提前
+发邮件），随便推一个 commit 就恢复；GitHub 的定时队列在整点最挤，实测常延迟十几分钟，
+所以页面上的「数据更新于」不会精确卡在 :17/:47。
+
+**自托管（Node）这条路仍然要自己接触发者**，见下面的 cron 与 systemd timer。
 
 没有触发者的后果很具体：直播状态标称 5 分钟，实际是「上次构建那一刻」，可能已经过去几天。
+（真实发生过：赛程页在线上停了三天，而且不只是没人重建——构建本身被一个带 `/` 的队名打断，
+见 `routeSlug`。）
 
 实测同一个 `.cache/` 上连续构建：
 
