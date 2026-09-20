@@ -86,6 +86,14 @@ const structuredData = [
 		<link rel="icon" type="image/png" href="/favicon.png" sizes="96x96" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<meta name="generator" content={Astro.generator} />
+		{/*
+			百度搜索资源平台的「HTML 标签验证」。这不是密钥，是要给爬虫看的所有权凭证，
+			所以直接进仓库；**删了它百度会认为站点易主**，换取别的方式之前不要动。
+
+			放在 Layout 而不是首页：百度抓的是首页，但站点换过域名/路由时，
+			让每个页面都带着这一条最省心——验证失败通常只给一句"未检测到标签"，很难查。
+		*/}
+		<meta name="baidu-site-verification" content="codeva-CrdWwuNosd" />
 		<title>{title}</title>
 		<link rel="canonical" href={canonical} />
 		<meta property="og:type" content="website" />
