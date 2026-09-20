@@ -27,7 +27,11 @@ const moreCount = Math.max(0, totalReplies - hot.length - floors.length);
 const createdAt = detail?.createdAt || thread.lastReplyAt;
 ---
 
-<Layout title={`${thread.title} · 社区 · DOTA2 驿站`} description={detail?.summary || thread.title}>
+<Layout
+	title={`${thread.title} · 社区 · DOTA2 驿站`}
+	description={detail?.summary || thread.title}
+	breadcrumbs={[{ name: '社区', href: '/community' }, { name: thread.title }]}
+>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>

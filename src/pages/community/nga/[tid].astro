@@ -27,7 +27,11 @@ const replies = (detail?.floors ?? []).filter((floor) => floor.floor > 0 && !hot
 const moreCount = Math.max(0, thread.replies - new Set([...hotPids, ...replies.map((floor) => floor.pid)]).size);
 ---
 
-<Layout title={`${thread.title} · 社区 · DOTA2 驿站`} description={detail?.summary || thread.title}>
+<Layout
+	title={`${thread.title} · 社区 · DOTA2 驿站`}
+	description={detail?.summary || thread.title}
+	breadcrumbs={[{ name: '社区', href: '/community' }, { name: thread.title }]}
+>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>

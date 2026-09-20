@@ -62,6 +62,7 @@ if (notes && hasContent) {
 <Layout
 	title={`${update.version} 更新日志 · 版本信息 · DOTA2 驿站`}
 	description={`DOTA2 ${update.version} 官方更新日志（${update.date}）：${summary || '完整改动列表'}。`}
+	breadcrumbs={[{ name: '版本信息', href: '/patches' }, { name: update.version }]}
 >
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />

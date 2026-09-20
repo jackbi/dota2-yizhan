@@ -30,7 +30,7 @@ const paragraphs = postBodyParagraphs(post);
 const translationPartial = paragraphs.length > 0 && isPostBodyTruncated(post);
 ---
 
-<Layout title={`${title} · Reddit · DOTA2 驿站`} description={postSummary(post)}>
+<Layout title={`${title} · Reddit · DOTA2 驿站`} description={postSummary(post)} breadcrumbs={[{ name: '新闻', href: '/news' }, { name: title }]}>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>

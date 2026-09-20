@@ -33,7 +33,11 @@ const coverName = item.img.split('/').pop() ?? '';
 const showCover = Boolean(item.img) && !content.includes(coverName);
 ---
 
-<Layout title={`${item.title} · 新闻 · DOTA2 驿站`} description={item.summary || item.title}>
+<Layout
+	title={`${item.title} · 新闻 · DOTA2 驿站`}
+	description={item.summary || item.title}
+	breadcrumbs={[{ name: '新闻', href: '/news' }, { name: item.title }]}
+>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>

@@ -287,6 +287,13 @@ function renderHero(hero: PatchHeroEntry, names: PatchNames, icons: PatchIconMap
 	const rawName = ref?.name || (hero.title ? sanitizeNote(hero.title) : '');
 	const name = rawName || `英雄 #${hero.hero_id}`;
 	const icon = ref && ref.key ? icons.get(heroIconKey(ref.key)) : undefined;
+	/*
+	 * 英雄名链回英雄页——版本页 → 英雄页的出口（反向那条在英雄页的「版本改动记录」里）。
+	 * 名字表里查不到的不链：那种条目本来就落不到任何英雄页上（比如 datafeed 里的「熊灵」）。
+	 */
+	const nameHtml = ref
+		? `<a class="text-dota-light transition hover:text-cream" href="/heroes/${hero.hero_id}">${escapeText(name)}</a>`
+		: escapeText(name);
 	const parts: string[] = [];
 	parts.push(renderLines(hero.hero_notes));
 	if (hero.abilities?.length) {
@@ -300,7 +307,7 @@ function renderHero(hero: PatchHeroEntry, names: PatchNames, icons: PatchIconMap
 		parts.push(`<div class="pn-group">天赋</div>${renderLines(hero.talent_notes)}`);
 	}
 	for (const sub of hero.subsections ?? []) parts.push(renderSubsection(sub, names));
-	return renderEntity(icon, name, parts.join(''), 'pn-entity pn-hero');
+	return renderEntity(icon, nameHtml, parts.join(''), 'pn-entity pn-hero');
 }
 
 function renderItem(item: PatchItemEntry, names: PatchNames, icons: PatchIconMap): string {

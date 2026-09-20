@@ -67,6 +67,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 <Layout
 	title={`${match.home.name} vs ${match.away.name} · ${match.eventName} · DOTA2 驿站`}
 	description={`${match.eventName}：${match.home.name} 对阵 ${match.away.name} 的比赛详情，含比分、开赛时间、赛制与两队交手记录。`}
+	breadcrumbs={[{ name: '赛事', href: '/tournaments' }, { name: `${match.home.name} vs ${match.away.name}` }]}
 >
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 		<a href={backHref} class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">

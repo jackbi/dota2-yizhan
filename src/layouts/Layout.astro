@@ -6,9 +6,15 @@ import { NAV } from '../data/site';
 interface Props {
 	title?: string;
 	description?: string;
+	/**
+	 * 面包屑：`[{ name: '英雄', href: '/heroes' }, { name: '敌法师' }]`。
+	 * **不用写首页**——这里会自动在最前面补一条，省得每个页面都抄一遍。
+	 * 最后一项不给 href（那就是当前页）。
+	 */
+	breadcrumbs?: { name: string; href?: string }[];
 }
 
-const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · 新闻 · 赛事 · 版本 · 英雄与装备' } = Astro.props;
+const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · 新闻 · 赛事 · 版本 · 英雄与装备', breadcrumbs = [] } = Astro.props;
 const path = Astro.url.pathname;
 
 /*
@@ -49,6 +55,24 @@ const structuredData = [
 		isPartOf: { '@id': `${siteRoot}#website` },
 		inLanguage: 'zh-CN',
 	},
+	/*
+	 * 面包屑：搜索结果里能显示成 `dota2.hiwenbin.com › 英雄 › 敌法师`，
+	 * 比自己写一行标题更容易被点。**只有详情页才给**——列表页没有层级，
+	 * 硬造一条"首页 > 英雄"反而是在给搜索引擎喂假结构。
+	 */
+	...(breadcrumbs.length > 0
+		? [
+				{
+					'@type': 'BreadcrumbList',
+					itemListElement: [{ name: '首页', href: '/' }, ...breadcrumbs].map((crumb, index) => ({
+						'@type': 'ListItem',
+						position: index + 1,
+						name: crumb.name,
+						...(crumb.href ? { item: new URL(crumb.href, Astro.site ?? Astro.url).href } : {}),
+					})),
+				},
+			]
+		: []),
 ];
 ---
 

@@ -3,6 +3,7 @@ import Layout from '../../layouts/Layout.astro';
 import { formatIso } from '../../lib/format';
 import { fetchHeroList } from '../../lib/heroApi';
 import { fetchHeroMeta, stratzConfigured } from '../../lib/stratzApi';
+import { heroPatchIndex } from '../../lib/patchHeroes';
 
 export async function getStaticPaths() {
 	const list = await fetchHeroList();
@@ -38,6 +39,12 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 
 /** 近一周数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
 const meta = await fetchHeroMeta();
+
+/*
+ * 「这个英雄最近被改过没有」——玩家查英雄时最想知道的一件事，顺带把英雄页与版本页连起来。
+ * 取不到（离线构建、上游挂了）就整块不展示，不留空标题。
+ */
+const heroPatches = (await heroPatchIndex()).get(id) ?? [];
 const stat = meta?.heroes.get(id) ?? null;
 /** 配了 token 却拿不到数据 = 抓取故障，明确说出来而不是静默留白。 */
 const metaUnavailable = meta === null && stratzConfigured();
@@ -46,7 +53,11 @@ const POSITION_LABEL = ['一号位', '二号位', '三号位', '四号位', '五
 const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路', 3: '劣势路', 4: '游走辅助', 5: '保护辅助' };
 ---
 
-<Layout title={`${name} · 英雄资料 · DOTA2 驿站`} description={`${name}（${nameEn}）英雄详细数据、技能动画与天赋树，实时来自官方接口。`}>
+<Layout
+	title={`${name} · 英雄资料 · DOTA2 驿站`}
+	description={`${name}（${nameEn}）英雄详细数据、技能动画与天赋树，实时来自官方接口。`}
+	breadcrumbs={[{ name: '英雄', href: '/heroes' }, { name }]}
+>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>
@@ -125,6 +136,42 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 				</div>
 			</div>
 		</div>
+
+		{/*
+			版本改动记录：英雄页 → 版本页的出口。只列被改到过这个英雄的版本，
+			每条点进去是那一版的完整日志（版本页那边再把英雄名链回这里）。
+		*/}
+		{
+			heroPatches.length > 0 ? (
+				<section class="mt-10 border-t border-line pt-6" aria-labelledby="hero-patches-title">
+					<h2 id="hero-patches-title" class="font-display text-xl">
+						版本改动记录
+					</h2>
+					<p class="mt-2 text-sm text-muted">
+						这个英雄在最近 {heroPatches.length} 个版本里被调整过（新 → 旧）。
+					</p>
+					<ul class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						{heroPatches.slice(0, 12).map((patch) => (
+							<li>
+								<a
+									href={`/patches/${patch.id}`}
+									class="flex items-baseline gap-3 rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
+								>
+									<span class="shrink-0 font-display text-gold">{patch.version}</span>
+									<span class="shrink-0 text-xs text-faint tabular-nums">{patch.date}</span>
+									<span class="truncate text-muted">{patch.summary}</span>
+								</a>
+							</li>
+						))}
+					</ul>
+					{heroPatches.length > 12 ? (
+						<p class="mt-3 text-xs text-faint">
+							只列最近 12 个版本，全部改动见 <a href="/patches" class="text-dota-light hover:text-cream">版本信息</a>。
+						</p>
+					) : null}
+				</section>
+			) : null
+		}
 
 		<div id="hero-nav" class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
 			<a href={`/heroes/${prevId}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
