@@ -44,8 +44,8 @@ export interface VerdictSide {
 	/**
 	 * 每个英雄对另一套阵容的平均对位偏差（不乘权重、不求和）。
 	 *
-	 * 这里**必须是平均值而不是总和**：对位数据只留了偏差 ≥4% 的那约一千对，
-	 * 把五个人的"被记录下来的克制关系"加起来能凑出 ±40 个百分点，那不是胜率该有的量级。
+	 * 这里**必须是平均值而不是总和**，这是被实测抓出来的：留存的对位是「场次 ≥200」筛过的
+	 * 约一千六百对，五个人的对位优势**加起来**能凑出 ±40 个百分点，那不是胜率该有的量级。
 	 */
 	counter: number;
 	counterPairs: number;
@@ -214,7 +214,7 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 	const notes: string[] = [
 		`胜率由「号位偏差 ${(positionEdge * 100).toFixed(1)} + 对位偏差 ${(counterEdge * 100).toFixed(1)}」相加得到（百分点），没有做回归，所以它是相对强弱的读数，不是校准过的概率。`,
 		'结构分、能力维度、时间曲线来自官方角色等级与人工名单，是启发式，只做横向对比，不进胜率。',
-		'对位只留了偏差 ≥4%、样本 ≥500 场的那约一千对（见 `draftMatchup`），所以它是「有记录的那些克制关系」的平均，不是全量对位；两个方向是同一份记录的正反面，故按镜像展示。',
+		'对位只收了样本 ≥200 场的那些对偶（约 1600 对，见 `draftMatchup`），接近五五开的也在里面——正因为不按偏差筛，平均值才不偏向极端；两个方向是同一份记录的正反面，故按镜像展示。',
 		'对位偏差按五个号位摊开：一个英雄的克制关系不完全等于整队的胜率优势，摊开之后它与号位胜率的量级可比。',
 		`号位胜率口径：${input.data.bracketLabel}近 ${input.data.windowDays} 天，少于 ${input.data.minPositionMatches} 场的号位不算数${input.data.patch.version ? `；版本 ${input.data.patch.version}` : ''}。`,
 	];

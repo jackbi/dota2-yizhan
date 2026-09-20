@@ -487,14 +487,20 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 // ---------------------------------------------------------------- 英雄对位（克制）
 
 /**
- * 对位数据的两个门槛。
+ * 对位数据的场次门槛。
  *
- * 500 场是样本下限：300 场的胜率，95% 置信区间就有 ±5.7 个百分点，比要看的偏差还大。
- * 4% 是偏差下限：只留明显好打或明显难打的对位，接近五五开的不参与打分，
- * 免得建议里塞一堆等于没说的依据。
+ * 原来是「场次 ≥500 **且** 偏差 ≥4%」，两道一起把数据筛没了：实测（超凡入圣分段、10 个英雄、
+ * 1260 条对手行）够 500 场的只有 51 条，再叠偏差 ≥4% 只剩 16 条；全池 127 个英雄去重后
+ * 就 79 对，而且**没有任何一对过 1000 场**——那个分段下每对的样本天然就小。
+ * 结果是对位这一项在建议里几乎不出声，复盘里的「对位偏差」常年显示 0.0%。
+ *
+ * 现在只留场次门槛，取 200：
+ * - 200 场的胜率标准误是 ±3.5%（p=0.5），比它更小的样本不值得当依据，再大又会把数据筛没；
+ * - **不再按偏差筛**。留下的是"明显克制/明显被克制"的那一小撮时，平均值会系统性偏向极端
+ *   （第一版复盘跑出 ±48 个百分点，一半原因是重复计算，另一半就是这个偏差）。现在收
+ *   接近五五开的对位一起进来，平均值才是这套阵容真实的平均对位强度。
  */
-export const MATCHUP_MIN_GAMES = 500;
-export const MATCHUP_MIN_DEVIATION = 0.04;
+export const MATCHUP_MIN_GAMES = 200;
 /** 对位数据按周滚动，一天一次足够，也少给中转添麻烦。 */
 const MATCHUP_TTL_SECONDS = 24 * 3600;
 /** 一次查几个英雄。实测接口支持 heroIds 数组，10 个一批，127 个英雄只发 13 次请求。 */
@@ -540,7 +546,11 @@ export function fetchHeroMatchups(heroIds: readonly number[]): Promise<HeroMatch
 		const ids = [...new Set(heroIds)].filter((id) => Number.isInteger(id) && id > 0).sort((a, b) => a - b);
 		if (ids.length === 0) return null;
 		const before = networkFetches;
-		const key = `hero-matchups-${ids.length}-${ids[0]}-${ids[ids.length - 1]}`;
+		/*
+		 * 缓存键里带上门槛：门槛改过之后，旧口径的结果还在缓存里躺着（TTL 一天），
+		 * 不在键里区分就会照样读回来——数字变了却查不出原因，正是最难查的那种。
+		 */
+		const key = `hero-matchups-v2-${ids.length}-${ids[0]}-${ids[ids.length - 1]}-${MATCHUP_MIN_GAMES}`;
 
 		const data = await cached<HeroMatchupData>(key, MATCHUP_TTL_SECONDS, async () => {
 			const pairs: HeroMatchups = {};
@@ -560,7 +570,6 @@ export function fetchHeroMatchups(heroIds: readonly number[]): Promise<HeroMatch
 						const wins = row.winCount ?? 0;
 						if (typeof b !== 'number' || a === b || games < MATCHUP_MIN_GAMES) continue;
 						const rate = wins / games;
-						if (Math.abs(rate - 0.5) < MATCHUP_MIN_DEVIATION) continue;
 						const [low, high] = a < b ? [a, b] : [b, a];
 						const lowRate = a < b ? rate : 1 - rate;
 						const pairKey = `${low}-${high}`;
@@ -582,7 +591,7 @@ export function fetchHeroMatchups(heroIds: readonly number[]): Promise<HeroMatch
 			'stratz-matchup',
 			'STRATZ 英雄对位',
 			networkFetches > before ? 'fresh' : 'cache',
-			`${data.pairCount} 个对位（场次 ≥ ${MATCHUP_MIN_GAMES}、偏差 ≥ ${(MATCHUP_MIN_DEVIATION * 100).toFixed(0)}%）`,
+			`${data.pairCount} 个对位（场次 ≥ ${MATCHUP_MIN_GAMES}）`,
 		);
 		return data;
 	})();
