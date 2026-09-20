@@ -70,3 +70,11 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
+
+      # 部署完再推百度：推的是这一轮**新增**的 URL（配额实测每天 10 条，全量推第一天就用光）。
+      # 清单存在 .cache/ 里，跟着上面那份滚动缓存走；上游报错不会让整轮部署变红，
+      # 但剩余配额、积压条数、按当前配额要多少天，都会打进构建日志。
+      - name: 推送给百度（普通收录）
+        run: node --experimental-strip-types scripts/baiduPush.ts
+        env:
+          BAIDU_PUSH_URL: ${{ secrets.BAIDU_PUSH_URL }}
