@@ -87,13 +87,18 @@ const structuredData = [
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<meta name="generator" content={Astro.generator} />
 		{/*
-			百度搜索资源平台的「HTML 标签验证」。这不是密钥，是要给爬虫看的所有权凭证，
-			所以直接进仓库；**删了它百度会认为站点易主**，换取别的方式之前不要动。
+			三个搜索引擎的「HTML 标签验证」：百度 / Google Search Console / Bing Webmaster。
 
-			放在 Layout 而不是首页：百度抓的是首页，但站点换过域名/路由时，
-			让每个页面都带着这一条最省心——验证失败通常只给一句"未检测到标签"，很难查。
+			- 这些是**公开值**，不是密钥：它们本来就该出现在 HTML 里给爬虫看，所以进仓库没问题。
+		   （真正不能进仓库的是百度那种带 token 的推送地址，那个走 CI secret。）
+			- **删掉 = 平台认为站点易主**，之后的 sitemap 提交、配额、数据都会跟着出问题；
+			要换验证方式（比如改 DNS TXT）之前先把这里的标签留着，等新方式通过再说。
+			- 放在 Layout 而不是只放首页：平台抓的是首页，但站点换域名/路由时让每个页面都带着最省心
+			——验证失败通常只回一句「未检测到标签」，从页面上反而查不出是哪一步丢的。
 		*/}
 		<meta name="baidu-site-verification" content="codeva-CrdWwuNosd" />
+		<meta name="google-site-verification" content="tju3zQJcrAUdq9WdZWpgxMS_WdcdHm75Pz41iQTIUGQ" />
+		<meta name="msvalidate.01" content="F8682C1E08B95548D0945B3A295BD7CA" />
 		<title>{title}</title>
 		<link rel="canonical" href={canonical} />
 		<meta property="og:type" content="website" />
