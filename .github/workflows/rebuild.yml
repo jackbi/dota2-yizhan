@@ -78,3 +78,8 @@ jobs:
         run: node --experimental-strip-types scripts/baiduPush.ts
         env:
           BAIDU_PUSH_URL: ${{ secrets.BAIDU_PUSH_URL }}
+
+      # IndexNow（Bing / Yandex / Naver）：不需要账号、没有配额，新增就推。
+      # key 文件在 public/indexnow-key.txt，随部署一起上线。
+      - name: 推送给 IndexNow
+        run: node --experimental-strip-types scripts/indexNow.ts
