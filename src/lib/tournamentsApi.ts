@@ -97,6 +97,28 @@ interface OpenDotaProMatch {
 
 /** 只用带真实队名的对局——其余是路人局，对赛事页没有意义。 */
 async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
+	/*
+	 * 这是全站唯一「拿不到就没有实时区块」的来源，而它在构建期并不稳定：同一台机器上单独的
+	 * 请求是 200（实测 0.7 秒、11 场进行中），构建里却常常失败——构建期有几十个请求同时飞。
+	 * 所以给它重试，并把每次失败的原因打进构建日志：页面上只显示「0 场进行中」，
+	 * 不说清是「真没有」还是「没取到」，查起来得从头翻一遍构建记录。
+	 */
+	let lastError: unknown = new Error('未知错误');
+	for (let attempt = 1; attempt <= 3; attempt += 1) {
+		try {
+			return await loadOpenDotaLive();
+		} catch (error) {
+			lastError = error;
+			if (attempt < 3) {
+				console.warn(`[tournaments] OpenDota /api/live 第 ${attempt} 次失败：${error instanceof Error ? error.message : String(error)}`);
+				await new Promise((resolve) => setTimeout(resolve, 600 * attempt));
+			}
+		}
+	}
+	throw lastError;
+}
+
+async function loadOpenDotaLive(): Promise<EsportsMatch[]> {
 	const list = await getJson<OpenDotaLive[]>(OPENDOTA_LIVE_URL);
 	const out: EsportsMatch[] = [];
 	for (const item of list) {
