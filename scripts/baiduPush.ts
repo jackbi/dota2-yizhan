@@ -20,12 +20,14 @@ import path from 'node:path';
 const SITEMAP = 'dist/client/sitemap-0.xml';
 const STATE = '.cache/baidu-pushed.json';
 /**
- * 一次请求最多推几条。
- *
- * 取 10 是因为当前配额就是 10：一批正好用完，不用去猜「推到第几条会超」。
- * 将来配额涨上去，把这个数调大即可——脚本本身不假设配额。
+ * 一次请求最多推几条。取 10 是因为当前配额就是 10。
  */
 const BATCH = 10;
+/**
+ * 单轮最多发几次请求。配额用完后每次都会失败，没有这个上限就会一直撞。
+ * 8 次足够把「从 10 缩到 1」的降级路径走完。
+ */
+const MAX_REQUESTS = 8;
 /**
  * 优先推的页面：抓取入口。配额只有个位数时，先让百度拿到首页与各列表页，
  * 它自己会顺着链接往下爬；把 10 条配额全给长尾帖，等于一个入口都没交。
@@ -113,28 +115,42 @@ async function push(batch: string[]): Promise<PushResult> {
 }
 
 let pushedNow = 0;
-for (let index = 0; index < pending.length; index += BATCH) {
-	const batch = pending.slice(index, index + BATCH);
+let index = 0;
+let batchSize = BATCH;
+let requests = 0;
+while (index < pending.length && requests < MAX_REQUESTS) {
+	const batch = pending.slice(index, index + batchSize);
 	if (dryRun) {
 		console.log(`[baidu] （dry-run）这一批会推 ${batch.length} 条：${batch.slice(0, 3).join('、')}…`);
 		break;
 	}
 
+	requests += 1;
 	const result = await push(batch);
 	if (result.error || typeof result.success !== 'number') {
-		// 配额用完/上游拒绝都走这里：说清楚还剩多少没推，然后收工。
-		console.warn(`[baidu] 这一批没推成功（${result.message ?? `error ${result.error}`}），本轮到此为止`);
+		/*
+		 * 配额不足时百度**整批拒绝**（实测：剩 9 条时推 10 条，回 `over quota`，一条都没进）。
+		 * 所以这里逐级对半缩批再试，一直缩到 1——否则配额不满整批的那些天会一条都推不出去，
+		 * 而且表面上只会留下"没推成功"一行，很难看出是批量大小的问题。
+		 */
+		if (batchSize > 1) {
+			batchSize = Math.max(1, Math.floor(batchSize / 2));
+			console.warn(`[baidu] 这一批没推成功（${result.message ?? `error ${result.error}`}），缩到 ${batchSize} 条再试`);
+			continue;
+		}
+		console.warn(`[baidu] 单条也推不进去（${result.message ?? `error ${result.error}`}），本轮到此为止`);
 		break;
 	}
 
-	// 只有「整批都成功」才记进清单：部分成功时哪几条进去了百度不告诉我们，
+	// 只有「整批都成功」才记账：部分成功时百度不告诉我们是哪几条，
 	// 宁可下轮重推（多花一点配额），也不要漏推。
-	if (result.success === batch.length) {
-		state.pushed.push(...batch);
-		pushedNow += batch.length;
-	} else {
+	if (result.success !== batch.length) {
 		console.warn(`[baidu] 这一批只成功 ${result.success}/${batch.length} 条，具体是哪几条上游没给，本轮先不记账`);
+		break;
 	}
+	state.pushed.push(...batch);
+	pushedNow += batch.length;
+	index += batch.length;
 	if (result.not_valid?.length) state.rejected.push(...result.not_valid);
 	if (result.not_same_site?.length) state.rejected.push(...result.not_same_site);
 
