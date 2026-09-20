@@ -3,6 +3,7 @@ import { seedEvents } from '../data/tournaments';
 import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
 import { LIQUIPEDIA_LABEL, fetchLiquipediaMatches } from './liquipediaApi';
+import { routeSlug } from './routeSlug';
 import type {
 	DataSource,
 	DataSourceStatus,
@@ -36,6 +37,16 @@ const SOURCE_LABEL: Record<DataSource, string> = {
 	opendota: 'OpenDota',
 	seed: '本地兜底',
 };
+
+/**
+ * 队伍 id 会变成 `/teams/[id]` 的路径段，所以**只能**用字母数字汉字与连字符。
+ *
+ * 这里是踩过的坑：`/api/live` 的队名直接进 id，而实时对局里出现过 `team yosi/vape`
+ * （还出现过队名就是一个 `?`）。带 `/` 的名字会让 Astro 把 `/teams/od-team-team yosi/vape`
+ * 当成两段，抛 `Missing parameter: id` 把**整个构建**打断——线上于是永远停在上一份产物上。
+ * Liquipedia 那条线早就用同一套 slug 处理过赛事 id，这条线当时漏了。
+ */
+const teamPath = (name: string): string => `od-team-${routeSlug(name) || 'team'}`;
 
 /** 数据源中文名，供页面标注出处。 */
 export function dataSourceLabel(id: DataSource): string {
@@ -96,8 +107,8 @@ async function fetchOpenDotaLive(): Promise<EsportsMatch[]> {
 			eventName: item.league_id ? `职业联赛 #${item.league_id}` : '职业对局',
 			startTime: item.activate_time ?? Math.floor(Date.now() / 1000),
 			status: 'live',
-			home: { id: `od-team-${item.team_name_radiant}`, name: item.team_name_radiant, score: item.radiant_score },
-			away: { id: `od-team-${item.team_name_dire}`, name: item.team_name_dire, score: item.dire_score },
+			home: { id: teamPath(item.team_name_radiant), name: item.team_name_radiant, score: item.radiant_score },
+			away: { id: teamPath(item.team_name_dire), name: item.team_name_dire, score: item.dire_score },
 			source: 'opendota',
 		});
 	}
@@ -112,12 +123,13 @@ async function fetchOpenDotaPro(): Promise<EsportsMatch[]> {
 			// duration > 0 才是真正打完的对局；缺省 duration 时按已结束处理，保持旧行为。
 			const finished = typeof item.duration !== 'number' || item.duration > 0;
 			const home: TeamRef = {
-				id: `od-team-${item.radiant_team_id ?? item.radiant_name}`,
+				// 有数字 id 就用它（路径安全），没有才退回队名——退回时必须过 slug。
+				id: item.radiant_team_id ? `od-team-${item.radiant_team_id}` : teamPath(item.radiant_name!),
 				name: item.radiant_name!,
 				score: item.radiant_score,
 			};
 			const away: TeamRef = {
-				id: `od-team-${item.dire_team_id ?? item.dire_name}`,
+				id: item.dire_team_id ? `od-team-${item.dire_team_id}` : teamPath(item.dire_name!),
 				name: item.dire_name!,
 				score: item.dire_score,
 			};

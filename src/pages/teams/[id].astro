@@ -7,6 +7,7 @@ import { loadTeamRoster } from '../../lib/opendota';
 import { EVENT_STATUS_META } from '../../lib/statusMeta';
 import type { TeamDetail } from '../../lib/tournamentIndex';
 import { getTournamentIndex } from '../../lib/tournamentIndex';
+import { isPathSegment } from '../../lib/routeSlug';
 
 interface Props {
 	team: TeamDetail;
@@ -19,6 +20,16 @@ export async function getStaticPaths() {
 	// 串行取阵容：限速是按请求间隔做的，并发会把间隔打乱。
 	const paths = [];
 	for (const team of index.teams.values()) {
+		/*
+		 * 队伍 id 会成为路径段，而它是从外部队名拼出来的。实测踩过一次：OpenDota 实时对局里
+		 * 出现队名 `team yosi/vape`，路径被当成两段，Astro 抛 `Missing parameter: id`
+		 * 把**整个构建**打断——线上只能停在上一份产物上。id 现在都过了 `routeSlug`，
+		 * 这里是兜底：真有不安全的 id 就跳过这一个队伍页并出声，别带走整站。
+		 */
+		if (!isPathSegment(team.id)) {
+			console.warn(`[teams] 跳过路径不安全的队伍 id：${JSON.stringify(team.id)}（${team.name}）`);
+			continue;
+		}
 		paths.push({
 			params: { id: team.id },
 			props: { team, roster: await loadTeamRoster({ id: team.id, name: team.name, logo: team.logo }) },

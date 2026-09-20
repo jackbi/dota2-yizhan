@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { EsportsMatch } from '../data/types';
 import { readCacheJson, writeCacheFile } from './buildCache';
+import { routeSlug } from './routeSlug';
 
 /**
  * Liquipedia 赛事日历（MediaWiki `action=parse`）。
@@ -38,15 +39,8 @@ const CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'matches.jso
 const TTL_SECONDS = 30 * 60;
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
-/**
- * 站内 id 只保留字母、数字与汉字，其余一律折叠成连字符。
- * 赛事页路径里带 `/`，直接当路由参数会让 `/tournaments/[id]` 匹配失败。
- */
-const slug = (value: string): string =>
-	value
-		.toLowerCase()
-		.replace(/[^\p{L}\p{N}]+/gu, '-')
-		.replace(/^-+|-+$/g, '');
+/** 路径段规则见 `routeSlug`（赛事页与队伍页共用一套）。 */
+const slug = routeSlug;
 
 /** 赛事页路径 → 站内展示用的赛事名，例如 `BLAST/SLAM/9/Southeast_Asia` → `BLAST SLAM 9 Southeast Asia`。 */
 function eventNameFromPath(wikiPath: string): string {
