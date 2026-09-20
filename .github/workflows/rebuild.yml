@@ -1,0 +1,72 @@
+# 定时重建并部署。
+#
+# 为什么需要它：内容页（赛程、新闻、直播状态…）都是**构建期抓取 + 预渲染**，
+# 页面上的「数据更新于」就是最后一次成功构建的时刻。`.cache/` 的 TTL 表决定「这一轮要重抓
+# 哪些」，但它需要一个触发者，而仓库里一直没有接上——后果很具体：直播状态标称 5 分钟新鲜，
+# 实际是「上次构建那一刻」，可能已经过去几天。
+#
+# 间隔取 30 分钟，理由写在 docs/deploy.md：Workers 产物每轮都要重传一遍，
+# 5 分钟那种频率更适合自托管（`pnpm rebuild` 切目录 + 重启进程）。
+name: 定时重建并部署
+
+on:
+  schedule:
+    # 每 30 分钟。刻意避开 :00/:30——GitHub 的定时队列在整点最挤，实测常延迟十几分钟。
+    - cron: '17,47 * * * *'
+  # 手动跑一次：上线前试，或者看了日志想重跑。
+  workflow_dispatch:
+
+# 一轮没跑完就不再叠一轮：一轮构建要抓十几个源，叠起来只会互相抢额度。
+concurrency:
+  group: rebuild-deploy
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm check
+
+      # `.cache/` 是构建期抓取结果的落盘目录（已 gitignore）。缓存它是为了两件事：
+      # 1. 只重抓过期的源（TTL 表才有意义），而不是每轮把十几个源从头抓一遍；
+      # 2. 少烧 STRATZ / OpenDota 的额度。
+      # key 每轮都变、restore-keys 兜住上一轮，这是标准的滚动缓存写法。
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: build-cache-${{ github.run_id }}
+          restore-keys: |
+            build-cache-
+
+      - name: 构建（Cloudflare 产物）
+        run: pnpm exec astro build
+        env:
+          DEPLOY_TARGET: cloudflare
+          # Liquipedia 要求 User-Agent 里带联系方式，不填就不符合它的条款。
+          LIQUIPEDIA_CONTACT: ${{ secrets.LIQUIPEDIA_CONTACT }}
+          # STRATZ 只能从固定出口调用（token 绑 IP），CI 里同样走那台机器上的中转。
+          STRATZ_RELAY_URL: ${{ secrets.STRATZ_RELAY_URL }}
+          STRATZ_RELAY_TOKEN: ${{ secrets.STRATZ_RELAY_TOKEN }}
+
+      # 部署按仓库里的 wrangler.jsonc 走：Worker 入口是 src/worker/index.ts，静态资源指向 dist。
+      # Worker 上已有的 secret（SESSION_SECRET 等）不受影响。
+      - name: 部署到 Cloudflare Workers
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
