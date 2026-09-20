@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig, envField } from 'astro/config';
 import cloudflare from '@astrojs/cloudflare';
 import node from '@astrojs/node';
+import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 import { CACHE_KEEP_DAYS, pruneCacheDirs } from './src/lib/cachePrune.ts';
 
@@ -257,7 +258,23 @@ export default defineConfig({
 		 */
 		optimizeDeps: { include: ['mpegts.js'] },
 	},
-	integrations: [dataSourceReport, imagesInDev],
+	/*
+	 * `site` 是 SEO 这条线的地基，不是可选项：
+	 * - 没有它，`@astrojs/sitemap` 生成不出绝对 URL，只能报错；
+	 * - canonical 与 og:url 也都得是绝对地址，否则搜索引擎会把 www / 尾斜杠 / 带参数的
+	 *   同一个页面当成好几份。本地开发也填线上域名——它只影响构建产物里的字符串。
+	 */
+	site: 'https://dota2.hiwenbin.com',
+	integrations: [
+		dataSourceReport,
+		imagesInDev,
+		/*
+		 * 503 个预渲染页面（英雄、物品、更新日志、赛事、战队…）靠它一次列全。
+		 * `prerender = false` 的那几条（/party、/me、/api）不会被收录——它们要么要登录、
+		 * 要么是接口，进 sitemap 只会浪费爬虫预算。
+		 */
+		sitemap(),
+	],
 
 	/*
 	 * 站点主体仍是 `output: static`（默认值）——所有内容页在构建期渲染成 HTML，

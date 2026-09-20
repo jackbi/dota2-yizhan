@@ -111,6 +111,7 @@ README 只留「是什么 / 怎么跑 / 怎么部署」，实现细节与踩过�
 | 数据来源：社区热帖、头像与封面本地化、B站视频、版本 datafeed、赛事 | [docs/data-sources.md](./docs/data-sources.md) |
 | 开黑房间：协议、身份来源、连不上时的表现与取舍 | [docs/party.md](./docs/party.md) |
 | 阵容分析：顺序表来源、候选怎么算、模型负责什么 | [docs/draft.md](./docs/draft.md) |
+| SEO：sitemap、canonical、结构化数据与搜索引擎提交 | [docs/seo.md](./docs/seo.md) |
 | logo / 字体 / 主题色板 | [docs/branding.md](./docs/branding.md) |
 | 与 dart_simple_live 的直播做法差异（为什么浏览器里做不到同样的效果） | [docs/live-source-deltas.md](./docs/live-source-deltas.md) |
 

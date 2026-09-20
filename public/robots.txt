@@ -1,0 +1,16 @@
+# 站点自己的 robots.txt。
+#
+# 线上还会看到 Cloudflare 的 Content Signals 说明块——那是 Cloudflare 托管的策略文本，
+# 它会**拼在这份文件前面**一起返回，不是取代它。所以不要把那份当成"我们的 robots.txt"
+# 去改，改这里。
+
+User-agent: *
+Allow: /
+
+# 这两条要登录或纯接口，给爬虫没有意义。/party 不挡：它对匿名访客也是 200 的公开页，
+# 而且「dota2 开黑」这类词是真实流量，挡掉等于自己放弃入口。
+Disallow: /api/
+Disallow: /me
+
+# 预渲染页面（英雄、物品、更新日志、赛事、战队…）全在这份 sitemap 里。
+Sitemap: https://dota2.hiwenbin.com/sitemap-index.xml

@@ -10,6 +10,46 @@ interface Props {
 
 const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · 新闻 · 赛事 · 版本 · 英雄与装备' } = Astro.props;
 const path = Astro.url.pathname;
+
+/*
+ * SEO 这一层要的三样东西都在这里拼，理由分别是：
+ *
+ * - **canonical**：站内不少页面既能从列表页进、也能带查询串进（比如筛选过的），
+ *   不带 canonical 就等于把同一份内容拆成好几份让搜索引擎自己猜主版本；
+ * - **og / twitter**：分享到 NGA、贴吧、TG 群时给的是标题+描述+图，缺了就只剩一个裸链接；
+ * - **JSON-LD**：告诉搜索引擎这是个什么站点（中文内容站），是唯一"结构化"表达站点身份的途径。
+ *
+ * `Astro.site` 由 `astro.config.mjs` 的 `site` 提供；本地 dev 下它是线上域名——
+ * 这只影响字符串，不存在"本地生成出线上链接"的风险。
+ */
+const canonical = new URL(path, Astro.site ?? Astro.url).href;
+const ogImage = new URL('/logo.webp', Astro.site ?? Astro.url).href;
+const siteRoot = new URL('/', Astro.site ?? Astro.url).href;
+/*
+ * 两个节点，不是一个：
+ * - `WebSite` 描述**站点本身**，url 必须是站点根——挂在子页面上（比如把 hero 页当 WebSite.url）
+ *   是在向搜索引擎报错身份；
+ * - `WebPage` 描述**当前这一页**，url 用 canonical，并声明它属于上面那个站点。
+ */
+const structuredData = [
+	{
+		'@type': 'WebSite',
+		'@id': `${siteRoot}#website`,
+		name: 'DOTA2 驿站',
+		url: siteRoot,
+		description: '面向中文玩家的 DOTA2 门户：开播状态与分屏直播、新闻、社区热帖、赛事赛程、版本更新日志、英雄与装备资料、BP 阵容分析。',
+		inLanguage: 'zh-CN',
+	},
+	{
+		'@type': 'WebPage',
+		'@id': `${canonical}#webpage`,
+		url: canonical,
+		name: title,
+		description,
+		isPartOf: { '@id': `${siteRoot}#website` },
+		inLanguage: 'zh-CN',
+	},
+];
 ---
 
 <!doctype html>
@@ -23,6 +63,19 @@ const path = Astro.url.pathname;
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<meta name="generator" content={Astro.generator} />
 		<title>{title}</title>
+		<link rel="canonical" href={canonical} />
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="DOTA2 驿站" />
+		<meta property="og:locale" content="zh_CN" />
+		<meta property="og:title" content={title} />
+		<meta property="og:description" content={description} />
+		<meta property="og:url" content={canonical} />
+		<meta property="og:image" content={ogImage} />
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content={title} />
+		<meta name="twitter:description" content={description} />
+		<meta name="twitter:image" content={ogImage} />
+		<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
 		{/*
 			字体是自托管的：`@font-face` 在 global.css 里（由 scripts/fonts.mjs 生成，
 			分片文件和 unicode-range 都取自 Google Fonts）。原先这里引 fonts.googleapis.com，
