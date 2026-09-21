@@ -15,7 +15,18 @@ interface Props {
 }
 
 const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · 资讯 · 赛事 · 版本 · 英雄与装备', breadcrumbs = [] } = Astro.props;
+/*
+ * 当前导航项怎么判。
+ *
+ * 直接写 `path === item.href` 是错的：构建期 `Astro.url.pathname` 带尾斜杠
+ * （产物是 `heroes/index.html`，pathname 就是 `/heroes/`），而 NAV 里写的是 `/heroes`——
+ * 结果**只有首页亮**（两边都是 `/` 才刚好相等），一度看着像"高亮功能没做"。
+ *
+ * 这里两种写法都认（带不带尾斜杠），并且让子页面归到自己的那一栏：
+ * `/heroes/1/` 亮「英雄」、`/news/reddit/xxx/` 亮「资讯」。
+ */
 const path = Astro.url.pathname;
+const isActive = (href: string): boolean => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
 
 /*
  * SEO 这一层要的三样东西都在这里拼，理由分别是：
@@ -151,19 +162,21 @@ const structuredData = [
 
 				<nav class="hidden items-center gap-1 lg:flex" aria-label="主导航">
 					{
-						NAV.map((item) => (
-							<a
-								href={item.href}
-								class:list={[
-									'rounded-md px-3 py-2 text-sm font-medium transition',
-									path === item.href
-										? 'bg-dota/15 text-dota-light'
-										: 'text-muted hover:bg-surface-2 hover:text-cream',
-								]}
-							>
-								{item.label}
-							</a>
-						))
+						NAV.map((item) => {
+							const active = isActive(item.href);
+							return (
+								<a
+									href={item.href}
+									aria-current={active ? 'page' : undefined}
+									class:list={[
+										'rounded-md px-3 py-2 text-sm font-medium transition',
+										active ? 'bg-dota/15 text-dota-light' : 'text-muted hover:bg-surface-2 hover:text-cream',
+									]}
+								>
+									{item.label}
+								</a>
+							);
+						})
 					}
 				</nav>
 
@@ -187,17 +200,21 @@ const structuredData = [
 			<nav id="mobile-menu" class="hidden border-t border-line bg-ink lg:hidden" aria-label="移动端导航" hidden>
 				<div class="mx-auto grid max-w-7xl gap-1 px-4 py-4 sm:px-6">
 					{
-						NAV.map((item) => (
-							<a
-								href={item.href}
-								class:list={[
-									'rounded-md px-4 py-3 text-base font-medium transition',
-									path === item.href ? 'bg-dota/15 text-dota-light' : 'text-muted hover:bg-surface-2 hover:text-cream',
-								]}
-							>
-								{item.label}
-							</a>
-						))
+						NAV.map((item) => {
+							const active = isActive(item.href);
+							return (
+								<a
+									href={item.href}
+									aria-current={active ? 'page' : undefined}
+									class:list={[
+										'rounded-md px-4 py-3 text-base font-medium transition',
+										active ? 'bg-dota/15 text-dota-light' : 'text-muted hover:bg-surface-2 hover:text-cream',
+									]}
+								>
+									{item.label}
+								</a>
+							);
+						})
 					}
 				</div>
 			</nav>
