@@ -3,10 +3,8 @@ import {
 	LANE_MIN_GAMES,
 	buildLaneSlice,
 	formatNet,
-	laneCell,
 	laneEdge,
 	laneEdgeEither,
-	laneEdgeText,
 	lanePartnerEdge,
 } from '../src/lib/draftLanes.ts';
 
@@ -91,16 +89,16 @@ const ok = (label: string): void => {
 	ok('建表：净对线算法、门槛、脏数据与去重');
 }
 
-// ---- 查表：单格查询与「自己查自己」 ----
+// ---- 查表：命中、号位隔离与「自己查自己」 ----
 {
 	const lanes = buildLaneSlice([
 		{ heroId1: 62, heroId2: 10, position: 'POSITION_4', matchCount: 80, winCount: 48, lossCount: 32 },
 	], 4);
-	assert.deepEqual(laneCell(lanes, 62, 4, 10), { matches: 80, net: 0.2 }, '查得到：净对线 +20%');
-	assert.equal(laneCell(lanes, 62, 4, 11), null, '没有这一格返回 null');
-	assert.equal(laneCell(lanes, 62, 1, 10), null, '号位不同就是另一格，不能串');
-	assert.equal(laneCell(lanes, 10, 4, 10), null, '自己对自己没有线上对位');
-	assert.equal(laneCell(undefined, 62, 4, 10), null, '没有数据时返回 null');
+	assert.deepEqual(laneEdge(lanes, 62, 4, [10]), { net: 0.2, pairs: 1, matches: 80, cells: [{ otherId: 10, net: 0.2, matches: 80 }] }, '查得到：净对线 +20%');
+	assert.equal(laneEdge(lanes, 62, 4, [11]), null, '没有这一格返回 null');
+	assert.equal(laneEdge(lanes, 62, 1, [10]), null, '号位不同就是另一格，不能串');
+	assert.equal(laneEdge(lanes, 10, 4, [10]), null, '自己对自己没有线上对位');
+	assert.equal(laneEdge(undefined, 62, 4, [10]), null, '没有数据时返回 null');
 	ok('查表：命中、号位隔离与缺失');
 }
 
@@ -190,18 +188,12 @@ const ok = (label: string): void => {
 	ok('同路搭档：反方向兜底、不取反号');
 }
 
-// ---- 文案：数字要写全，且不能出现 NaN / undefined ----
+// ---- 文案：净对线的格式（成句的依据由 `draftScore` 拼，那边有自己的断言） ----
 {
 	assert.equal(formatNet(0.0182), '+1.8%', '正数带 +');
 	assert.equal(formatNet(-0.004), '−0.4%', '负数用减号而不是连字符');
 	assert.equal(formatNet(0), '0.0%', '打平不写 +0.0%');
-	const lanes = buildLaneSlice([
-		{ heroId1: 62, heroId2: 10, position: 'POSITION_4', matchCount: 1234, winCount: 634, lossCount: 600 },
-	], 4);
-	const text = laneEdgeText('线上对线', laneEdge(lanes, 62, 4, [10])!, 4);
-	// 634 − 600 = 34，34 / 1234 = 2.76% → +2.8%
-	assert.match(text, /线上对线（4 号位线上 1,234 场、1 个对手）：平均净对线 \+2\.8%/, `文案不对：${text}`);
-	assert.doesNotMatch(text, /NaN|undefined/, '不能漏出 NaN / undefined');
+	assert.equal(formatNet(Number.NaN), '0.0%', '脏数据不能渲染出 NaN');
 	ok('文案：格式与缺失');
 }
 

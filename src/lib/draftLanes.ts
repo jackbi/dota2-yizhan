@@ -86,11 +86,6 @@ function cellOf(lanes: HeroLanes | undefined | null, heroId: number, position: n
 	return { matches: hit[0], net: hit[1] / 1000 };
 }
 
-/** 我打 `position` 号位时，线上对上 `otherId` 的净对线；没这一格返回 null。 */
-export function laneCell(lanes: HeroLanes | undefined | null, heroId: number, position: number, otherId: number): LaneCell | null {
-	return cellOf(lanes, heroId, position, otherId);
-}
-
 /**
  * 我打 `position` 号位时，线上对上一整套阵容的平均净对线。
  *
@@ -178,7 +173,6 @@ export interface RawLaneRow {
 	drawCount?: number | null;
 }
 
-/** `POSITION_3` → 3；其它形状返回 null（上游偶尔给聚合行）。 */
 /**
  * 把**一个号位切片**的行整理成查表。
  *
@@ -212,17 +206,10 @@ export function buildLaneSlice(rows: readonly RawLaneRow[], position: LanePositi
 
 /** 净对线怎么写：`+1.8%` / `−0.4%` / `0.0%`。 */
 export function formatNet(net: number): string {
-	const value = Math.abs(net) < 0.0005 ? 0 : net;
+	// 脏数据当 0：这一层的输入是构建期算好的整数，但真漏进来一个 NaN 就会在面板上
+	// 写成「NaN%」——那种错比少一个数字更难查。
+	const safe = Number.isFinite(net) ? net : 0;
+	const value = Math.abs(safe) < 0.0005 ? 0 : safe;
 	const sign = value > 0 ? '+' : value < 0 ? '−' : '';
 	return `${sign}${Math.abs(value * 100).toFixed(1)}%`;
-}
-
-/**
- * 一条依据：我打这个号位时，线上对上他们这套阵容平均是赢是输。
- *
- * 英雄名不在这层拼（这里不认识中文名）：调用方按 `edge.cells` 自己接名字，
- * 与 `draftScore.counterText` 同一套路。
- */
-export function laneEdgeText(prefix: string, edge: LaneEdge, position: number): string {
-	return `${prefix}（${position} 号位线上 ${edge.matches.toLocaleString('zh-CN')} 场、${edge.pairs} 个对手）：平均净对线 ${formatNet(edge.net)}`;
 }
