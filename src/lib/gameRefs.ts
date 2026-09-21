@@ -38,6 +38,8 @@ export interface ItemRef {
 	id: number;
 	name: string;
 	img: string;
+	/** 单价。英雄攻略用它区分"成型件"与散件，见 `stratzGuides.ts`。 */
+	cost: number;
 }
 
 /**
@@ -82,7 +84,7 @@ export async function itemRefMap(): Promise<Map<number, ItemRef>> {
 		for (const item of Object.values(itemdata)) {
 			const id = Number(item.id);
 			if (!Number.isFinite(id) || id <= 0) continue;
-			map.set(id, { id, name: item.dname?.trim() || `装备 ${id}`, img: item.img_url ?? '' });
+			map.set(id, { id, name: item.dname?.trim() || `装备 ${id}`, img: item.img_url ?? '', cost: Number(item.cost) || 0 });
 		}
 		return map;
 	});

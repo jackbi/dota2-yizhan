@@ -34,6 +34,8 @@ export interface HeroStats {
 }
 
 export interface HeroAbility {
+	/** 官方 ability id。与 STRATZ 的 `abilityId` 是同一套编号（见 `stratzGuides.ts`）。 */
+	id: number;
 	name: string;
 	nameLoc: string;
 	desc: string;
@@ -43,6 +45,11 @@ export interface HeroAbility {
 	videoPoster: string;
 	hasScepter: boolean;
 	hasShard: boolean;
+	/** 官方 datafeed 的原生标记：这件装备是**升级**这个技能，还是**召唤**出一个新技能。 */
+	scepterUpgrade: boolean;
+	shardUpgrade: boolean;
+	grantedByScepter: boolean;
+	grantedByShard: boolean;
 	isInborn: boolean;
 	scepterMp4: string;
 	scepterWebm: string;
@@ -349,6 +356,7 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			sightNight: h.sight_range_night,
 		},
 		abilities: (h.abilities ?? []).map((a: any) => ({
+			id: Number(a.id) || 0,
 			name: a.name,
 			nameLoc: a.name_loc,
 			desc: resolveTemplate(stripHtml(a.desc_loc), specialMap),
@@ -358,6 +366,10 @@ export async function fetchHero(id: number | string): Promise<Hero> {
 			videoPoster: normalizeCdn(a.video_jpg || a.img, h.name),
 			hasScepter: Boolean(a.video_scepter_webm) || Boolean(a.video_scepter_mp4),
 			hasShard: Boolean(a.video_shard_webm) || Boolean(a.video_shard_mp4),
+			scepterUpgrade: Boolean(a.ability_has_scepter),
+			shardUpgrade: Boolean(a.ability_has_shard),
+			grantedByScepter: Boolean(a.ability_is_granted_by_scepter),
+			grantedByShard: Boolean(a.ability_is_granted_by_shard),
 			isInborn: Boolean(a.is_inborn) || Boolean(a.ability_is_innate),
 			scepterMp4: normalizeCdn(a.video_scepter_mp4, h.name),
 			scepterWebm: normalizeCdn(a.video_scepter_webm, h.name),
