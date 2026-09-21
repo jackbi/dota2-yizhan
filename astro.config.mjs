@@ -269,7 +269,7 @@ export default defineConfig({
 		dataSourceReport,
 		imagesInDev,
 		/*
-		 * 503 个预渲染页面（英雄、物品、更新日志、赛事、战队…）靠它一次列全。
+		 * 一千多个预渲染页面（英雄、装备、更新日志、赛事、战队…）靠它一次列全。
 		 * `prerender = false` 的那几条（/party、/me、/api）不会被收录——它们要么要登录、
 		 * 要么是接口，进 sitemap 只会浪费爬虫预算。
 		 */

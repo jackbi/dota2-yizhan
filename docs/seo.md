@@ -18,7 +18,7 @@ dota2 分屏 看直播         → /live
 | 东西 | 在哪 | 为什么 |
 | --- | --- | --- |
 | `site` 配置 | `astro.config.mjs` | sitemap 与 canonical 都要求绝对 URL；没有它，同一个页面会以 www / 尾斜杠 / 带参数几种形式各算一份 |
-| sitemap | `@astrojs/sitemap` → `/sitemap-index.xml` + `/sitemap-0.xml` | 一次列全所有预渲染页面（英雄、物品、更新日志、赛事、战队、资讯与社区帖）；条数随当轮抓到的新闻、帖子与比赛浮动，不写死。`prerender = false` 的几条（`/me`、`/api/*`）不会进去，`/community` 那条跳转也不会 |
+| sitemap | `@astrojs/sitemap` → `/sitemap-index.xml` + `/sitemap-0.xml` | 一次列全所有预渲染页面（英雄、装备、更新日志、赛事、战队、资讯与社区帖）；条数随当轮抓到的新闻、帖子与比赛浮动，不写死（最近一次构建 1029 条）。`prerender = false` 的几条（`/me`、`/api/*`）不会进去，`/community` 那条跳转也不会 |
 | robots.txt | `public/robots.txt` | 指路 sitemap；挡掉 `/api/` 与要登录的 `/me`。`/party` **不挡**——它对匿名访客也是 200 的公开页，「dota2 开黑」是真实流量 |
 | canonical | `src/layouts/Layout.astro` | 每个页面自己声明主版本 |
 | og / twitter 卡片 | 同上 | 分享到 NGA、贴吧、TG 群时给的是标题+描述+图，不然只剩一个裸链接 |
@@ -27,6 +27,8 @@ dota2 分屏 看直播         → /live
 | 页面标题与描述 | 各页面的 `Layout` 参数 | 从上线起就是每页独立的（`敌法师 · 英雄资料 · DOTA2 驿站` 这种），这是最值钱的一条，别退化成统一标题 |
 | 英雄页 ↔ 版本页 互链 | `src/lib/patchHeroes.ts`、`patchNotes.renderHero` | 英雄页有「版本改动记录」（最多列最近 12 个版本），版本页里每个被改到的英雄名链回英雄页。用的是构建期已落盘的版本日志，不额外联网 |
 | 英雄 / 装备列表在构建期渲染 | `src/pages/heroes.astro`、`src/pages/items.astro` | 这两页原先的主数据是客户端 `fetch` 现拉的，构建产物里**一个英雄名、一件装备名都没有**。百度基本不执行 JS，Google 的二次渲染又依赖 dota2.com.cn 的连通性，等于白做。改成构建期渲染后 HTML 里就有 127 / 229 个条目及其详情页链接，客户端只留筛选 |
+| 装备详情页 | `src/pages/items/[id].astro`、`src/lib/itemCatalog.ts` | 520 个页面（`itemCatalog` 里那些有中文名的条目）。原先 614 件装备挤在 `/items` 一个 URL 里，标题只能写「装备资料库」，搜「闪烁匕首 合成」没有任何页面能承接。页面上的「升级为」是同一份数据反查出来的（192 件散件有去向），「版本改动记录」与英雄页共用同一套版本日志 |
+| 版本页 ↔ 装备页 互链 | `src/lib/patchItems.ts`、`patchNotes.renderItem` | 与英雄那条对称：版本页里每个被改到的装备名链到 `/items/<内部名>`，装备页有「版本改动记录」（最多列最近 12 个版本）。全站实测 4017 个指向装备页的链接、零死链 |
 | 404 页 | `src/pages/404.astro` | 原先没有，Cloudflare 拿默认页顶上，站内导航全丢。现在带 `noindex`（404 不该被收录）与六个板块入口；workerd 本地实测 `/no-such-page/`、`/heroes/nope/` 都是 404 + 这一页 |
 
 **一个容易改错的地方**：线上 `robots.txt` 前半截是 Cloudflare 的 Content Signals 说明块——那是
@@ -48,7 +50,5 @@ Cloudflare 托管的策略文本，它**拼在你自己的 robots.txt 前面**�
 
 - **每页唯一的 og:image**：现在全站共用 logo；英雄页用英雄头像、赛事页用队标，分享出去的点击率
   会明显不同。
-- **装备页 ↔ 版本页**：物品和英雄对称，`referencedEntities` 里已经有 `items` 那一半，照着
-  `patchHeroes.ts` 加一份就行（装备现在还是单页 + 锚点，得先有物品详情页才值得做）。
 - **别做的事**：关键词堆砌、给同一份内容造多个 URL、买外链。前两个会被判定作弊，第三个对这个
   体量的站毫无性价比。
