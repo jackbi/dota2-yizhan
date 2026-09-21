@@ -314,7 +314,7 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 			对位（谁好打谁）来自 STRATZ 的高分局统计，只按场次筛（≥ {data.matchupMinGames} 场，接近五五开的也留着），
 			共 {data.matchupPairs.toLocaleString('zh-CN')} 对；它不区分分路，是个粗口径的克制信号。
 			分路对位（线上谁打谁、和谁走一路）是另一份数据：同样来自 STRATZ 的高分局统计，按号位记录线上胜负，
-			只留 ≥ 50 场的格子，单独加载；它只做横向对比，**不进上面的胜率**。
+			只留记了结果 ≥ {data.laneMinGames} 场的格子，单独加载；它只做横向对比，**不进上面的胜率**。
 			建议是按号位胜率做的启发式估计，不是胜率预测，也不代表任何队伍的真实战术。
 		</p>
 

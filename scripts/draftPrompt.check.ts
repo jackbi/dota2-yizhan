@@ -50,6 +50,7 @@ const data: DraftData = {
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	matchupMinGames: 200,
+	laneMinGames: 50,
 	heroes: [
 		hero(1, '敌法师', [0.52, null, null, null, null]),
 		hero(2, '帕克', [null, 0.51, null, null, null]),

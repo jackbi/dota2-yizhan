@@ -13,6 +13,7 @@ import {
 	stratzFetchCount,
 } from './stratzApi';
 import type { HeroMatchups } from './draftMatchup';
+import { LANE_MIN_GAMES } from './draftLanes';
 
 /**
  * 阵容分析要用的一份数据。
@@ -87,6 +88,8 @@ export interface DraftData {
 	matchupPairs: number;
 	/** 对位的场次门槛。页面上要把口径写出来，所以由构建期带出来，不在这里另抄一个数。 */
 	matchupMinGames: number;
+	/** 线上对位每格的场次门槛（记了结果的场次）。理由同上：文案里的数字只能有一处来源。 */
+	laneMinGames: number;
 	/** 两类数据的可用性，缺哪一类界面上就少一类建议依据。 */
 	hasPositionData: boolean;
 	hasProData: boolean;
@@ -212,6 +215,7 @@ export function loadDraftData(): Promise<DraftData> {
 			matchups: matchups?.pairs ?? {},
 			matchupPairs: matchups?.pairCount ?? 0,
 			matchupMinGames: MATCHUP_MIN_GAMES,
+			laneMinGames: LANE_MIN_GAMES,
 			hasPositionData,
 			hasProData,
 		};
