@@ -94,7 +94,7 @@ node --env-file=.env dist/server/entry.mjs   # 监听 PORT / HOST，默认 4321
 | `STRATZ_RELAY_URL` / `STRATZ_RELAY_TOKEN` | 否 | **推荐用它代替 `STRATZ_TOKEN`**：token 绑 IP 而 Cloudflare 的边缘出口会漂，所以把 token 交给一台出口固定的机器（`scripts/stratz-relay.mjs`），两边只带口令。两个都配才生效，配了就走中转。步骤见 [构建、缓存与部署](./docs/deploy.md#stratz-走固定出口中转) |
 | `YOUDAO_COOKIE` | 否 | 覆盖有道翻译的默认访客 cookie |
 | `AZURE_TRANSLATOR_KEY` / `AZURE_TRANSLATOR_REGION` | 否 | 配置后翻译改用 Azure，否则用有道 |
-| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧） |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 否 | 配置后 Reddit 走 OAuth，否则用 RSS（限流很紧，两个版块连着抓第二个就 429）。生成步骤：`bash scripts/reddit-oauth.setup.sh`（会连 GitHub secret 一起配好） |
 | `LIQUIPEDIA_CONTACT` | 建议 | Liquipedia 要求 User-Agent 里带联系方式，填邮箱即可；不填也能用，但不符合它的条款 |
 | `LIVE_PROXY` | 否 | 直播间接口、热门房间列表与图片本地化（头像、B站封面、更新日志图标）的取数方式：`auto`（默认，直连优先、被重置时退回代理）、`jina`（只走代理）、`off`（只直连）。文本走 `r.jina.ai`，图片走 `wsrv.nl` |
 | `IMAGE_DEBUG` | 否 | 图片本地化的调试开关（原名 `AVATAR_DEBUG`，拆出 `localImages.ts` 时一并改名）。设为 `1` 时构建日志里逐个频道打印「发布 N 张 / 新下载 N / 命中缓存 N / 拿不到 N」 |
