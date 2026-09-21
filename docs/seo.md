@@ -26,6 +26,8 @@ dota2 分屏 看直播         → /live
 | `BreadcrumbList` | 同上，详情页传 `breadcrumbs` 参数 | 搜索结果里能显示成 `dota2.hiwenbin.com › 英雄 › 敌法师`。**只有详情页给**——列表页没有层级，硬造一条是在喂假结构 |
 | 页面标题与描述 | 各页面的 `Layout` 参数 | 从上线起就是每页独立的（`敌法师 · 英雄资料 · DOTA2 驿站` 这种），这是最值钱的一条，别退化成统一标题 |
 | 英雄页 ↔ 版本页 互链 | `src/lib/patchHeroes.ts`、`patchNotes.renderHero` | 英雄页有「版本改动记录」（最多列最近 12 个版本），版本页里每个被改到的英雄名链回英雄页。用的是构建期已落盘的版本日志，不额外联网 |
+| 英雄 / 装备列表在构建期渲染 | `src/pages/heroes.astro`、`src/pages/items.astro` | 这两页原先的主数据是客户端 `fetch` 现拉的，构建产物里**一个英雄名、一件装备名都没有**。百度基本不执行 JS，Google 的二次渲染又依赖 dota2.com.cn 的连通性，等于白做。改成构建期渲染后 HTML 里就有 127 / 229 个条目及其详情页链接，客户端只留筛选 |
+| 404 页 | `src/pages/404.astro` | 原先没有，Cloudflare 拿默认页顶上，站内导航全丢。现在带 `noindex`（404 不该被收录）与六个板块入口；workerd 本地实测 `/no-such-page/`、`/heroes/nope/` 都是 404 + 这一页 |
 
 **一个容易改错的地方**：线上 `robots.txt` 前半截是 Cloudflare 的 Content Signals 说明块——那是
 Cloudflare 托管的策略文本，它**拼在你自己的 robots.txt 前面**一起返回。要改就改
