@@ -40,7 +40,15 @@ export type RedditFeed = (typeof REDDIT_FEEDS)[number];
 export type RedditFeedId = RedditFeed['id'];
 
 /** 两个版块之间等一会儿再发下一个请求：匿名端点连发就 429。 */
-const FEED_GAP_MS = 3000;
+const FEED_GAP_MS = 8000;
+/**
+ * 每个版块抓几次、中间等多久。
+ *
+ * 实测 CI（境外 runner）上连着发两个版块，第二个照样会被匿名端点挡掉——r/DotA2 成、r/compDota2
+ * 败，页面里那一栏就空着。命中缓存的那一轮不联网，所以这点等待只在真联网时才发生。
+ */
+const FETCH_ATTEMPTS = 3;
+const RETRY_DELAYS_MS = [10_000, 30_000];
 
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'reddit');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
@@ -182,13 +190,26 @@ function withFeed(post: RedditPost, id: RedditFeedId): RedditPost {
 	return { ...post, feed: id, subreddit: feedOf(id).subreddit };
 }
 
+/**
+ * 最近一次抓取失败的原因，写进健康记录。
+ * 只报一句「请求失败」看不出是被限流（429）还是根本没连上，维修时白猜一轮。
+ */
+let lastFetchFailure = '';
+
 async function get(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<Response | null> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
 		const response = await fetch(url, { ...init, signal: controller.signal, redirect: 'follow' });
-		return response.ok ? response : null;
-	} catch {
+		if (!response.ok) {
+			const retryAfter = response.headers.get('retry-after');
+			lastFetchFailure = `HTTP ${response.status}${retryAfter ? `，retry-after ${retryAfter}` : ''}`;
+			return null;
+		}
+		lastFetchFailure = '';
+		return response;
+	} catch (error) {
+		lastFetchFailure = error instanceof Error ? error.name : 'fetch 失败';
 		return null;
 	} finally {
 		clearTimeout(timer);
@@ -333,27 +354,39 @@ function parseListing(raw: unknown, feed: RedditFeed): RedditPost[] {
 
 // ---------------------------------------------------------------- 抓取
 
+/** app-only 令牌窗口内复用一份，重试时不用每次都去换。 */
+let tokenCache: { value: string; expiresAt: number } | null = null;
+
 /** 配了应用凭据就走官方 OAuth（app-only），失败一律退到 RSS。 */
 async function fetchViaOAuth(feed: RedditFeed): Promise<RedditPost[] | null> {
 	const clientId = process.env.REDDIT_CLIENT_ID;
 	const clientSecret = process.env.REDDIT_CLIENT_SECRET;
 	if (!clientId || !clientSecret) return null;
 
-	const tokenResponse = await get('https://www.reddit.com/api/v1/access_token', {
-		method: 'POST',
-		headers: {
-			Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-			'Content-Type': 'application/x-www-form-urlencoded',
-			'User-Agent': USER_AGENT,
-		},
-		body: 'grant_type=client_credentials',
-	});
-	if (!tokenResponse) return null;
-	const token = (await tokenResponse.json().catch(() => null)) as { access_token?: string } | null;
-	if (!token?.access_token) return null;
+	let accessToken = tokenCache && tokenCache.expiresAt > Date.now() ? tokenCache.value : '';
+	if (!accessToken) {
+		const tokenResponse = await get('https://www.reddit.com/api/v1/access_token', {
+			method: 'POST',
+			headers: {
+				Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
+				'Content-Type': 'application/x-www-form-urlencoded',
+				'User-Agent': USER_AGENT,
+			},
+			body: 'grant_type=client_credentials',
+		});
+		if (!tokenResponse) return null;
+		const token = (await tokenResponse.json().catch(() => null)) as {
+			access_token?: string;
+			expires_in?: number;
+		} | null;
+		if (!token?.access_token) return null;
+		accessToken = token.access_token;
+		// 提前一分钟作废，免得卡在过期那一刻。
+		tokenCache = { value: accessToken, expiresAt: Date.now() + Math.max((token.expires_in ?? 3600) - 60, 60) * 1000 };
+	}
 
 	const listing = await get(`https://oauth.reddit.com/r/${feed.subreddit}/hot?limit=${MAX_POSTS}&raw_json=1`, {
-		headers: { Authorization: `bearer ${token.access_token}`, 'User-Agent': USER_AGENT },
+		headers: { Authorization: `bearer ${accessToken}`, 'User-Agent': USER_AGENT },
 	});
 	if (!listing) return null;
 
@@ -450,16 +483,32 @@ async function loadFeed(feed: RedditFeed): Promise<RedditPost[]> {
 		return posts;
 	}
 
-	// 先试官方接口，再退到匿名 RSS；两条都不通就用过期缓存。
-	const viaOAuth = await fetchViaOAuth(feed);
-	const fetched = viaOAuth ?? (await fetchViaRss(feed));
+	/*
+	 * 先试官方接口，再退到匿名 RSS，两条都不通就隔一会儿再来一轮。
+	 * 匿名端点被限流是常态（CI 上连着抓两个版块，第二个就 429 了），退避重试能把这一轮救回来。
+	 */
+	let fetched: RedditPost[] | null = null;
+	let viaOAuth = false;
+	for (let attempt = 0; attempt < FETCH_ATTEMPTS && !fetched; attempt += 1) {
+		if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1] ?? 30_000);
+		const fromOAuth = await fetchViaOAuth(feed);
+		if (fromOAuth) {
+			fetched = fromOAuth;
+			viaOAuth = true;
+			break;
+		}
+		fetched = await fetchViaRss(feed);
+	}
 	if (!fetched) {
 		const posts = cached?.posts ?? [];
+		const why = lastFetchFailure ? `（${lastFetchFailure}）` : '';
 		await reportSource(
 			healthId,
 			label,
 			posts.length > 0 ? 'cache' : 'empty',
-			posts.length > 0 ? `${posts.length} 条，匿名接口被限流，退回过期缓存` : '请求失败且无缓存',
+			posts.length > 0
+				? `${posts.length} 条，取不到新的${why}，退回过期缓存`
+				: `请求失败且无缓存${why}`,
 		);
 		return posts;
 	}
