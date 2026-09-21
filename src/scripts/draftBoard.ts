@@ -871,6 +871,13 @@ if (data) {
 				const body = (await res.json()) as Partial<LaneData>;
 				if (!body?.vs || !body?.with) return;
 				lanes = { vs: body.vs, with: body.with };
+				/*
+				 * 复盘面板渲染的是**已经算好的** `verdict`，它可能是在 lanes 还没到货时算的，
+				 * 光重画不会多出「分路对位」那一行（慢网下 147KB 要几秒，用户很可能先点了按钮）。
+				 * 盘面指纹没变就重算一次；模型那段文字留着——它讲的是同一套阵容，
+				 * 而胜率本来就不含线上这一项，重算不会让文字对不上。
+				 */
+				if (verdict && verdictKey === lineupKey()) verdict = currentVerdict();
 				renderAdvice();
 				renderVerdict();
 			} catch {
