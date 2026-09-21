@@ -1,9 +1,29 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import NewsCard from '../components/NewsCard.astro';
+import ThreadCard from '../components/ThreadCard.astro';
 import type { NewsCardItem } from '../data/types';
-import { NEWS_FILTERS, fetchOfficialNews, toNewsCard, type OfficialNews } from '../lib/newsApi';
-import { fetchRedditPosts, toRedditCard } from '../lib/redditApi';
+import type { CommunityPost, CommunitySource } from '../lib/communityFeed';
+import { SOURCE_LABEL, fetchCommunityFeed } from '../lib/communityFeed';
+import { fetchOfficialNews, toNewsCard, type OfficialNews } from '../lib/newsApi';
+import { fetchRedditPosts, toRedditCard, type RedditFeedId, type RedditPost } from '../lib/redditApi';
+
+/**
+ * 资讯中心：官网新闻、两个 Reddit 版块与 NGA / 虎扑的社区热帖合成一页。
+ *
+ * 页签只按**来源**分四条，一条列表一个来源、一次只显示一条——别的一概不做：
+ *
+ * - **不按官网栏目拆页签。** 官网一篇文章常常同时挂着「官方新闻 / 赛事新闻 / 公告」好几个栏目，
+ *   按栏目拆出来的列表只比全量少十几条，读者却得先选再读。栏目标签印在卡片上，扫一眼就知道。
+ * - **不做时间窗。** NGA 那条列表本来就是几个窗叠起来去重的，单独挑一个只会更短；
+ *   虎扑根本没有窗口参数——版面页只有「最新回复」这一个顺序。
+ * - **不做「社区热议」这种跨来源合并。** 它和单来源页签有九成重合（NGA 占了大头），
+ *   而且两家的口径不同（一个是热榜、一个是版面页的时间序，回复数也不能换算），
+ *   合并排序等于拿两把尺子量同一列。
+ *
+ * 「社区」原来是独立的一页（`/community`），并过来之后那条路由改成跳转，
+ * 见 `astro.config.mjs` 的 `redirects`。
+ */
 
 let articles: OfficialNews[] = [];
 try {
@@ -12,120 +32,238 @@ try {
 	articles = [];
 }
 
-/** Reddit 是英文社区内容，单独一个栏目，不混进综合新闻。 */
-let redditPosts: import('../lib/redditApi').RedditPost[] = [];
+/** Reddit 是英文社区内容，按版块各占一栏，不混进官方新闻。 */
+let redditPosts: RedditPost[] = [];
 try {
 	redditPosts = await fetchRedditPosts();
 } catch {
 	redditPosts = [];
 }
 
-/** 列表卡片额外带上所属栏目，用于前端筛选。 */
-type Card = NewsCardItem & { cats: string[] };
+let posts: CommunityPost[] = [];
+try {
+	posts = await fetchCommunityFeed();
+} catch {
+	posts = [];
+}
 
-const officialCards: Card[] = articles.map((item, index) => ({
-	...toNewsCard(item, index === 0),
-	cats: ['all', ...item.feeds],
-}));
-const redditCards: Card[] = redditPosts.map((post) => ({ ...toRedditCard(post), cats: ['reddit'] }));
-const cards = [...officialCards, ...redditCards];
+// 时间格式化统一用 Unix 秒。
+const now = Math.floor(Date.now() / 1000);
 
-// 综合新闻汇总官网全部栏目，其余按官网栏目筛选。
-const TABS = [
-	{ id: 'all', label: '综合新闻' },
-	...NEWS_FILTERS.filter((feed) => feed.id !== 'general'),
+const officialCards: NewsCardItem[] = articles.map((item, index) => toNewsCard(item, index === 0));
+const threadCards = (source: CommunitySource) => posts.filter((post) => post.source === source);
+
+/**
+ * 两个 Reddit 版块各一栏。id 与 `REDDIT_FEEDS` 一致——详情页的「返回」就按这个锚回到
+ * 自己那一栏，两边不用各记一份映射。
+ */
+const REDDIT_TABS: { id: RedditFeedId; label: string }[] = [
 	{ id: 'reddit', label: 'Reddit 热帖' },
+	{ id: 'comp', label: 'Reddit 赛事讨论' },
 ];
-const countOf = (id: string) => cards.filter((card) => card.cats.includes(id)).length;
+const redditByFeed = (id: RedditFeedId) => redditPosts.filter((post) => post.feed === id);
+const redditCards = (id: RedditFeedId): NewsCardItem[] => redditByFeed(id).map((post) => toRedditCard(post));
+
+/**
+ * 五条来源页签。数字是这一轮真正抓到的条数，不写死——抓不到就是 0，
+ * 由页面上的 `NOTICES` 说明是上游没给，还是本来就没有。
+ */
+const SOURCES = [
+	{ id: 'news', label: '官网新闻', count: officialCards.length },
+	...REDDIT_TABS.map((tab) => ({ id: tab.id, label: tab.label, count: redditByFeed(tab.id).length })),
+	{ id: 'nga', label: `${SOURCE_LABEL.nga} 热帖`, count: posts.filter((post) => post.source === 'nga').length },
+	/*
+	 * 虎扑这条不是热榜：取的是版面页最前面的 20 条（最新回复顺序），所以叫「新帖」。
+	 * 名字与口径对不上正是上一版的问题之一——按回复数排完，这一栏全是几天前的老帖。
+	 */
+	{ id: 'hupu', label: `${SOURCE_LABEL.hupu} 热帖`, count: posts.filter((post) => post.source === 'hupu').length },
+];
+
+/** 默认落在「官网新闻」：这一页从前的入口就是官方新闻列表。 */
+const DEFAULT_SOURCE = 'news';
+
+const NOTICES = [
+	articles.length === 0
+		? '官方新闻暂不可用：构建期没有取到 dota2.com.cn 的列表，也没有可用的本地缓存。'
+		: null,
+	// 两个版块各写一条：一个被限流不该让另一个跟着显示成"没有数据"。
+	...REDDIT_TABS.map((tab) =>
+		redditByFeed(tab.id).length === 0
+			? `${tab.label}暂不可用：Reddit 对匿名请求限流很紧，这次没取到也没有可用的本地缓存。`
+			: null,
+	),
+	posts.length === 0 ? '社区热帖暂不可用：构建期没有取到 NGA 与虎扑的榜单，也没有可用的本地缓存。' : null,
+].filter((line): line is string => line !== null);
 ---
 
-<Layout title="新闻 · DOTA2 驿站" description="DOTA2 官方新闻、赛事动态与 Reddit 社区热帖。">
+<Layout
+	title="资讯 · DOTA2 驿站"
+	description="DOTA2 官方新闻、赛事动态、r/DotA2 与 r/compDota2 热帖、NGA 与虎扑社区热议，正文与帖子都镜像到站内直接阅读。"
+>
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 		<div class="mb-8">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">资讯中心</p>
-			<h1 class="mt-2 font-display text-3xl sm:text-4xl">新闻 & 社区</h1>
+			<h1 class="mt-2 font-display text-3xl sm:text-4xl">资讯</h1>
 			<p class="mt-3 max-w-2xl text-muted">
-				官方新闻取自 DOTA2 官网，正文在站内直接阅读；Reddit 热帖来自 r/DotA2，标题与正文自动译为中文并保留原文。
+				五个来源各一条列表：官网新闻、r/DotA2 热帖、r/compDota2 的赛事讨论，以及 NGA 与虎扑的
+				社区讨论。新闻正文与热帖主楼都抓回站内，点开直接读；要接着看讨论，帖子详情页里留了原帖入口。
 			</p>
 		</div>
 
-		<div id="news-tabs" class="mb-8 flex flex-wrap gap-2" role="group" aria-label="新闻分类">
+		<div id="info-tabs" class="mb-6 flex flex-wrap gap-2" role="group" aria-label="资讯来源">
 			{
-				TABS.map((tab) => (
+				SOURCES.map((source) => (
 					<button
 						type="button"
-						data-cat={tab.id}
+						data-source={source.id}
 						class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
-						aria-pressed={tab.id === 'all' ? 'true' : 'false'}
+						aria-pressed={source.id === DEFAULT_SOURCE ? 'true' : 'false'}
 					>
-						{tab.label}
-						<span class="ml-1 text-xs text-faint">{countOf(tab.id)}</span>
+						{source.label}
+						<span class="ml-1 text-xs tabular-nums text-faint">{source.count}</span>
 					</button>
 				))
 			}
 		</div>
 
 		{
-			articles.length === 0 ? (
-				<p class="mb-6 rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
-					官方新闻暂不可用：构建期没有取到 dota2.com.cn 的列表，也没有可用的本地缓存。
-				</p>
+			NOTICES.length > 0 ? (
+				<div class="mb-6 space-y-2">
+					{NOTICES.map((line) => (
+						<p class="rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">{line}</p>
+					))}
+				</div>
 			) : null
 		}
 
-		{
-			redditPosts.length === 0 && articles.length > 0 ? (
-				<p class="mb-6 rounded-2xl border border-line bg-surface px-5 py-4 text-sm text-muted">
-					Reddit 热帖暂不可用：Reddit 对匿名请求限流很紧，这次没取到也没有可用的本地缓存。
-				</p>
-			) : null
-		}
-
-		<div id="news-list" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+		<div id="info-list" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
 			{
-				cards.map((card) => (
-					<div data-cats={card.cats.join(',')}>
+				officialCards.map((card) => (
+					<div data-source="news">
 						<NewsCard item={card} />
+					</div>
+				))
+			}
+			{
+				REDDIT_TABS.map((tab) =>
+					redditCards(tab.id).map((card) => (
+						<div data-source={tab.id}>
+							<NewsCard item={card} />
+						</div>
+					)),
+				)
+			}
+			{
+				threadCards('nga').map((post) => (
+					<div data-source="nga">
+						<ThreadCard post={post} nowSec={now} />
+					</div>
+				))
+			}
+			{
+				threadCards('hupu').map((post) => (
+					<div data-source="hupu">
+						<ThreadCard post={post} nowSec={now} />
 					</div>
 				))
 			}
 		</div>
 
-		<p id="news-empty" class="py-16 text-center text-sm text-faint" hidden>
-			该栏目暂时还没有内容。
+		<p id="info-empty" class="py-16 text-center text-sm text-faint" hidden>
+			该来源暂时还没有内容。
 		</p>
 
+		<section class="mt-12 rounded-2xl border border-line bg-surface p-5 text-sm leading-relaxed text-muted">
+			<h2 class="font-display text-base text-cream">数据口径</h2>
+			<ul class="mt-3 space-y-2.5">
+				<li>
+					<span class="text-cream">两栏排的不是同一件事。</span>
+					NGA 那条是它自己的<span class="text-cream/80">热榜</span>（按回复数）；
+					虎扑那条是版面页最前面的 20 条，跟着它的
+					<span class="text-cream/80">最新回复</span>顺序（按时间）走。
+					所以「虎扑新帖」里能看到刚发的新帖，「NGA 热帖」里是回复最多的。
+				</li>
+				<li>
+					<span class="text-cream">回复数也不可横向比较</span>，所以两边没有归一化、也没有并成一条列表：
+					NGA 的数字来自它的热榜接口（榜单口径的回复数），虎扑给的是
+					<span class="text-cream/80">帖子总回复数</span>。同一个数在两个来源下不是同一件事。
+				</li>
+				<li>
+					<span class="text-cream">虎扑也有站内详情页。</span>
+					和 NGA 一样把帖子镜像到站内：主楼正文、亮评与第一页回复，页面里留了前往原帖的外链；
+					站内没有的其余回复要去虎扑看。
+				</li>
+				<li>
+					<span class="text-cream">微博与贴吧为什么不在。</span>
+					两家都不是解析问题：微博的内容接口全部要登录态（移动端接口直接 302 到
+					「Sina Visitor System」，热搜接口 403），贴吧直连 403、走读取代理拿到的是
+					「百度安全验证」。取不到数据就不做，不拿别的站的内容顶替。
+				</li>
+			</ul>
+		</section>
+
 		<p class="mt-10 text-center text-xs text-faint">
-			官方新闻版权归 DOTA2 官方网站所有，本站仅作站内阅读与归档。
+			官方新闻版权归 DOTA2 官方网站所有；社区热帖版权归 NGA、虎扑与原作者所有，站内只镜像正文，完整讨论请以原帖为准。
 		</p>
 	</section>
 </Layout>
 
 <script>
 	(() => {
-		const tabs = document.getElementById('news-tabs');
-		const list = document.getElementById('news-list');
-		const empty = document.getElementById('news-empty');
+		const tabs = document.getElementById('info-tabs');
+		const list = document.getElementById('info-list');
+		const empty = document.getElementById('info-empty');
 		if (!tabs || !list) return;
-		const cards = Array.from(list.querySelectorAll<HTMLElement>('[data-cats]'));
-		const apply = (cat: string) => {
+
+		const cards = Array.from(list.querySelectorAll<HTMLElement>('[data-source]'));
+		/** 带锚进来时落到对应来源；`#community` 是上一版「社区热议」留下的锚，落到 NGA 这一条。 */
+		const HASH_SOURCE: Record<string, string> = {
+			'#news': 'news',
+			'#reddit': 'reddit',
+			'#comp': 'comp',
+			'#nga': 'nga',
+			'#community': 'nga',
+			'#hupu': 'hupu',
+		};
+
+		let source = tabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.dataset.source ?? 'news';
+
+		const apply = () => {
 			let shown = 0;
 			for (const card of cards) {
-				const matched = (card.dataset.cats ?? '').split(',').includes(cat);
+				const matched = card.dataset.source === source;
 				card.hidden = !matched;
-				if (matched) shown++;
+				if (matched) shown += 1;
 			}
 			if (empty) empty.hidden = shown > 0;
 		};
-		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
-			btn.addEventListener('click', () => {
-				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
-				btn.setAttribute('aria-pressed', 'true');
-				apply(btn.dataset.cat ?? 'all');
-			});
-		});
-		// 无脚本时保留全部卡片，有脚本时先按默认栏目收敛一次，避免与高亮的标签页对不上。
-		const active = tabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]');
-		apply(active?.dataset.cat ?? 'all');
+
+		const select = (id: string) => {
+			const btn = tabs.querySelector<HTMLButtonElement>(`button[data-source="${id}"]`);
+			if (!btn) return;
+			for (const other of tabs.querySelectorAll('button')) other.setAttribute('aria-pressed', 'false');
+			btn.setAttribute('aria-pressed', 'true');
+			source = id;
+			/*
+			 * 把选中的来源写回地址栏（replaceState 不改历史，也不会再触发 hashchange）：
+			 * 刷新、分享出去的链接都落在同一条列表上；默认的「官网新闻」不带锚，地址干净。
+			 */
+			history.replaceState(null, '', id === 'news' ? location.pathname + location.search : `#${id}`);
+			apply();
+		};
+
+		for (const btn of tabs.querySelectorAll<HTMLButtonElement>('button')) {
+			btn.addEventListener('click', () => select(btn.dataset.source ?? 'news'));
+		}
+
+		const fromHash = () => {
+			const want = HASH_SOURCE[location.hash.toLowerCase()];
+			if (want) select(want);
+		};
+		fromHash();
+		window.addEventListener('hashchange', fromHash);
+
+		// 无脚本时保留全部卡片，有脚本时先按默认来源收敛一次，免得与高亮的页签对不上。
+		apply();
 	})();
 </script>

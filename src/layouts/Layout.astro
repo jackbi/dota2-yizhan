@@ -14,7 +14,7 @@ interface Props {
 	breadcrumbs?: { name: string; href?: string }[];
 }
 
-const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · 新闻 · 赛事 · 版本 · 英雄与装备', breadcrumbs = [] } = Astro.props;
+const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · 资讯 · 赛事 · 版本 · 英雄与装备', breadcrumbs = [] } = Astro.props;
 const path = Astro.url.pathname;
 
 /*
@@ -43,7 +43,7 @@ const structuredData = [
 		'@id': `${siteRoot}#website`,
 		name: 'DOTA2 驿站',
 		url: siteRoot,
-		description: '面向中文玩家的 DOTA2 门户：开播状态与分屏直播、新闻、社区热帖、赛事赛程、版本更新日志、英雄与装备资料、BP 阵容分析。',
+		description: '面向中文玩家的 DOTA2 门户：开播状态与分屏直播、资讯、赛事赛程、版本更新日志、英雄与装备资料、BP 阵容分析。',
 		inLanguage: 'zh-CN',
 	},
 	{
@@ -215,7 +215,7 @@ const structuredData = [
 						<span class="font-display">DOTA2 驿站</span>
 					</div>
 					<p class="mt-3 max-w-md text-sm text-muted">
-						一个专注 DOTA2 的玩家社区：OB 大家庭、分屏直播、新闻、赛事、版本与英雄装备资料。
+						一个专注 DOTA2 的玩家社区：OB 大家庭、分屏直播、资讯、赛事、版本与英雄装备资料。
 					</p>
 				</div>
 				<div class="flex flex-wrap gap-x-8 gap-y-3 text-sm">

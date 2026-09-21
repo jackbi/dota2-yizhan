@@ -7,14 +7,14 @@ import { reportSource } from './dataHealth';
 import { translateToChinese } from './translate';
 
 /**
- * Reddit 内容层：构建期抓取 r/DotA2 的热帖。
+ * Reddit 内容层：构建期抓取两个版块的热帖（r/DotA2 总版 + r/compDota2 赛事版）。
  *
  * 取数思路参考 Horizon（https://github.com/Thysrael/Horizon）：优先官方接口，
  * 不行再退到公开端点。区别是这边不接 AI —— 只做原文搬运，不抓评论、不润色、不翻译。
  *
  * 本机实测：old.reddit.com 与 www.reddit.com 的 HTML、.json 一律 403（返回 Blocked），
  * 只有 .rss 能通，而且几分钟内连发几次就 429。所以：
- * - 一次构建只发一个请求，结果落盘缓存，默认一小时；
+ * - **每个版块**一次构建只发一个请求、两次请求之间留间隔（`FEED_GAP_MS`），结果落盘缓存一小时；
  * - 429 / 403 / 断网时退回过期缓存，缓存也没有就整块不展示；
  * - 配了 REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET 时改走官方 OAuth 接口，
  *   能拿到赞数与评论数，也不再受匿名限流影响。
@@ -23,7 +23,25 @@ import { translateToChinese } from './translate';
  * 翻译失败就退回英文，不影响构建。
  */
 
-const SUBREDDIT = 'DotA2';
+/**
+ * 抓哪几个版块。`id` 同时用作缓存文件名、健康记录 id 与资讯页的来源锚点。
+ *
+ * - `reddit`：r/DotA2 总版（实测约 30 条/天，热帖榜更新很快）；
+ * - `comp`：r/compDota2 赛事版（实测约 1.5 条/天，聊职业比赛、阵容与转会）。
+ *
+ * 两边的取数方式完全一样，只是版块名不同；加版块只要往这里加一行。
+ */
+export const REDDIT_FEEDS = [
+	{ id: 'reddit', subreddit: 'DotA2' },
+	{ id: 'comp', subreddit: 'compDota2' },
+] as const;
+
+export type RedditFeed = (typeof REDDIT_FEEDS)[number];
+export type RedditFeedId = RedditFeed['id'];
+
+/** 两个版块之间等一会儿再发下一个请求：匿名端点连发就 429。 */
+const FEED_GAP_MS = 3000;
+
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'reddit');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 const USER_AGENT =
@@ -43,6 +61,10 @@ const IMAGE_URL_RE = /^https?:\/\/(?:i|preview)\.redd\.it\/|^https?:\/\/i\.imgur
 export interface RedditPost {
 	id: string;
 	title: string;
+	/** 来自哪个版块（`REDDIT_FEEDS.id`） */
+	feed: RedditFeedId;
+	/** Reddit 版块名，卡片与详情页的署名用它 */
+	subreddit: string;
 	/** 去掉 /u/ 前缀 */
 	author: string;
 	/** 讨论页地址 */
@@ -107,8 +129,21 @@ export function postBodyParagraphs(post: RedditPost): string[] {
 
 // ---------------------------------------------------------------- 缓存
 
-function cacheFile(): string {
-	return cachePath(CACHE_DIR, 'hot.json');
+function cacheFile(id: RedditFeedId): string {
+	return cachePath(CACHE_DIR, `list-${id}.json`);
+}
+
+/**
+ * 单版块时代的缓存名。改名的这一轮要是正好撞上 Reddit 限流，至少还能拿它兜住 r/DotA2，
+ * 而不是把整个 Reddit 栏空掉——和 `normalizePost` 迁移旧译文是同一类顾虑。
+ */
+const LEGACY_CACHE = 'hot.json';
+
+function feedOf(id: RedditFeedId): RedditFeed {
+	const feed = REDDIT_FEEDS.find((item) => item.id === id);
+	// 调用方只可能传表里的 id，这里只是为了让类型收窄。
+	if (!feed) throw new Error(`未知的 Reddit 版块：${id}`);
+	return feed;
 }
 
 /**
@@ -121,15 +156,30 @@ function normalizePost(raw: RedditPost & { titleZh?: string; summaryZh?: string;
 	return { ...rest, zh: { title: titleZh, summary: summaryZh, body: bodyZh } };
 }
 
+type CachedPost = RedditPost & { titleZh?: string; summaryZh?: string; bodyZh?: string };
+
 /** 读缓存，连同它的年龄；老字段在读的时候顺手迁移（见 `normalizePost`）。 */
-async function readCache(): Promise<{ posts: RedditPost[]; ageMs: number } | null> {
-	const hit = await readCacheJson<(RedditPost & { titleZh?: string; summaryZh?: string; bodyZh?: string })[]>(cacheFile());
-	if (!hit || !Array.isArray(hit.value)) return null;
-	return { posts: hit.value.map(normalizePost), ageMs: hit.ageMs };
+async function readCache(id: RedditFeedId): Promise<{ posts: RedditPost[]; ageMs: number } | null> {
+	const hit = await readCacheJson<CachedPost[]>(cacheFile(id));
+	if (hit && Array.isArray(hit.value)) return { posts: hit.value.map(normalizePost), ageMs: hit.ageMs };
+
+	/*
+	 * 只有 r/DotA2 有旧缓存可捡。它只是这一轮的兜底：那份缓存一旦过期、并且真的抓成功了，
+	 * 就会按新文件名写回去，旧的 `hot.json` 之后不再有人读。
+	 */
+	if (id !== 'reddit') return null;
+	const legacy = await readCacheJson<CachedPost[]>(cachePath(CACHE_DIR, LEGACY_CACHE));
+	if (!legacy || !Array.isArray(legacy.value)) return null;
+	return { posts: legacy.value.map(normalizePost).map((post) => withFeed(post, id)), ageMs: legacy.ageMs };
 }
 
-function writeCache(posts: RedditPost[]): Promise<void> {
-	return writeCacheFile(cacheFile(), JSON.stringify(posts));
+function writeCache(id: RedditFeedId, posts: RedditPost[]): Promise<void> {
+	return writeCacheFile(cacheFile(id), JSON.stringify(posts));
+}
+
+/** 老缓存里没有版块字段，读出来按当前版块补齐，页面与详情页不用再猜。 */
+function withFeed(post: RedditPost, id: RedditFeedId): RedditPost {
+	return { ...post, feed: id, subreddit: feedOf(id).subreddit };
 }
 
 async function get(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<Response | null> {
@@ -191,7 +241,7 @@ export function summarizeReddit(bodyHtml: string, maxLength = 120): string {
 }
 
 /** 两条取数路径解析出来的字段是一致的，统一在这里拼成帖子对象。 */
-function toPost(fields: {
+function toPost(feed: RedditFeed, fields: {
 	id: string;
 	title: string;
 	author: string;
@@ -206,6 +256,8 @@ function toPost(fields: {
 	return {
 		id: fields.id,
 		title: fields.title,
+		feed: feed.id,
+		subreddit: feed.subreddit,
 		author: fields.author,
 		permalink: fields.permalink,
 		createdAt: fields.createdAt,
@@ -219,21 +271,22 @@ function toPost(fields: {
 }
 
 /** RSS（Atom）→ 帖子列表。 */
-function parseRss(xml: string): RedditPost[] {
+function parseRss(xml: string, feed: RedditFeed): RedditPost[] {
 	const posts: RedditPost[] = [];
 	for (const match of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/g)) {
 		const entry = match[1];
 		const id = atomText(entry, 'id').trim().replace(/^t3_/, '');
 		const title = decodeEntities(atomText(entry, 'title')).trim();
 		if (!id || !title) continue;
-		const permalink = atomHref(entry, 'link').trim() || `https://www.reddit.com/r/${SUBREDDIT}/comments/${id}/`;
+		const permalink =
+			atomHref(entry, 'link').trim() || `https://www.reddit.com/r/${feed.subreddit}/comments/${id}/`;
 		const content = decodeEntities(atomText(entry, 'content'));
 		// RSS 会用 [link] 标出链接帖的目标地址，就在被我们截掉的页脚里，先捞出来。
 		const target = (content.match(/<a\s+href="([^"]+)"[^>]*>\s*\[link\]\s*<\/a>/i)?.[1] ?? '').trim();
 		const externalUrl = target && !target.includes(`/comments/${id}`) ? target : '';
 		const raw = stripRssFooter(content).trim();
 		posts.push(
-			toPost({
+			toPost(feed, {
 				id,
 				title,
 				author: atomText(entry, 'name').replace(/^\/u\//, '').trim(),
@@ -250,7 +303,7 @@ function parseRss(xml: string): RedditPost[] {
 }
 
 /** 官方接口的 JSON → 帖子列表。 */
-function parseListing(raw: unknown): RedditPost[] {
+function parseListing(raw: unknown, feed: RedditFeed): RedditPost[] {
 	const children = (raw as { data?: { children?: unknown } })?.data?.children;
 	if (!Array.isArray(children)) return [];
 	const posts: RedditPost[] = [];
@@ -262,11 +315,11 @@ function parseListing(raw: unknown): RedditPost[] {
 		if (!id || !title) continue;
 		const raw = stripRssFooter(decodeEntities(String(data.selftext_html ?? ''))).trim();
 		posts.push(
-			toPost({
+			toPost(feed, {
 				id,
 				title,
 				author: String(data.author ?? ''),
-				permalink: `https://www.reddit.com${String(data.permalink ?? `/r/${SUBREDDIT}/comments/${id}/`)}`,
+				permalink: `https://www.reddit.com${String(data.permalink ?? `/r/${feed.subreddit}/comments/${id}/`)}`,
 				createdAt: Number(data.created_utc) || 0,
 				bodyHtml: hasReadableBody(raw) ? raw : '',
 				externalUrl: data.is_self ? '' : String(data.url ?? ''),
@@ -281,7 +334,7 @@ function parseListing(raw: unknown): RedditPost[] {
 // ---------------------------------------------------------------- 抓取
 
 /** 配了应用凭据就走官方 OAuth（app-only），失败一律退到 RSS。 */
-async function fetchViaOAuth(): Promise<RedditPost[] | null> {
+async function fetchViaOAuth(feed: RedditFeed): Promise<RedditPost[] | null> {
 	const clientId = process.env.REDDIT_CLIENT_ID;
 	const clientSecret = process.env.REDDIT_CLIENT_SECRET;
 	if (!clientId || !clientSecret) return null;
@@ -299,31 +352,47 @@ async function fetchViaOAuth(): Promise<RedditPost[] | null> {
 	const token = (await tokenResponse.json().catch(() => null)) as { access_token?: string } | null;
 	if (!token?.access_token) return null;
 
-	const listing = await get(`https://oauth.reddit.com/r/${SUBREDDIT}/hot?limit=${MAX_POSTS}&raw_json=1`, {
+	const listing = await get(`https://oauth.reddit.com/r/${feed.subreddit}/hot?limit=${MAX_POSTS}&raw_json=1`, {
 		headers: { Authorization: `bearer ${token.access_token}`, 'User-Agent': USER_AGENT },
 	});
 	if (!listing) return null;
 
-	const posts = parseListing(await listing.json().catch(() => null));
+	const posts = parseListing(await listing.json().catch(() => null), feed);
 	return posts.length > 0 ? posts.slice(0, MAX_POSTS) : null;
 }
 
-async function fetchViaRss(): Promise<RedditPost[] | null> {
-	const response = await get(`https://www.reddit.com/r/${SUBREDDIT}/hot/.rss`, {
+async function fetchViaRss(feed: RedditFeed): Promise<RedditPost[] | null> {
+	const response = await get(`https://www.reddit.com/r/${feed.subreddit}/hot/.rss`, {
 		headers: { 'User-Agent': USER_AGENT, Accept: 'application/atom+xml,application/xml,text/xml,*/*' },
 	});
 	if (!response) return null;
-	const posts = parseRss(await response.text());
+	const posts = parseRss(await response.text(), feed);
 	return posts.length > 0 ? posts.slice(0, MAX_POSTS) : null;
 }
 
-let postsPromise: Promise<RedditPost[]> | null = null;
+let allPostsPromise: Promise<RedditPost[]> | null = null;
 
-/** r/DotA2 热帖。一次构建只抓一轮，页面多处共用。 */
+/**
+ * 两个版块的热帖（按 `REDDIT_FEEDS` 顺序拼成一条）。一次构建只抓一轮，页面多处共用。
+ *
+ * **串行**：匿名端点连发就 429（两个版块之间隔 `FEED_GAP_MS`）。命中缓存的那一轮不联网，
+ * 也就没有这个间隔带来的等待。
+ */
 export function fetchRedditPosts(): Promise<RedditPost[]> {
-	if (!postsPromise) postsPromise = loadPosts();
-	return postsPromise;
+	if (!allPostsPromise) allPostsPromise = loadAllFeeds();
+	return allPostsPromise;
 }
+
+async function loadAllFeeds(): Promise<RedditPost[]> {
+	const posts: RedditPost[] = [];
+	for (const [index, feed] of REDDIT_FEEDS.entries()) {
+		if (index > 0) await sleep(FEED_GAP_MS);
+		posts.push(...(await loadFeed(feed)));
+	}
+	return posts;
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** 正文 HTML → 用于翻译的纯文字段落，同时告诉调用方有没有被截断。 */
 function bodyToText(html: string, limit: number): { text: string; truncated: boolean } {
@@ -366,36 +435,39 @@ async function withTranslations(posts: RedditPost[]): Promise<RedditPost[]> {
 	return translated;
 }
 
-async function loadPosts(): Promise<RedditPost[]> {
-	const cached = await readCache();
+async function loadFeed(feed: RedditFeed): Promise<RedditPost[]> {
+	/** 两个版块各写一条健康记录，汇总里一眼看得出是哪个版块挂了。 */
+	const healthId = `reddit-${feed.id}`;
+	const label = `Reddit r/${feed.subreddit}`;
+	const cached = await readCache(feed.id);
 	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) {
-		await reportSource('reddit', 'Reddit r/DotA2', 'cache', `${cached.posts.length} 条，命中 1 小时缓存`);
+		await reportSource(healthId, label, 'cache', `${cached.posts.length} 条，命中 1 小时缓存`);
 		return cached.posts;
 	}
 	if (OFFLINE) {
 		const posts = cached?.posts ?? [];
-		await reportSource('reddit', 'Reddit r/DotA2', posts.length > 0 ? 'cache' : 'empty', `${posts.length} 条，离线构建`);
+		await reportSource(healthId, label, posts.length > 0 ? 'cache' : 'empty', `${posts.length} 条，离线构建`);
 		return posts;
 	}
 
 	// 先试官方接口，再退到匿名 RSS；两条都不通就用过期缓存。
-	const viaOAuth = await fetchViaOAuth();
-	const fetched = viaOAuth ?? (await fetchViaRss());
+	const viaOAuth = await fetchViaOAuth(feed);
+	const fetched = viaOAuth ?? (await fetchViaRss(feed));
 	if (!fetched) {
 		const posts = cached?.posts ?? [];
 		await reportSource(
-			'reddit',
-			'Reddit r/DotA2',
+			healthId,
+			label,
 			posts.length > 0 ? 'cache' : 'empty',
 			posts.length > 0 ? `${posts.length} 条，匿名接口被限流，退回过期缓存` : '请求失败且无缓存',
 		);
 		return posts;
 	}
 
-	const posts = await withTranslations(fetched);
-	await writeCache(posts);
+	const posts = (await withTranslations(fetched)).map((post) => withFeed(post, feed.id));
+	await writeCache(feed.id, posts);
 	const channel = viaOAuth ? 'OAuth 接口' : '匿名 RSS';
-	await reportSource('reddit', 'Reddit r/DotA2', 'fresh', `${posts.length} 条，来自${channel}`);
+	await reportSource(healthId, label, 'fresh', `${posts.length} 条，来自${channel}`);
 	return posts;
 }
 
@@ -424,7 +496,7 @@ export function toRedditCard(post: RedditPost): NewsCardItem {
 		img: post.image || undefined,
 		tags: ['Reddit'],
 		badge: 'Reddit 社区',
-		meta: post.score != null ? `r/${SUBREDDIT} · ${post.score} 赞 · ${post.comments} 评论` : `r/${SUBREDDIT} · 热度排序`,
+		meta: post.score != null ? `r/${post.subreddit} · ${post.score} 赞 · ${post.comments} 评论` : `r/${post.subreddit} · 热度排序`,
 		href: `/news/reddit/${post.id}`,
 	};
 }

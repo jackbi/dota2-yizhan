@@ -34,9 +34,9 @@ const showCover = Boolean(item.img) && !content.includes(coverName);
 ---
 
 <Layout
-	title={`${item.title} · 新闻 · DOTA2 驿站`}
+	title={`${item.title} · 资讯 · DOTA2 驿站`}
 	description={item.summary || item.title}
-	breadcrumbs={[{ name: '新闻', href: '/news' }, { name: item.title }]}
+	breadcrumbs={[{ name: '资讯', href: '/news' }, { name: item.title }]}
 >
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
@@ -44,7 +44,7 @@ const showCover = Boolean(item.img) && !content.includes(coverName);
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 		<a href="/news" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
-			返回新闻列表
+			返回资讯列表
 		</a>
 
 		<header class="mt-5 border-b border-line pb-6">

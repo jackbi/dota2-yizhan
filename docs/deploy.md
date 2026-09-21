@@ -18,7 +18,7 @@
 | `.cache/news/` | dota2.com.cn 官方新闻列表与正文 | 列表 30 分钟，正文永久 |
 | `.cache/patches/` | dota2.com 版本列表、每个版本的更新日志、英雄/物品/技能名字表 | 列表 30 分钟，其余 7 天 |
 | `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与帖子详情 | 列表 30 分钟，帖子 2 小时 – 7 天 |
-| `.cache/reddit/` | r/DotA2 热帖 | 1 小时 |
+| `.cache/reddit/` | r/DotA2 与 r/compDota2 热帖 | 1 小时 |
 | `.cache/opendota/` | 队伍索引、职业比赛、阵容名单 | 6 小时 – 7 天 |
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
 | `.cache/translate/` | 机器翻译结果 | 永久 |

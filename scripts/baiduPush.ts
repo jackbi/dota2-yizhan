@@ -32,7 +32,7 @@ const MAX_REQUESTS = 8;
  * 优先推的页面：抓取入口。配额只有个位数时，先让百度拿到首页与各列表页，
  * 它自己会顺着链接往下爬；把 10 条配额全给长尾帖，等于一个入口都没交。
  */
-const PRIORITY = ['/', '/heroes/', '/items/', '/patches/', '/tournaments/', '/draft/', '/live/', '/news/', '/community/', '/ob/'];
+const PRIORITY = ['/', '/heroes/', '/items/', '/patches/', '/tournaments/', '/draft/', '/live/', '/news/', '/ob/'];
 
 const pushUrl = (process.env.BAIDU_PUSH_URL ?? '').trim();
 const dryRun = process.argv.includes('--dry-run');

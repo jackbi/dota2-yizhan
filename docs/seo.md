@@ -18,7 +18,7 @@ dota2 分屏 看直播         → /live
 | 东西 | 在哪 | 为什么 |
 | --- | --- | --- |
 | `site` 配置 | `astro.config.mjs` | sitemap 与 canonical 都要求绝对 URL；没有它，同一个页面会以 www / 尾斜杠 / 带参数几种形式各算一份 |
-| sitemap | `@astrojs/sitemap` → `/sitemap-index.xml` + `/sitemap-0.xml` | 一次列全 **520 个预渲染页面**（英雄、物品、更新日志、赛事、战队、新闻、社区帖）。`prerender = false` 的几条（`/me`、`/api/*`）不会进去 |
+| sitemap | `@astrojs/sitemap` → `/sitemap-index.xml` + `/sitemap-0.xml` | 一次列全所有预渲染页面（英雄、物品、更新日志、赛事、战队、资讯与社区帖）；条数随当轮抓到的新闻、帖子与比赛浮动，不写死。`prerender = false` 的几条（`/me`、`/api/*`）不会进去，`/community` 那条跳转也不会 |
 | robots.txt | `public/robots.txt` | 指路 sitemap；挡掉 `/api/` 与要登录的 `/me`。`/party` **不挡**——它对匿名访客也是 200 的公开页，「dota2 开黑」是真实流量 |
 | canonical | `src/layouts/Layout.astro` | 每个页面自己声明主版本 |
 | og / twitter 卡片 | 同上 | 分享到 NGA、贴吧、TG 群时给的是标题+描述+图，不然只剩一个裸链接 |

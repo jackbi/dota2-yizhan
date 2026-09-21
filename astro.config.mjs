@@ -312,6 +312,17 @@ export default defineConfig({
 	session: false,
 
 	/*
+	 * 「新闻」与「社区」并成「资讯」之后，`/community` 不再是一张页面。
+	 * 两条路由都被搜索引擎收录过，所以不能让它 404，这里留一个静态跳转页
+	 * （Cloudflare 产物是 `_redirects` 里的 301），并把访客落在 NGA 那条列表上：
+	 * 两个中文社区来源里它内容更多，虎扑那条从 `#hupu` 进。
+	 * 来源切换认锚，见 `src/pages/news.astro` 的脚本。
+	 */
+	redirects: {
+		'/community': '/news#nga',
+	},
+
+	/*
 	 * 用 `astro:env` 而不是直接读 `process.env`：Node 下两者等价，但换到
 	 * Cloudflare 这类运行时，密钥要从 Workers 的绑定里取，只有 astro:env 会替我们接上。
 	 */
