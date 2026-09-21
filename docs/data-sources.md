@@ -78,6 +78,20 @@ NGA 的 `replies` 来自它的热榜接口，虎扑给的是**帖子总回复数
   评论数，也不受匿名限流影响。**加版块时留意请求数跟着翻倍**，匿名那点额度经不起。
 - 标题、摘要、正文都翻成中文（`translate.ts`，译文按原文哈希永久缓存），失败退回英文。
 
+**凭据为什么一直配不上。** Reddit 2025-11-11 的公告（r/redditdev「Introducing the Responsible
+Builder Policy + new approval process for API access」）结束了自助 API 访问：`/prefs/apps` 点
+“create app” 会直接跳到 Responsible Builder Policy，表单不出现。这不是账号或浏览器的问题，
+社区里从 2025-11 到 2026-05 一直有人报同一个现象。想拿 client id 只有两条路：
+
+- 提交申请等审批（`api_request_type_developer_clone` 那张表单，见
+  [Responsible Builder Policy](https://support.reddithelp.com/hc/en-us/articles/42728983564564-Responsible-Builder-Policy)
+  里的 Developer 一节）；官方不承诺回复时间，实际也有很多人没等到回音。
+- 走 [Devvit](https://developers.reddit.com/)——但 Devvit 应用跑在 Reddit 内部，给不了外部站点
+  数据，官方 FAQ 也写明「外部脚本、机器人、网站是另一套认证流程」。本地用不上。
+
+所以这一栏就按匿名端点跑着：实测两个版块都能出数据，只是没有赞数与评论数，且要守
+`FEED_GAP_MS` 那点间隔。OAuth 那套代码留着，哪天批下来填进 `.env` 就自动生效。
+
 加版块只要往 `REDDIT_FEEDS` 加一行即可：缓存文件名、健康记录 id 与页面锚点都用那个 `id`，
 详情页的「返回」也是按 `post.feed` 回到自己那一栏。
 

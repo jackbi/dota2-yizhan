@@ -339,7 +339,7 @@ Runtime 侧遇到中转自己回的 401（两边口令不一致）会直接说�
 | `CLOUDFLARE_ACCOUNT_ID` | 部署。`wrangler whoami` 输出里的那串 |
 | `STRATZ_RELAY_URL` / `STRATZ_RELAY_TOKEN` | 构建期取 STRATZ（同上面「客户端」一节） |
 | `LIQUIPEDIA_CONTACT` | Liquipedia 要求 User-Agent 里带联系方式 |
-| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 构建期取 Reddit。不配也能跑，但匿名端点连抓两个版块，第二个就 429（0.3.1 那一轮 Reddit 赛事讨论整栏是空的）；生成步骤见 `scripts/reddit-oauth.setup.sh` |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | 构建期取 Reddit。不配也能跑，但匿名端点连抓两个版块，第二个就 429（0.3.1 那一轮 Reddit 赛事讨论整栏是空的）；生成步骤见 `scripts/reddit-oauth.setup.sh`。Reddit 已关掉自助建应用，拿不到新 client id 时只能走申请，详见 `docs/data-sources.md` |
 
 `.cache/` 用 `actions/cache` 滚动接上一轮，所以每轮只有过期的源会重抓。**第一轮是冷构建**：
 实测在 GitHub runner 上 3 分 31 秒，17 个源全部抓到，斗鱼/虎牙/OpenDota 都通，不需要代理。
