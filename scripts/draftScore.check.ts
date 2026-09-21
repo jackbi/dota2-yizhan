@@ -259,6 +259,28 @@ assert.ok(
 		!noCounter.candidates.some((item) => item.reasons.some((line) => line.includes('线上'))),
 		'没有线上数据时不该写出线上依据',
 	);
+	/*
+	 * 对面一个人都还没选时不能出线上依据：估值那一步会用「预计能补到」的预测英雄填空位，
+	 * 把它们算进「线上对上他们已选」就是拿没发生的事当依据。
+	 * 这里故意把每一格都填上数据——只要有预测的人混进来，这条断言就会失败。
+	 */
+	const everywhere: Record<string, [number, number]> = {};
+	for (const position of [1, 2, 3, 4, 5]) {
+		for (const other of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) everywhere[`201|${position}|${other}`] = [800, 260];
+	}
+	const noPicksYet = advise({
+		data: counterData,
+		recorded: [null, null, null, null, null, null, null],
+		ourSide: OUR,
+		firstPicker: OUR,
+		lanes: { vs: everywhere, with: {} },
+	});
+	assert.ok(noPicksYet, '第七手之后还要能给建议');
+	assert.equal(noPicksYet.step, 8);
+	assert.ok(
+		!noPicksYet.candidates.some((item) => item.reasons.some((line) => line.includes('线上'))),
+		'对面还没有真人选过时，线上依据不能拿「预计能补到」的人来凑',
+	);
 }
 
 // ---------------------------------------------------------------- 能力维度与体系

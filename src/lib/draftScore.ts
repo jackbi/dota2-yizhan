@@ -692,9 +692,13 @@ export function advise(input: AdviseInput): Advice | null {
 	/*
 	 * 线上对位要「谁打几号位」才能反方向查表（见 `laneEdgeEither`）：号位用估值那一步分配好的结果，
 	 * 不然就得为每一手重新分配一次。
+	 *
+	 * **只取 `settled` 的人**：估值那一步的空位是拿「预计能补到」的预测英雄填的，
+	 * 把它们也算进来，依据里那句「线上对上他们已选」就名不副实了——同一张卡片里的整局对位
+	 * 用的是真实已选，两个数字会互相核不上。前面还没人选时就不出这条依据，与整局对位一致。
 	 */
-	const slotsOf = (report: { slots: { position: number; hero: DraftHero | null }[] }): { id: number; position: number }[] =>
-		report.slots.filter((slot) => slot.hero).map((slot) => ({ id: slot.hero!.id, position: slot.position }));
+	const slotsOf = (report: { slots: { position: number; hero: DraftHero | null; settled: boolean }[] }): { id: number; position: number }[] =>
+		report.slots.filter((slot) => slot.settled && slot.hero).map((slot) => ({ id: slot.hero!.id, position: slot.position }));
 	const ourSlots = slotsOf(ourBase);
 	const theirSlots = slotsOf(theirBase);
 	const enemySummon = theirHeroes.some((hero) => hero.summon);
