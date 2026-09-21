@@ -1,6 +1,6 @@
 import type { DraftData, DraftHero } from './draftData.ts';
 import type { LaneData } from './draftLanes.ts';
-import { laneEdge, laneEdgeEither, lanePartnerPosition } from './draftLanes.ts';
+import { laneEdgeEither, lanePartnerEdge, lanePartnerPosition } from './draftLanes.ts';
 import type { DraftSide } from './draftOrder.ts';
 import type { FoeForm } from './draftFoe.ts';
 import { foeHeroOf, foeWinRate } from './draftFoe.ts';
@@ -251,10 +251,12 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 		const rows = side === 'ours' ? ours.rows : theirs.rows;
 		for (const row of rows) {
 			const partnerPosition = lanePartnerPosition(row.position);
-			if (partnerPosition === null || !row.hero) continue;
+			// 一号位 ↔ 五号位、三号位 ↔ 四号位会被两个号位各扫到一次（还有反方向兜底），
+			// 只从号位小的那一端记，免得同一对搭档在面板与提示词里出现两遍。
+			if (partnerPosition === null || partnerPosition < row.position || !row.hero) continue;
 			const partner = rows.find((entry) => entry.position === partnerPosition)?.hero ?? null;
 			if (!partner) continue;
-			const edge = laneEdge(lanes?.with, row.hero.id, row.position, [partner.id]);
+			const edge = lanePartnerEdge(lanes?.with, row.hero.id, row.position, { id: partner.id, position: partnerPosition });
 			if (!edge) continue;
 			lanePartners.push({ side, position: row.position, hero: row.hero, partner, net: edge.net, matches: edge.matches });
 		}

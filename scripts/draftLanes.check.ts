@@ -7,6 +7,7 @@ import {
 	laneEdge,
 	laneEdgeEither,
 	laneEdgeText,
+	lanePartnerEdge,
 } from '../src/lib/draftLanes.ts';
 
 /**
@@ -160,6 +161,33 @@ const ok = (label: string): void => {
 	assert.equal(laneEdgeEither(lanes, 27, 5, [{ id: 5, position: 1 }]), null, '反方向的号位对不上就没有');
 	assert.equal(laneEdgeEither(undefined, 27, 5, theirs), null, '没有数据时返回 null');
 	ok('双向查表：反方向兜底、取反号、正方向优先');
+}
+
+// ---- 同路搭档：也走反方向兜底，但**不取反号** ----
+//
+// 同一条线的结果是两个人共同经历的那件事：取反号会把「一起把线打好了」写成「一起被打崩了」。
+{
+	// 只有反方向：二号位的水晶室女和四号位的暗影萨满同路，线上 +12%
+	const lanes = buildLaneSlice([{ heroId1: 5, heroId2: 27, matchCount: 80, winCount: 50, lossCount: 30 }], 2);
+	const partner = { id: 5, position: 2 };
+	const edge = lanePartnerEdge(lanes, 27, 4, partner);
+	assert.ok(edge, '正方向没有时要退到反方向');
+	assert.ok(Math.abs(edge!.net - 0.25) < 1e-9, `搭档的净对线不取反号（应保持 +25%），实际 ${formatNet(edge!.net)}`);
+	assert.equal(edge!.matches, 80, '场次照旧');
+	// 正方向有就用正方向
+	const both = buildLaneSlice(
+		[
+			{ heroId1: 27, heroId2: 5, matchCount: 60, winCount: 15, lossCount: 45 },
+			{ heroId1: 5, heroId2: 27, matchCount: 80, winCount: 50, lossCount: 30 },
+		],
+		4,
+	);
+	const forward = lanePartnerEdge(both, 27, 4, partner);
+	assert.ok(forward, '正方向有数据时用正方向');
+	assert.equal(forward!.matches, 60, '只用正方向那 60 场');
+	assert.ok(Math.abs(forward!.net - -0.5) < 1e-9, '正方向是 −50%');
+	assert.equal(lanePartnerEdge(lanes, 27, 4, { id: 5, position: 1 }), null, '反方向的号位对不上就没有');
+	ok('同路搭档：反方向兜底、不取反号');
 }
 
 // ---- 文案：数字要写全，且不能出现 NaN / undefined ----

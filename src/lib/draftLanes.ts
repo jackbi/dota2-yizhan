@@ -148,6 +148,20 @@ export function laneEdgeEither(lanes: HeroLanes | undefined | null, heroId: numb
 }
 
 /**
+ * 同一条线上的搭档：先看「我打这个号位时和谁同路」，没有再看反方向。
+ *
+ * 与 `laneEdgeEither` 的区别只有一处：**搭档不取反号**。同一条线的结果是两个人共同经历的那件事，
+ * 从谁的视角记都是一样的数；取反号会把「一起打得好」写成「一起被打得惨」。
+ */
+export function lanePartnerEdge(lanes: HeroLanes | undefined | null, heroId: number, position: number, partner: LaneOther): LaneEdge | null {
+	const forward = laneEdge(lanes, heroId, position, [partner.id]);
+	if (forward) return forward;
+	const cell = cellOf(lanes, partner.id, partner.position, heroId);
+	if (!cell) return null;
+	return { net: cell.net, pairs: 1, matches: cell.matches, cells: [{ otherId: partner.id, net: cell.net, matches: cell.matches }] };
+}
+
+/**
  * 把一整批 `laneOutcome` 行整理成查表。
  *
  * `isWith` 在 STRATZ 那边是一个查询参数（false = 线上的对手，true = 同路的人），

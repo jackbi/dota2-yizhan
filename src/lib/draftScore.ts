@@ -5,7 +5,7 @@
  */
 import type { DraftData, DraftHero } from './draftData.ts';
 import type { LaneData } from './draftLanes.ts';
-import { formatNet, laneEdge, laneEdgeEither, lanePartnerPosition, type LaneEdge } from './draftLanes.ts';
+import { formatNet, laneEdgeEither, lanePartnerEdge, lanePartnerPosition, type LaneEdge } from './draftLanes.ts';
 import type { DraftAction, DraftOwner, DraftSide, RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, snapshot, sideOfOwner } from './draftOrder.ts';
 import type { HeroMatchups } from './draftMatchup.ts';
@@ -742,7 +742,7 @@ export function advise(input: AdviseInput): Advice | null {
 			const partnerIndex = partnerPosition === null ? -1 : assignment.positions.findIndex((assigned) => assigned === partnerPosition);
 			if (partnerIndex >= 0 && partnerIndex !== assignment.positions.length - 1) {
 				const partner = [...ourIds, hero.id][partnerIndex];
-				const partnerLane = laneEdge(lanes?.with, hero.id, position, [partner]);
+				const partnerLane = lanePartnerEdge(lanes?.with, hero.id, position, { id: partner, position: partnerPosition });
 				if (partnerLane) {
 					const partnerName = byId.get(partner)?.name ?? `英雄 #${partner}`;
 					reasons.push(`和我们的 ${partnerName} 同路（${partnerLane.matches.toLocaleString('zh-CN')} 场）：线上净对线 ${formatNet(partnerLane.net)}`);
