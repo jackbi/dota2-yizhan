@@ -23,6 +23,8 @@ import type { DraftSide } from '../lib/draftOrder.ts';
 import { CM_PHASE_STARTS, CM_STEPS, canPlay, otherSide, play, sideOfOwner, skip, snapshot, undo } from '../lib/draftOrder.ts';
 import type { FoeForm } from '../lib/draftFoe.ts';
 import { foeHeadline, foeHighlights, foeWinRate } from '../lib/draftFoe.ts';
+import type { LaneData } from '../lib/draftLanes.ts';
+import { formatNet } from '../lib/draftLanes.ts';
 
 /**
  * 队伍名的正规化规则，**必须与 `opendota.ts` 里的 `norm` 逐字一致**：
@@ -141,6 +143,11 @@ if (data) {
 	let teamIndexPromise: Promise<Map<string, number>> | null = null;
 	/** 队名是打出来的，等手停下来再取，省掉一整串半截队名的请求。 */
 	let foeTimer: number | null = null;
+	/**
+	 * 线上对位（谁在线上打谁、和谁走一路）。**可选增强**：单独一份静态文件、启动后异步取，
+	 * 拿不到就少一条依据，不挡录 BP、也不影响胜率算法（它不进胜率）。
+	 */
+	let lanes: LaneData | null = null;
 	/** 双方阵容锁定后的对比结果；BP 一变就作废。 */
 	let verdict: DraftVerdict | null = null;
 	/** 模型写的那段文字（数字仍然来自 `verdict`）。 */
@@ -673,11 +680,12 @@ if (data) {
 				ourIds: directMode ? directOurs : pickedIds(ourSide),
 				theirIds: directMode ? directTheirs : pickedIds(otherSide(ourSide)),
 				ourSide,
-				selfTeam: ourTeam,
-				foeTeam: theirTeam,
-				foeForm,
-			});
-		}
+					selfTeam: ourTeam,
+					foeTeam: theirTeam,
+					foeForm,
+					lanes,
+				});
+			}
 
 		/**
 		 * 开放条件：双方各五个号位都落人。
@@ -738,6 +746,30 @@ if (data) {
 							.map((pick) => `${esc(pick.hero.name)}（${pick.picks} 场${pick.rate === null ? '' : ` ${pctText(pick.rate)}`}）`)
 							.join('、')}</p>`
 					: '';
+			/*
+			 * 分路对位单独一段：它不进胜率，混在上面那行「参考 0」的对比里会被当成胜率的组成部分。
+			 * 每一格都带场次，让人自己判断这条线有多可信。
+			 */
+			const laneCells =
+				v.laneEdges.length > 0
+					? `<p class="mt-2 text-xs text-muted">分路对位（线上）：${v.laneEdges
+							.map(
+								(edge) =>
+									`${edge.side === 'ours' ? esc(v.ours.label) : esc(v.theirs.label)} ${edge.position} 号位 ${esc(edge.hero.name)} ${formatNet(edge.net)}（${edge.matches.toLocaleString('zh-CN')} 场${
+										edge.opponents.length > 0 ? `，对过 ${esc(edge.opponents[0].hero.name)} 等 ${edge.opponents.length} 个` : ''
+									}）`,
+							)
+							.join('；')}</p>`
+					: '';
+			const lanePartners =
+				v.lanePartners.length > 0
+					? `<p class="mt-1 text-xs text-faint">同路搭档（常规分路）：${v.lanePartners
+							.map(
+								(pair) =>
+									`${pair.side === 'ours' ? esc(v.ours.label) : esc(v.theirs.label)} ${esc(pair.hero.name)} 与 ${esc(pair.partner.name)} ${formatNet(pair.net)}（${pair.matches.toLocaleString('zh-CN')} 场）`,
+							)
+							.join('；')}</p>`
+					: '';
 			const ai = verdictAi
 				? `<div class="mt-3 space-y-1.5">${verdictAi.summary ? `<p class="text-sm text-cream">${esc(verdictAi.summary)}</p>` : ''}${verdictAi.points
 						.map((point) => `<p class="text-xs leading-relaxed text-muted">${point.dimension ? `<span class="text-gold">${esc(point.dimension)}</span> ` : ''}${esc(point.text)}</p>`)
@@ -757,6 +789,8 @@ if (data) {
 					<p class="mt-2 text-xs text-faint">胜率 = 号位偏差 ${(v.edge.position * 100).toFixed(1)} + 对位偏差 ${(v.edge.counter * 100).toFixed(1)}（百分点；号位偏差按五个号位合计）</p>
 					<div class="mt-3">${rows}</div>
 					${picks}
+					${laneCells}
+					${lanePartners}
 					<p class="mt-2 text-xs leading-relaxed text-faint">${v.notes.map((note) => esc(note)).join(' ')}</p>
 					${ai}
 				</div>`;
@@ -820,7 +854,28 @@ if (data) {
 		// ------------------------------------------------------------ 建议
 
 		function currentAdvice(): Advice | null {
-			return advise({ data: draft, recorded, ourSide, firstPicker: firstPickerSide(), limit: 5, foeForm });
+			return advise({ data: draft, recorded, ourSide, firstPicker: firstPickerSide(), limit: 5, foeForm, lanes });
+		}
+
+		/**
+		 * 取线上对位那份静态文件。
+		 *
+		 * 单独一份、启动后异步取，是因为它有 0.2MB 而 /draft 已经内联了 90KB 的阵容数据；
+		 * 它是可选增强，拉不到就少「分路对位」这条依据，录 BP 与胜率都不受影响。
+		 * 取回来之后重画一次：不重画的话，用户得等到下一次操作才看得到这一条。
+		 */
+		async function loadLanes(): Promise<void> {
+			try {
+				const res = await fetch('/draft-lanes.json');
+				if (!res.ok) return;
+				const body = (await res.json()) as Partial<LaneData>;
+				if (!body?.vs || !body?.with) return;
+				lanes = { vs: body.vs, with: body.with };
+				renderAdvice();
+				renderVerdict();
+			} catch {
+				// 拉不到就保持 null：这条依据本来就可有可无。
+			}
 		}
 
 		/**
@@ -995,7 +1050,7 @@ if (data) {
 			syncAiBlock();
 			try {
 				// 替对面落子：同一份「对面擅长」的数据这时是**它自己**的，人称靠 foeSide 翻过来。
-				const enemyAdvice = advise({ data: draft, recorded, ourSide: turn.side, firstPicker: firstPickerSide(), limit: 5, foeForm, foeSide: 'ours' });
+				const enemyAdvice = advise({ data: draft, recorded, ourSide: turn.side, firstPicker: firstPickerSide(), limit: 5, foeForm, foeSide: 'ours', lanes });
 				if (!enemyAdvice || enemyAdvice.candidates.length === 0) {
 					lastAiMove = '这一步没有可用候选，撤销或跳过后再来';
 					aiStallStep = snapshotNow().nextStep;
@@ -1396,5 +1451,7 @@ if (data) {
 		renderAll();
 		// 刷新后带着上次的队名，顺手把对面的近期习惯也取回来。
 		void syncFoeForm();
+		// 线上对位是可选增强，慢慢取，取到了自己会重画一次。
+		void loadLanes();
 	}
 }

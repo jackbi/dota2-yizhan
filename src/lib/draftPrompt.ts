@@ -8,6 +8,7 @@ import type { RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, sideOfOwner } from './draftOrder.ts';
 import type { FoeForm } from './draftFoe.ts';
 import { foeHighlights, foeRecordLine, foeWinRate } from './draftFoe.ts';
+import { formatNet } from './draftLanes.ts';
 import type { DraftVerdict, VerdictRow } from './draftVerdict.ts';
 
 /**
@@ -173,7 +174,7 @@ export function buildSystemPrompt(role: PromptRole = 'ours'): string {
 			'',
 			'你必须遵守：',
 			'1. 只从用户给出的候选里挑 1 个，输出里的 heroId 必须是候选列表里出现过的数字。',
-			'2. 理由里的数字只能来自用户给出的字段（号位胜率、对位胜率、样本场次、职业出场与被禁次数、估值）。',
+		'2. 理由里的数字只能来自用户给出的字段（号位胜率、对位胜率、线上净对线、样本场次、职业出场与被禁次数、估值）。',
 			'   你不知道这些数据之外的任何统计，也不要去回忆版本强弱，绝对不要编造数字。',
 			'3. 你要选的是对自己最有利的那一手：挑选补自己的阵容缺口，禁用掐掉对面最想要的人。',
 			'   候选的依据里有对位数据（谁好打谁），用它判断这一手值不值，别只盯号位胜率。',
@@ -197,7 +198,8 @@ export function buildSystemPrompt(role: PromptRole = 'ours'): string {
 		'',
 		'你必须遵守：',
 		`1. 只能从用户给出的候选里挑 ${ADVICE_TARGET_COUNT} 个，输出里的 heroId 必须是候选列表里出现过的数字。`,
-		'2. 理由里出现的数字只能来自用户给出的字段（号位胜率、对位胜率、样本场次、职业出场与被禁次数、估值、阵容结构）。',
+		'2. 理由里出现的数字只能来自用户给出的字段（号位胜率、对位胜率、线上净对线、样本场次、职业出场与被禁次数、估值、阵容结构）。',
+		'   线上净对线是**线上阶段**的净胜，与整局对位胜率不是一回事，不要混着说。',
 		'   你不知道这些数据之外的任何统计，也不要去回忆版本强弱，绝对不要编造数字。',
 		'3. 每条理由不超过两句，直接说这一手为什么拿它、为什么是现在。',
 		'4. 如果这一手是禁用，理由要说明对面拿走它会造成什么；如果是挑选，说明它补上了哪个号位。',
@@ -328,6 +330,31 @@ export function buildVerdictUserPrompt(input: VerdictPromptInput): string {
 		'',
 		`维度对比（${ours} : ${theirs}）：`,
 		renderVerdictRows(verdict.rows),
+		// 分路对位单独一块：它与「对位偏差」不是一个口径，混在同一行里模型一定会当成同一件事。
+		verdict.laneEdges.length > 0
+			? [
+					'',
+					'分路对位（线上阶段；对手取「这个人打这个号位时线上真的遇到过的」，不是同位对位）：',
+					...verdict.laneEdges.map((edge) => {
+						const foes = edge.opponents
+							.slice(0, 3)
+							.map((entry) => `${entry.hero.name} ${formatNet(entry.net)}（${entry.matches} 场）`)
+							.join('、');
+						return `- ${edge.side === 'ours' ? ours : theirs} ${edge.position} 号位 ${edge.hero.name}：平均净对线 ${formatNet(edge.net)}（线上 ${edge.matches} 场）
+  对过：${foes}`;
+					}),
+				].join('\n')
+			: '',
+		verdict.lanePartners.length > 0
+			? [
+					'',
+					'同路搭档（常规分路，线上阶段）：',
+					...verdict.lanePartners.map(
+						(pair) =>
+							`- ${pair.side === 'ours' ? ours : theirs}：${pair.position} 号位 ${pair.hero.name} 与 ${pair.partner.name} 同路时，线上净对线 ${formatNet(pair.net)}（${pair.matches} 场）`,
+					),
+				].join('\n')
+			: '',
 		verdict.foePicks.length > 0
 			? ['', `${theirs} 这套里拿到的近期熟手：`, ...verdict.foePicks.map((pick) => `- ${pick.hero.name}：近窗口 ${pick.picks} 场${pick.rate === null ? '' : `，胜率 ${(pick.rate * 100).toFixed(1)}%`}`)].join('\n')
 			: '',

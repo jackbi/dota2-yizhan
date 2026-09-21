@@ -1,4 +1,6 @@
 import type { DraftData, DraftHero } from './draftData.ts';
+import type { LaneData } from './draftLanes.ts';
+import { laneEdge, laneEdgeEither, lanePartnerPosition } from './draftLanes.ts';
 import type { DraftSide } from './draftOrder.ts';
 import type { FoeForm } from './draftFoe.ts';
 import { foeHeroOf, foeWinRate } from './draftFoe.ts';
@@ -74,6 +76,37 @@ export interface VerdictFoePick {
 	rate: number | null;
 }
 
+/**
+ * 一条线上的对位：**我们某个人打某个号位时，线上真的遇到的那几个人**。
+ *
+ * 为什么不按「我方几号位 vs 对方几号位」配对：Dota 的分路本来就不是同位对位——
+ * 我们的优势路核心（一号位）在线上打的是对面的三、四号位。而 `laneOutcome` 的行天然记着
+ * 「这个英雄打这个号位时，线上遇到的是谁」，把它与对面阵容求交集，得到的就是真实的对线对象。
+ * 另一层原因：号位分配在并列时是任意的（实测对面五个人的样本相等时，一号位英雄会被分到二号位），
+ * 靠号位对齐配对会配出根本不存在的对线。
+ */
+export interface VerdictLaneEdge {
+	side: 'ours' | 'theirs';
+	position: number;
+	hero: DraftHero;
+	/** 这几个对手的净对线平均。 */
+	net: number;
+	/** 合计场次。 */
+	matches: number;
+	/** 真正在线上遇到过的对手，按场次降序。 */
+	opponents: { hero: DraftHero; net: number; matches: number }[];
+}
+
+/** 常规分路上「和谁走一条线」：一号位 ↔ 五号位、三号位 ↔ 四号位。 */
+export interface VerdictLanePartner {
+	side: 'ours' | 'theirs';
+	position: number;
+	hero: DraftHero;
+	partner: DraftHero;
+	net: number;
+	matches: number;
+}
+
 export interface DraftVerdict {
 	ourSide: DraftSide;
 	ours: VerdictSide;
@@ -85,6 +118,10 @@ export interface DraftVerdict {
 	edge: { position: number; counter: number; total: number };
 	/** 对面拿到了几个近期熟手——只列出来，不折算进胜率。 */
 	foePicks: VerdictFoePick[];
+	/** 分路对位：我方与对面各号位在线上实际遇到的对位。没有可用数据时是空数组。 */
+	laneEdges: VerdictLaneEdge[];
+	/** 同路搭档（常规分路）。没有可用数据时是空数组。 */
+	lanePartners: VerdictLanePartner[];
 	/** 口径与限制，界面与提示词都要照实说。 */
 	notes: string[];
 }
@@ -97,6 +134,11 @@ export interface VerdictInput {
 	selfTeam: string;
 	foeTeam: string;
 	foeForm?: FoeForm | null;
+	/**
+	 * 线上对位（谁在线上打谁、和谁走一路）。**可选**：拿不到就不出「分路对位」这一行，
+	 * 也不影响胜率——它本来就只做横向对比，不进 `0.5 + 号位偏差 + 对位偏差`。
+	 */
+	lanes?: LaneData | null;
 }
 
 const clamp = (value: number, low: number, high: number): number => Math.min(high, Math.max(low, value));
@@ -173,9 +215,68 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 	// 镜像展示：同一份记录换一边看就是反号。写成两个"独立"的数会让人以为有两份证据。
 	theirs.counter = -matchupAverage;
 
+	/*
+	 * 分路对位：按号位一一对应，我们的 1 号位 vs 他们的 1 号位，以此类推。
+	 * 线上搭档按常规分路取（1↔5、3↔4），中路没有固定搭档——那只是挑一个人的约定，
+	 * 数字本身仍是实测的线上净胜。
+	 */
+	const lanes = input.lanes ?? null;
+	const laneEdges: VerdictLaneEdge[] = [];
+	for (const side of ['ours', 'theirs'] as const) {
+		const rows = side === 'ours' ? ours.rows : theirs.rows;
+		const foeRows = side === 'ours' ? theirs.rows : ours.rows;
+		// 反方向查表要用对面的号位（见 `laneEdgeEither`）：两个方向的留存率差很多。
+		const foes = foeRows.filter((row) => row.hero).map((row) => ({ id: row.hero!.id, position: row.position }));
+		for (const row of rows) {
+			if (!row.hero) continue;
+			const edge = laneEdgeEither(lanes?.vs, row.hero.id, row.position, foes);
+			if (!edge) continue;
+			laneEdges.push({
+				side,
+				position: row.position,
+				hero: row.hero,
+				net: edge.net,
+				matches: edge.matches,
+				opponents: edge.cells
+					.map((cell) => ({ hero: byId.get(cell.otherId) ?? null, net: cell.net, matches: cell.matches }))
+					.filter((entry): entry is { hero: DraftHero; net: number; matches: number } => entry.hero !== null),
+			});
+		}
+	}
+	const average = (values: number[]): number | null => (values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null);
+	const laneOurs = average(laneEdges.filter((edge) => edge.side === 'ours').map((edge) => edge.net));
+	const laneTheirs = average(laneEdges.filter((edge) => edge.side === 'theirs').map((edge) => edge.net));
+	const lanePartners: VerdictLanePartner[] = [];
+	for (const side of ['ours', 'theirs'] as const) {
+		const rows = side === 'ours' ? ours.rows : theirs.rows;
+		for (const row of rows) {
+			const partnerPosition = lanePartnerPosition(row.position);
+			if (partnerPosition === null || !row.hero) continue;
+			const partner = rows.find((entry) => entry.position === partnerPosition)?.hero ?? null;
+			if (!partner) continue;
+			const edge = laneEdge(lanes?.with, row.hero.id, row.position, [partner.id]);
+			if (!edge) continue;
+			lanePartners.push({ side, position: row.position, hero: row.hero, partner, net: edge.net, matches: edge.matches });
+		}
+	}
+
 	const rows: VerdictRow[] = [
 		makeRow({ key: 'average', label: '平均号位胜率', ours: ours.average, theirs: theirs.average, target: 0.5, percent: true }),
 		makeRow({ key: 'counter', label: '对位偏差', ours: matchupAverage, theirs: -matchupAverage, target: 0, percent: true }),
+		// 一边都没数据时不出这一行：写两个 0 会让人以为线上是打平的。
+		...(laneOurs !== null || laneTheirs !== null
+			? [
+					makeRow({
+						key: 'lane',
+						label: '分路对位（线上）',
+						// 两边各自取自己的行平均；某一侧在号位上完全没有采样时按镜像展示。
+						ours: laneOurs ?? -(laneTheirs ?? 0),
+						theirs: laneTheirs ?? -(laneOurs ?? 0),
+						target: 0,
+						percent: true,
+					}),
+				]
+			: []),
 		...oursDims.map((dim, index) =>
 			makeRow({
 				key: dim.key,
@@ -228,8 +329,30 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 	];
 	if (input.data.patch.straddles) notes.push(`近 ${input.data.windowDays} 天的样本跨了一次版本更新，胜率是新旧版本混算的。`);
 	if (ours.counterPairs === 0 && theirs.counterPairs === 0) notes.push('这局没有任何可用对位数据，对位偏差按 0 处理。');
+	if (laneEdges.length > 0) {
+		notes.push(
+			`分路对位是线上阶段的净胜（线上胜 − 线上负，平局只在分母里），取「这个人打这个号位时线上真的遇到过的对手」，` +
+				`所以它天然按真实分路走（不是同位对位）；它与「对位偏差」不是一回事、也不进胜率；两边的列是各自独立测出来的，采样不同，所以不是严格的反号。`,
+		);
+		if (lanePartners.length > 0) {
+			notes.push('同路搭档按常规分路取（一号位 ↔ 五号位、三号位 ↔ 四号位），中路没有固定搭档，只作参考。');
+		}
+	} else if (lanes) {
+		notes.push('这局的号位组合没有可用的线上对位数据（线上样本门槛见 `draftLanes`），分路对位这一项按缺失处理。');
+	}
 	if (foePicks.length > 0) {
 		notes.push('对面拿到了近期熟手（见下），但**没有可信的换算系数**，所以只列出来、不折算进胜率。');
 	}
-	return { ourSide: input.ourSide, ours, theirs, rows, winRate: { ours: winOurs, theirs: 1 - winOurs }, edge: { position: positionEdge, counter: counterEdge, total }, foePicks, notes };
+	return {
+		ourSide: input.ourSide,
+		ours,
+		theirs,
+		rows,
+		winRate: { ours: winOurs, theirs: 1 - winOurs },
+		edge: { position: positionEdge, counter: counterEdge, total },
+		foePicks,
+		laneEdges,
+		lanePartners,
+		notes,
+	};
 }

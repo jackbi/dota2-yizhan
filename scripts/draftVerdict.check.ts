@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
+import type { LaneData } from '../src/lib/draftLanes.ts';
 import { buildVerdict } from '../src/lib/draftVerdict.ts';
 
 /**
@@ -153,6 +154,80 @@ const base = { data, ourSide: 'radiant' as const, selfTeam: '我方队', foeTeam
 	assert.ok(Math.abs(sum - 1) < 1e-9, `同一场对局从两边算必须互补，实际加起来是 ${(sum * 100).toFixed(2)}%`);
 	assert.equal(forward!.theirs.counter, -forward!.ours.counter, '两列仍然要镜像展示');
 	ok('对位表稀疏时胜率与视角无关');
+}
+
+// 分路对位：单独一行、独立口径、**不进胜率**。
+//
+// 线上净胜是「线上阶段的胜 − 负」，与整局对位不是一回事。写进同一行会让人以为胜率里含了它，
+// 所以这里钉三件事：一行单独出现、两边各自独立取样、胜率一分不变。
+{
+	/*
+	 * 专用夹具：每个人都补齐五个号位的样本、主号位明显更高。
+	 * 通用夹具里每人只有一个号位有样本，五个人的总分与排列无关——号位分配会是任意的，
+	 * 而线上对位的键里带着号位，断言就会跟着乱序飘。
+	 */
+	const laners: DraftHero[] = Array.from({ length: 10 }, (_, index) => {
+		const main = (index % 5) + 1;
+		return {
+			...hero(101 + index, `L${101 + index}`, null),
+			positions: Array.from({ length: 5 }, (_, slot) => [1000, slot === main - 1 ? 600 : 500]) as DraftHero['positions'],
+		};
+	});
+	const laneData: DraftData = { ...data, heroes: laners, matchups: {}, matchupPairs: 0 };
+	const lanes: LaneData = {
+		// 键是 `英雄id|号位|另一个英雄id`，值是 [场次, 净对线千分比]
+		vs: {
+			'101|1|106': [1200, 240],
+			'102|2|107': [800, -160],
+			// 108 这一格只有反方向：我方 103 打三号位时线上对 108，要靠反方向取反号拿到 −10%
+			'108|3|103': [600, 100],
+		},
+		with: { '101|1|105': [900, 130] },
+	};
+	const v = buildVerdict({ ...base, data: laneData, ourIds: [101, 102, 103, 104, 105], theirIds: [106, 107, 108, 109, 110], lanes })!;
+	const laneRow = v.rows.find((row) => row.key === 'lane');
+	assert.ok(laneRow, '有线上数据时要出一行「分路对位」');
+	assert.equal(laneRow!.percent, true, '分路对位是百分比口径');
+	assert.deepEqual(
+		v.laneEdges.map((edge) => `${edge.side}:${edge.position}:${edge.hero.id}`),
+		['ours:1:101', 'ours:2:102', 'ours:3:103', 'theirs:1:106', 'theirs:2:107', 'theirs:3:108'],
+		'每条线上对位都要带上是哪一边、几号位、谁；反方向那一格也算数',
+	);
+	assert.deepEqual(
+		v.laneEdges[0].opponents.map((entry) => entry.hero.id),
+		[106],
+		'线上真的遇到过的对手要列出来，名字靠它填',
+	);
+	assert.ok(
+		Math.abs(laneRow!.ours - (0.24 - 0.16 - 0.1) / 3) < 1e-9,
+		`我方视角是三个人的平均 (+24 −16 −10)/3 = −0.7%，实际 ${(laneRow!.ours * 100).toFixed(1)}%`,
+	);
+	// 对面那一列是各自独立测的：106 靠反方向拿 −24%、107 靠反方向拿 +16%、108 正方向 +10%。
+	assert.ok(Math.abs(laneRow!.theirs - (-0.24 + 0.16 + 0.1) / 3) < 1e-9, `对面那一列要用他们自己的三个数，实际 ${(laneRow!.theirs * 100).toFixed(1)}%`);
+	// 这份夹具是对称的（每边各三格、正好互为反面），所以两列数值上互为相反数；
+	// 真实数据里两边采样的格子不一样，就不会刚好对称——口径说明里写清了这一点。
+	assert.equal(v.lanePartners.length, 1, '同路搭档只取常规分路：一号位 ↔ 五号位、三号位 ↔ 四号位；这里只有一号位与五号位有数据');
+	assert.deepEqual(
+		v.lanePartners.map((pair) => `${pair.side}:${pair.position}-${pair.hero.id}/${pair.partner.id}`),
+		['ours:1-101/105'],
+		'同路搭档要对上号位，而不是随便配对',
+	);
+	assert.ok(
+		Math.abs(v.winRate.ours - (0.5 + v.edge.position + v.edge.counter)) < 1e-9,
+		'分路对位一行再好看也不能进胜率',
+	);
+	assert.ok(
+		v.notes.some((note) => note.includes('线上阶段') && note.includes('不进胜率')),
+		'提示词与界面上要写清：分路对位是线上口径、不进胜率',
+	);
+
+	// 一格都没有时不该出现这一行：写两个 0 会被读成「线上打平」。
+	const none = buildVerdict({ ...base, ourIds: strong, theirIds: weak, lanes: { vs: {}, with: {} } })!;
+	assert.equal(none.rows.some((row) => row.key === 'lane'), false, '没有线上数据时不出这一行');
+	assert.equal(none.laneEdges.length, 0, '也没有对位边');
+	const absent = buildVerdict({ ...base, ourIds: strong, theirIds: weak })!;
+	assert.equal(absent.rows.some((row) => row.key === 'lane'), false, '不传 lanes 时与传空表一致');
+	ok('分路对位：独立一行、独立取样、不进胜率');
 }
 
 // 对面拿到熟手只列出来，不折算进胜率——没有换算系数就不该编一个。

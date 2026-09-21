@@ -284,6 +284,39 @@ assert.equal(many.picks.length, ADVICE_TARGET_COUNT, `最多保留 ${ADVICE_TARG
 	assert.match(user.content, /平均号位胜率/, '要把维度对比给模型');
 	assert.ok(!/undefined|NaN/.test(user.content), '提示词里出现了 undefined/NaN');
 
+	/*
+	 * 线上对位要单独成块，而且**不能**出现在没有这份数据的时候：
+	 * 模型看不到的字段它不会瞎编，但把「对位偏差」和「线上净对线」写在同一行里，它一定会当成一件事。
+	 */
+	const withLanes = buildVerdict({
+		// 这份自检的数据只有五个英雄，这里临时补五个当对手：线上对位要两边都有人才谈得上。
+		data: {
+			...data,
+			heroes: [
+				...data.heroes,
+				hero(6, '斧王', [0.5, null, null, null, null]),
+				hero(7, '撼地神牛', [null, 0.5, null, null, null]),
+				hero(8, '莉娜', [null, null, 0.5, null, null]),
+				hero(9, '巫医', [null, null, null, 0.5, null]),
+				hero(10, '巫妖', [null, null, null, null, 0.5]),
+			],
+		},
+		ourIds: [1, 2, 3, 4, 5],
+		theirIds: [6, 7, 8, 9, 10],
+		ourSide: 'radiant',
+		selfTeam: 'Team XG',
+		foeTeam: 'Team Spirit',
+		// 键是「英雄id|号位|另一个英雄id」：一号位的敌法师在线上对斧王 +20%，和水晶室女同路 +12%。
+		lanes: { vs: { '1|1|6': [800, 200] }, with: { '1|1|5': [600, 120] } },
+	});
+	assert.ok(withLanes, '带线上数据时也要能拼提示词');
+	const [, userWithLanes] = buildVerdictMessages({ verdict: withLanes!, data, selfTeam: 'Team XG', foeTeam: 'Team Spirit' });
+	assert.match(userWithLanes.content, /分路对位（线上阶段/, '线上对位要单独成块给模型');
+	assert.match(userWithLanes.content, /平均净对线 \+20\.0%/, '线上净对线要带数字与场次');
+	assert.match(userWithLanes.content, /同路搭档/, '同路搭档也要给模型');
+	assert.ok(!/undefined|NaN/.test(userWithLanes.content), '带线上数据时也不许出现 undefined/NaN');
+	assert.doesNotMatch(user.content, /分路对位/, '没有线上数据时不许出现这一块');
+
 	const good = parseVerdictReply('{"summary":"双方节奏不同","points":[{"dimension":"对线","text":"一边更强"}]}');
 	assert.equal(good?.points.length, 1);
 	assert.equal(good?.points[0]?.dimension, '对线');

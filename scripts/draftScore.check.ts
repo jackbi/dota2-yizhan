@@ -234,6 +234,33 @@ assert.ok(
 	'没数据时不该写出对位依据',
 );
 
+/**
+ * 线上对位是**另一条**依据：与整局对位的口径不同（线上阶段的净胜），两者都要写、都要能分开看。
+ *
+ * 号位在并列时是任意分配的，所以这里把五个号位的格子都填上——否则这条断言会跟着分配结果飘。
+ */
+{
+	const vs: Record<string, [number, number]> = {};
+	for (const position of [1, 2, 3, 4, 5]) vs[`201|${position}|203`] = [800, 260];
+	const withLanes = advise({ data: counterData, recorded: counterRecorded, ourSide: OUR, firstPicker: OUR, lanes: { vs, with: {} } });
+	assert.ok(withLanes, '带线上数据时也要能出建议');
+	const candidate = withLanes!.candidates.find((item) => item.heroId === 201);
+	assert.ok(candidate, '候选要在列表里');
+	assert.ok(
+		candidate!.reasons.some((line) => line.includes('线上对上他们已选') && line.includes('+26.0%') && line.includes('800 场')),
+		'线上对位要单独写一条，并带上净对线与场次，实际：' + candidate!.reasons.join(' / '),
+	);
+	assert.ok(
+		candidate!.reasons.some((line) => line.includes('对阵对面已选') && line.includes('60.0%')),
+		'整局对位那条不能因为加了线上就被挤掉',
+	);
+	// 拿不到线上数据时（没有 token、静态文件没拉到）只是少一条依据，不是报错也不是写 0。
+	assert.ok(
+		!noCounter.candidates.some((item) => item.reasons.some((line) => line.includes('线上'))),
+		'没有线上数据时不该写出线上依据',
+	);
+}
+
 // ---------------------------------------------------------------- 能力维度与体系
 
 /**

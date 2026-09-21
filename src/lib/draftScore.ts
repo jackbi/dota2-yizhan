@@ -4,6 +4,8 @@
  * `allowImportingTsExtensions` 是开着的，Vite 也照常解析。
  */
 import type { DraftData, DraftHero } from './draftData.ts';
+import type { LaneData } from './draftLanes.ts';
+import { formatNet, laneEdge, laneEdgeEither, lanePartnerPosition, type LaneEdge } from './draftLanes.ts';
 import type { DraftAction, DraftOwner, DraftSide, RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, snapshot, sideOfOwner } from './draftOrder.ts';
 import type { HeroMatchups } from './draftMatchup.ts';
@@ -555,6 +557,11 @@ export interface AdviseInput {
 	/** 对面近期的英雄偏好；没有就按「不认识这支队」算。 */
 	foeForm?: FoeForm | null;
 	/**
+	 * 线上对位（谁在线上打谁、和谁走一路）。**可选增强**：拿不到就少一条依据，
+	 * 不影响号位胜率、估值与其它依据——它与整局对位是两套口径，不能互相顶替。
+	 */
+	lanes?: LaneData | null;
+	/**
 	 * 这份偏好属于哪一边，默认 `theirs`（对面）。
 	 * 替对面落子时传 `ours`：同一个队的数据，人称要翻过来。
 	 */
@@ -589,6 +596,21 @@ function counterText(
 }
 
 /**
+ * 把线上对位写成一句依据。
+ *
+ * 与 `counterText` 分开，是因为这两个数字不是一个东西：那里是**整局**胜率，这里是**线上**
+ * 净胜（线上胜 − 线上负）。写在同一句里会让人以为是一件事的两半。
+ */
+function laneText(edge: LaneEdge, byId: ReadonlyMap<number, DraftHero>, prefix: string): string {
+	const names = edge.cells
+		.slice(0, 3)
+		.map((cell) => byId.get(cell.otherId)?.name ?? `英雄 #${cell.otherId}`)
+		.join('、');
+	const rest = edge.pairs > 3 ? `，另有 ${edge.pairs - 3} 个` : '';
+	return `${prefix} ${names}${rest}：平均净对线 ${formatNet(edge.net)}（线上 ${edge.matches.toLocaleString('zh-CN')} 场）`;
+}
+
+/**
  * 号位这件事的风险提示。
  *
  * 建议的号位来自"五个号位胜率之和最大"的分配，可能落在英雄的次级位置上（它的主位置
@@ -617,6 +639,7 @@ export function advise(input: AdviseInput): Advice | null {
 	const { data, recorded, ourSide, firstPicker } = input;
 	const foeForm = input.foeForm ?? null;
 	const foeSide = input.foeSide ?? 'theirs';
+	const lanes = input.lanes ?? null;
 	const limit = input.limit ?? 5;
 	const state = snapshot(recorded);
 	if (state.done || !state.action || !state.owner || data.heroes.length === 0) return null;
@@ -666,6 +689,14 @@ export function advise(input: AdviseInput): Advice | null {
 	/** 能力维度只跟我们自己（或对面）已经选到的人有关，没选的先不算。 */
 	const ourHeroes = ourIds.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
 	const theirHeroes = theirIds.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
+	/*
+	 * 线上对位要「谁打几号位」才能反方向查表（见 `laneEdgeEither`）：号位用估值那一步分配好的结果，
+	 * 不然就得为每一手重新分配一次。
+	 */
+	const slotsOf = (report: { slots: { position: number; hero: DraftHero | null }[] }): { id: number; position: number }[] =>
+		report.slots.filter((slot) => slot.hero).map((slot) => ({ id: slot.hero!.id, position: slot.position }));
+	const ourSlots = slotsOf(ourBase);
+	const theirSlots = slotsOf(theirBase);
 	const enemySummon = theirHeroes.some((hero) => hero.summon);
 	/** 前后期基准取同池中位：不拿绝对值硬比（不同版本、不同分段都在变）。 */
 	const timeline = timelineContext(pool);
@@ -697,6 +728,22 @@ export function advise(input: AdviseInput): Advice | null {
 			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
+			/*
+			 * 线上两条：这是一整套阵容打完的胜率之外的另一半信息。
+			 * 整局对位说「这一手值不值」，线上的说「这条线开局好过不好过」——BP 里这是两回事。
+			 */
+			const lane = laneEdgeEither(lanes?.vs, hero.id, position, theirSlots);
+			if (lane) reasons.push(laneText(lane, byId, '线上对上他们已选'));
+			const partnerPosition = lanePartnerPosition(position);
+			const partnerIndex = partnerPosition === null ? -1 : assignment.positions.findIndex((assigned) => assigned === partnerPosition);
+			if (partnerIndex >= 0 && partnerIndex !== assignment.positions.length - 1) {
+				const partner = [...ourIds, hero.id][partnerIndex];
+				const partnerLane = laneEdge(lanes?.with, hero.id, position, [partner]);
+				if (partnerLane) {
+					const partnerName = byId.get(partner)?.name ?? `英雄 #${partner}`;
+					reasons.push(`和我们的 ${partnerName} 同路（${partnerLane.matches.toLocaleString('zh-CN')} 场）：线上净对线 ${formatNet(partnerLane.net)}`);
+				}
+			}
 			const structure = structureDelta(hero, ourHeroes, timeline, enemySummon);
 			if (structure.fills.length > 0) {
 				const labels = structure.fills.map((dim) => dim.label).join('、');
@@ -744,6 +791,9 @@ export function advise(input: AdviseInput): Advice | null {
 		if (foeLine) reasons.push(foeLine);
 		const counter = counterSummary(data.matchups, hero.id, ourIds);
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
+		// 对面拿它之后，我们这条线要被压成什么样——与整局对位分开写。
+		const lane = laneEdgeEither(lanes?.vs, hero.id, position, ourSlots);
+		if (lane) reasons.push(laneText(lane, byId, '它在线上对上我们已选'));
 		// 对面拿到它能补上他们缺的维度，也算威胁。
 		const structureForThem = structureDelta(hero, theirHeroes, timeline, ourHeroes.some((item) => item.summon));
 		if (structureForThem.fills.length > 0) {

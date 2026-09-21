@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
+import { LANE_MIN_GAMES, LANE_POSITIONS, buildLaneSlice, type HeroLanes, type LaneData } from './draftLanes';
 import type { HeroMatchups } from './draftMatchup';
 import { createPace } from './pace';
 import { resolveStratzEndpoint } from './stratzEndpoint';
@@ -692,4 +693,95 @@ export function fetchHeroTimeline(): Promise<HeroTimeline | null> {
 		return out;
 	})();
 	return timelinePromise;
+}
+
+// ---------------------------------------------------------------- 线上对位（谁在线上打谁 / 和谁走一路）
+
+/**
+ * `heroStats.laneOutcome` 的整池取数。
+ *
+ * 三个与直觉不同的地方，都是实测出来的：
+ *
+ * 1. **不带 `heroId` 就返回全部英雄**（15,808 行、一百万场），所以「127 个英雄要 127 次请求」
+ *    是错的——真正的成本是 `2 个方向 × 5 个号位 = 10 次`，缓存一天，构建期完全吃得下。
+ * 2. **不带 `positionIds` 时只给一号位**，不是「全部号位」。所以五个号位要逐个问，
+ *    每次约 1.4MB / 7,000–9,000 行。
+ * 3. `isWith` 是必填参数：`false` 是线上的**对手**，`true` 是**同一条线上的搭档**。
+ *    行形状完全一样，所以整理逻辑共用一份（`buildHeroLanes`）。
+ *
+ * 数据本身是「某英雄打某号位时，线上遇到的对手/搭档」，与 `heroStats.matchUp`（整局、不分路）
+ * 是两回事，别混用。按 `LANE_MIN_GAMES` 裁剪后约 7,600 格 / 0.2MB，单独出一份静态 JSON。
+ */
+const LANE_TTL_SECONDS = 24 * 3600;
+
+interface RawLaneRow {
+	heroId1?: number | null;
+	heroId2?: number | null;
+	position?: string | null;
+	matchCount?: number | null;
+	winCount?: number | null;
+	lossCount?: number | null;
+}
+
+const LANE_DOCUMENT = `query HeroLanes($isWith: Boolean!, $positions: [MatchPlayerPositionType]) {
+	heroStats {
+		laneOutcome(isWith: $isWith, bracketBasicIds: [${HERO_META_BRACKET}], positionIds: $positions) {
+			heroId1
+			heroId2
+			position
+			matchCount
+			winCount
+			lossCount
+		}
+	}
+}`;
+
+let lanesPromise: Promise<LaneData | null> | null = null;
+
+/**
+ * 全池的线上对位。拿不到（没有 token、上游挂了）就返回 null，页面与打分里都当「没有这一项」，
+ * 不与整局对位互相顶替——两者的口径不同，混用等于把两件事加在一起。
+ */
+export function fetchHeroLanes(): Promise<LaneData | null> {
+	lanesPromise ??= (async () => {
+		const before = networkFetches;
+	const data = await cached<LaneData>('hero-lanes-v2', LANE_TTL_SECONDS, async () => {
+		/**
+		 * 一个方向：五个号位各问一次，按**请求的号位**建表。
+		 *
+		 * 不能用行里的 `position`：批量查询时那个字段永远是 `POSITION_1`（见 `buildLaneSlice`）。
+		 * 缓存键因此从 `hero-lanes` 升到 `hero-lanes-v2`——旧缓存里正是那份落错号位的表。
+		 */
+		const collect = async (isWith: boolean): Promise<HeroLanes> => {
+			const out: HeroLanes = {};
+			for (const position of LANE_POSITIONS) {
+				const one = await query<{ heroStats: { laneOutcome: RawLaneRow[] | null } }>(LANE_DOCUMENT, {
+					isWith,
+					positions: [`POSITION_${position}`],
+				});
+				const list = one?.heroStats?.laneOutcome;
+				if (!list) return {};
+				Object.assign(out, buildLaneSlice(list, position));
+			}
+			return out;
+		};
+		// 先对手后搭档：任一步拿不到就整份不算数，免得页面拿到半份数据还以为覆盖率高。
+		const vs = await collect(false);
+		const withLanes = await collect(true);
+		if (Object.keys(vs).length === 0 || Object.keys(withLanes).length === 0) return null;
+		return { vs, with: withLanes };
+	});
+		if (!data) {
+			await reportSource('stratz-lanes', 'STRATZ 线上对位', 'empty', '请求未拿到数据（限流、挑战页或接口异常）');
+			return null;
+		}
+		await reportSource(
+			'stratz-lanes',
+			'STRATZ 线上对位',
+			networkFetches > before ? 'fresh' : 'cache',
+			`线上对手 ${Object.keys(data.vs).length.toLocaleString('zh-CN')} 格 / 同路搭档 ${Object.keys(data.with).length.toLocaleString('zh-CN')} 格（每格 ≥ ${LANE_MIN_GAMES} 场）`,
+		);
+		return data;
+	})();
+	return lanesPromise;
 }
