@@ -6,9 +6,14 @@ import { LIVE_STATE_LABEL } from '../lib/liveApi';
 interface Props {
 	member: ObMember;
 	live?: LiveStatus;
+	/**
+	 * 站内头像路径（`/avatars/xxx.jpg`）。拿不到时不传，退回首字母/渐变占位——
+	 * 与 OB 页同一条规矩：宁可没有图，也不留破图。
+	 */
+	avatar?: string;
 }
 
-const { member: m, live } = Astro.props;
+const { member: m, live, avatar } = Astro.props;
 const meta = PLATFORM_META[m.platform];
 const label = LIVE_STATE_LABEL[live?.state ?? "unknown"];
 ---
@@ -20,12 +25,26 @@ const label = LIVE_STATE_LABEL[live?.state ?? "unknown"];
 	class="group flex items-center gap-3 rounded-xl border border-line bg-ink/60 p-3 transition hover:border-dota/50"
 >
 	<div class="relative h-16 w-28 shrink-0 overflow-hidden rounded-lg bg-gradient-to-br from-dota to-dota-deep">
+		{
+			avatar && (
+				<>
+					<img src={avatar} alt="" loading="lazy" class="absolute inset-0 h-full w-full object-cover" />
+					{/* 图上还压着播放图标、平台角标和主播名，加一层暗罩保证三样都读得清。 */}
+					<span class="absolute inset-0 bg-ink/35" aria-hidden="true" />
+				</>
+			)
+		}
+		<span class="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-ink/85 to-transparent" aria-hidden="true" />
 		<span class="absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-ink/70 text-white">
 			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M8 5v14l11-7z" fill="currentColor" />
 			</svg>
 		</span>
-		<span class="absolute bottom-1.5 left-2 text-xs font-semibold text-white">{m.name}</span>
+		{/*
+			没头像时这张渐变块就是唯一的身份标识，名字得压在它上面；
+			有了头像就撤掉——平台头像里往往自己就带了名字，右边那列还有一行，三处重复反而乱。
+		*/}
+		{!avatar && <span class="absolute bottom-1.5 left-2 text-xs font-semibold text-white">{m.name}</span>}
 		<span class="absolute right-1.5 top-1.5 rounded bg-black/50 px-1.5 py-0.5 text-[10px] font-bold" style={`color:${meta.color}`}>
 			{meta.short}
 		</span>

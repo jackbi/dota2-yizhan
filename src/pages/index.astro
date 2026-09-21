@@ -7,6 +7,7 @@ import TournamentCard from '../components/TournamentCard.astro';
 import { OB_MEMBERS } from '../data/ob';
 import { getTournaments } from '../lib/tournamentsApi';
 import { fetchLiveSnapshot } from '../lib/liveApi';
+import { localizeAvatars } from '../lib/avatars';
 import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
 import { fetchCommunityThreads } from '../lib/ngaApi';
 import { fetchPatchUpdates } from '../lib/patchesApi';
@@ -45,6 +46,20 @@ const liveMembers = OB_MEMBERS.filter((m) => {
 	const s = liveSnapshot.statuses[`${m.platform}:${m.roomId}`];
 	return s?.state === 'live';
 });
+/*
+ * 直播卡上的主播头像。
+ *
+ * 平台接口顺带返回的就是 CDN 地址（`LiveStatus.avatar`），这里在构建期把字节取回来换成本站
+ * 路径，和 OB 页走同一套 `/avatars/` 目录（同一张图只下一遍）。只取首页真正要展示的这几位，
+ * 拿不到的那几张卡片退回渐变块——不留破图。
+ */
+const shownLive = liveMembers.slice(0, 4);
+const liveAvatars = await localizeAvatars(
+	shownLive.map((m) => ({
+		key: `${m.platform}:${m.roomId}`,
+		avatar: liveSnapshot.statuses[`${m.platform}:${m.roomId}`]?.avatar,
+	})),
+);
 // 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
 const now = Math.floor(Date.now() / 1000);
 const notFinished = bundle.events.filter((e) => e.status !== 'completed');
@@ -112,7 +127,15 @@ const FEATURES = [
 					<a href="/live" class="text-sm text-dota-light transition hover:text-gold">全部直播 →</a>
 				</div>
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-					{liveMembers.slice(0, 4).map((m) => <LiveCard member={m} live={liveSnapshot.statuses[`${m.platform}:${m.roomId}`]} />)}
+					{
+						shownLive.map((m) => (
+							<LiveCard
+								member={m}
+								live={liveSnapshot.statuses[`${m.platform}:${m.roomId}`]}
+								avatar={liveAvatars.get(`${m.platform}:${m.roomId}`)}
+							/>
+						))
+					}
 					{liveMembers.length === 0 && (
 						<p class="col-span-full rounded-xl border border-line bg-ink/60 p-4 text-sm text-muted">
 							这个构建时刻没有抓到正在开播的房间。开播状态是构建期快照，可能只是恰好都没在播——
