@@ -28,6 +28,7 @@ dota2 分屏 看直播         → /live
 | 英雄页 ↔ 版本页 互链 | `src/lib/patchHeroes.ts`、`patchNotes.renderHero` | 英雄页有「版本改动记录」（最多列最近 12 个版本），版本页里每个被改到的英雄名链回英雄页。用的是构建期已落盘的版本日志，不额外联网 |
 | 英雄 / 装备列表在构建期渲染 | `src/pages/heroes.astro`、`src/pages/items.astro` | 这两页原先的主数据是客户端 `fetch` 现拉的，构建产物里**一个英雄名、一件装备名都没有**。百度基本不执行 JS，Google 的二次渲染又依赖 dota2.com.cn 的连通性，等于白做。改成构建期渲染后 HTML 里就有 127 / 229 个条目及其详情页链接，客户端只留筛选 |
 | 装备详情页 | `src/pages/items/[id].astro`、`src/lib/itemCatalog.ts` | 520 个页面（`itemCatalog` 里那些有中文名的条目）。原先 614 件装备挤在 `/items` 一个 URL 里，标题只能写「装备资料库」，搜「闪烁匕首 合成」没有任何页面能承接。页面上的「升级为」是同一份数据反查出来的（192 件散件有去向），「版本改动记录」与英雄页共用同一套版本日志 |
+| 薄页面不收录 | `src/lib/itemCatalog.ts` 的 `isThinItem`、`astro.config.mjs` 的 `sitemap-exclusions` | 121 个只有价格、一句描述都没有的条目（图纸、活动道具、部分中立物品）页面照旧生成——配方里点进去不能 404——但带 `noindex` 且不进 sitemap。**`@astrojs/sitemap` 不认页面的 noindex**（实测 520 个装备页一个没少），所以还得在配置里按 URL 过滤，判据共用一份 `isThinItem` |
 | 版本页 ↔ 装备页 互链 | `src/lib/patchItems.ts`、`patchNotes.renderItem` | 与英雄那条对称：版本页里每个被改到的装备名链到 `/items/<内部名>`，装备页有「版本改动记录」（最多列最近 12 个版本）。全站实测 4017 个指向装备页的链接、零死链 |
 | 404 页 | `src/pages/404.astro` | 原先没有，Cloudflare 拿默认页顶上，站内导航全丢。现在带 `noindex`（404 不该被收录）与六个板块入口；workerd 本地实测 `/no-such-page/`、`/heroes/nope/` 都是 404 + 这一页 |
 

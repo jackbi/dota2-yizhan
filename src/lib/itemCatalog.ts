@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { cacheFile, isFresh, readCacheJson, writeCacheFile } from './buildCache';
-import { type ItemDetail, type ItemSection, fetchItemSections, normalizeItemDetail } from './itemApi';
+import { type ItemDetail, type ItemSection, cleanItemText, fetchItemSections, normalizeItemDetail } from './itemApi';
 
 /**
  * 装备目录：详情 + 所属分类 + 反向的「能合成什么」。
@@ -142,6 +142,20 @@ function build(cached: CachedCatalog): ItemCatalog {
 }
 
 let catalogPromise: Promise<ItemCatalog | null> | null = null;
+
+/**
+ * 「只有价格、一句描述都没有」的条目——实测 121 个，图纸、活动道具与一部分中立物品。
+ *
+ * 页面照旧给它们生成：合成配方里的图纸、散件总得有个落脚点，点进去不能 404。
+ * 但**不给搜索引擎**：一页二十几个字，对它自己是零收益，对整站的「内容质量」判断还是负分。
+ * 判据放在这里，是为了让页面上的 `noindex` 与 `astro.config.mjs` 里的 sitemap 过滤用同一份，
+ * 免得哪天调了一边、另一边还在收录（版本日志提到过的装备另有内容，由调用方再补一条判断）。
+ */
+export function isThinItem(entry: ItemCatalogEntry): boolean {
+	const { detail } = entry;
+	// 和页面一样走 `cleanItemText`：接口下发的是富文本，`<h1></h1>` 这种空标签不能算有内容。
+	return [detail.desc, detail.attrib, detail.notes, detail.lore].every((field) => !cleanItemText(field).trim());
+}
 
 /** 整轮构建只算一次；多个渲染进程各自算一份，靠的是 `.cache/` 里那份 JSON。 */
 export function itemCatalog(): Promise<ItemCatalog | null> {

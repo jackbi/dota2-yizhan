@@ -1,7 +1,7 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { cleanItemText } from '../../lib/itemApi';
-import { type ItemCatalogEntry, itemCatalog } from '../../lib/itemCatalog';
+import { type ItemCatalogEntry, isThinItem, itemCatalog } from '../../lib/itemCatalog';
 import { itemPatchIndex } from '../../lib/patchItems';
 
 /*
@@ -73,6 +73,13 @@ const buildsInto = entry.buildsInto.map((key) => byKey.get(key)).filter((item): 
 /** 「这件装备最近被改过没有」——和英雄页同一份索引，只是键换成了物品内部名。 */
 const patches = (await itemPatchIndex()).get(entry.key) ?? [];
 
+/*
+ * 只有价格、一句描述都没有的条目不给搜索引擎收录（判据见 `isThinItem`，sitemap 用的是同一份）。
+ * 版本日志里提到过的例外——那种页面至少有「版本改动记录」，不算薄。
+ * 页面上也不再摆「基础物品，没有合成配方」这种空话。
+ */
+const thinPage = isThinItem(entry) && patches.length === 0;
+
 /** 摘要取描述第一句：搜索结果里那句话比「价格、效果与合成配方」这种套话有用。 */
 const summary = (desc || attrib).split('\n')[0].replace(/\s+/g, ' ').trim();
 const description = [`DOTA2 ${name}（${detail.nameEn}）`, detail.cost > 0 ? `${detail.cost} 金币` : '', summary.slice(0, 60)]
@@ -91,6 +98,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 >
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
+		{thinPage ? <meta name="robots" content="noindex" /> : null}
 	</Fragment>
 
 	<section class="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
@@ -233,7 +241,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 						)}
 					</ul>
 				</section>
-			) : (
+			) : thinPage ? null : (
 				<section class="mt-10 border-t border-line pt-6">
 					<h2 class="font-display text-xl">合成配方</h2>
 					<p class="mt-2 text-sm text-muted">基础物品，没有合成配方。</p>

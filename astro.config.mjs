@@ -8,6 +8,8 @@ import node from '@astrojs/node';
 import sitemap from '@astrojs/sitemap';
 import tailwindcss from '@tailwindcss/vite';
 import { CACHE_KEEP_DAYS, pruneCacheDirs } from './src/lib/cachePrune.ts';
+import { isThinItem, itemCatalog } from './src/lib/itemCatalog.ts';
+import { itemPatchIndex } from './src/lib/patchItems.ts';
 
 /**
  * Astro 只在构建期把 `.env` 注入 `process.env`，`astro dev` 不会——结果是
@@ -35,6 +37,8 @@ if (existsSync(ENV_FILE)) {
 const CACHE_BASE = new URL('.cache/', import.meta.url);
 const HEALTH_DIR = new URL('health/', CACHE_BASE);
 const STATE_LABEL = { fresh: '联网抓取', cache: '使用缓存', empty: '没有数据' };
+/** 线上域名。`site`、sitemap 过滤、canonical 都靠它，只写一处。 */
+const SITE_ORIGIN = 'https://dota2.hiwenbin.com';
 
 /**
  * 需要在构建末尾发布到 `dist/` 的图片频道（通用逻辑见 `src/lib/localImages.ts`）。
@@ -143,6 +147,38 @@ async function publishImages(channel, dir, logger) {
 		// 健康记录只是辅助信息。
 	}
 }
+
+/**
+ * 装备详情页里那些「只有价格、一句描述都没有」的条目不进 sitemap。
+ *
+ * 页面照旧生成（配方里的图纸、散件点进去不能 404），但不该被收录：一页二十几个字，
+ * 对它自己是零收益，对整站的「内容质量」判断还是负分。页面上那份 `noindex` 已经写了，
+ * 可 `@astrojs/sitemap` **不认页面的 noindex**（实测 520 个装备页一个没少），只能在这里按 URL 过滤。
+ *
+ * 判据与页面共用 `isThinItem`；版本日志提到过的装备算有内容，不在此列。
+ * 挂在 `astro:build:start` 是因为过滤函数是同步的、只拿到 URL 字符串，而这份清单要读装备目录；
+ * 渲染开始前算好，`astro:build:done` 生成 sitemap 时它已经在手上。
+ */
+const THIN_ITEM_URLS = new Set();
+/** @type {import('astro').AstroIntegration} */
+const sitemapExclusions = {
+	name: 'sitemap-exclusions',
+	hooks: {
+		'astro:build:start': async ({ logger }) => {
+			const catalog = await itemCatalog().catch(() => null);
+			const patched = await itemPatchIndex()
+				.then((index) => new Set(index.keys()))
+				.catch(() => new Set());
+			let count = 0;
+			for (const entry of catalog?.entries ?? []) {
+				if (!isThinItem(entry) || patched.has(entry.key)) continue;
+				THIN_ITEM_URLS.add(`${SITE_ORIGIN}/items/${entry.key}`);
+				count += 1;
+			}
+			if (count > 0) logger.info(`${count} 个没有内容的装备页不进 sitemap（页面照旧生成）`);
+		},
+	},
+};
 
 /** @type {import('astro').AstroIntegration} */
 const dataSourceReport = {
@@ -264,16 +300,20 @@ export default defineConfig({
 	 * - canonical 与 og:url 也都得是绝对地址，否则搜索引擎会把 www / 尾斜杠 / 带参数的
 	 *   同一个页面当成好几份。本地开发也填线上域名——它只影响构建产物里的字符串。
 	 */
-	site: 'https://dota2.hiwenbin.com',
+	site: SITE_ORIGIN,
 	integrations: [
 		dataSourceReport,
+		sitemapExclusions,
 		imagesInDev,
 		/*
 		 * 一千多个预渲染页面（英雄、装备、更新日志、赛事、战队…）靠它一次列全。
 		 * `prerender = false` 的那几条（/party、/me、/api）不会被收录——它们要么要登录、
 		 * 要么是接口，进 sitemap 只会浪费爬虫预算。
 		 */
-		sitemap(),
+		sitemap({
+			// 清单在 `astro:build:start` 里算好（见 `sitemapExclusions`）。URL 带不带尾斜杠都认。
+			filter: (page) => !THIN_ITEM_URLS.has(page.replace(/\/$/, '')),
+		}),
 	],
 
 	/*
