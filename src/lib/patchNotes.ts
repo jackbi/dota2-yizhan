@@ -319,7 +319,15 @@ function renderItem(item: PatchItemEntry, names: PatchNames, icons: PatchIconMap
 		return `<div class="pn-anon">${title ? `<div class="pn-group">${escapeText(title)}</div>` : ''}${renderLines(item.ability_notes)}</div>`;
 	}
 	const icon = ref.key ? icons.get(itemIconKey(ref.key)) : undefined;
-	return renderEntity(icon, escapeText(ref.name), renderLines(item.ability_notes), 'pn-entity');
+	/*
+	 * 名字链回装备页——版本页 → 装备页的出口（反向那条在装备页的「版本改动记录」里）。
+	 * 键就是 `items/json` 里那套内部名，也是 `/items/[id]` 的路径参数；名字表能查到的都在目录里，
+	 * 查不到的（官方偶尔插的空条目）根本没走到这里。
+	 */
+	const nameHtml = ref.key
+		? `<a class="text-dota-light transition hover:text-cream" href="/items/${encodeURIComponent(ref.key)}">${escapeText(ref.name)}</a>`
+		: escapeText(ref.name);
+	return renderEntity(icon, nameHtml, renderLines(item.ability_notes), 'pn-entity');
 }
 
 function renderCreep(creep: PatchCreepEntry): string {
