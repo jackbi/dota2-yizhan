@@ -1,0 +1,75 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+/*
+ * 404。
+ *
+ * 以前没有这一页，Cloudflare 会拿它自己那张默认页顶上——访客看到的是纯文字里的一行
+ * "not found"，站内导航全丢，只能自己退回去。这里给几个最常被找的入口，把人接回来。
+ *
+ * `noindex` 是必须的：404 页对搜索引擎没有价值，收录进来只会分掉首页的权重。
+ */
+const ENTRIES = [
+	{ href: '/news', label: '资讯', desc: '官网新闻与社区热议' },
+	{ href: '/tournaments', label: '赛事', desc: '大赛赛程、奖金与直播状态' },
+	{ href: '/patches', label: '版本', desc: '官方更新日志完整存档' },
+	{ href: '/heroes', label: '英雄', desc: '属性、数值与技能' },
+	{ href: '/items', label: '装备', desc: '价格、效果与合成配方' },
+	{ href: '/live', label: '监控', desc: '多路分屏看直播' },
+] as const;
+---
+
+<Layout title="页面不存在 · DOTA2 驿站" description="没有这个页面，可以从下面的入口继续找。">
+	<Fragment slot="head">
+		<meta name="robots" content="noindex" />
+	</Fragment>
+
+	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+		<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">404</p>
+		<h1 class="mt-2 font-display text-3xl sm:text-4xl">这页不见了</h1>
+		<p class="mt-3 max-w-2xl text-muted">
+			链接可能过期了，也可能是地址敲错了一个字母。下面是站里最常被找的几个板块。
+		</p>
+
+		<div class="mt-8 flex flex-wrap gap-3">
+			<a
+				href="/"
+				class="inline-flex items-center gap-2 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-dark"
+			>
+				回首页
+			</a>
+			<button
+				type="button"
+				id="back"
+				class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-2.5 text-sm text-cream transition hover:border-dota hover:text-dota-light"
+			>
+				返回上一页
+			</button>
+		</div>
+
+		<div class="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+			{ENTRIES.map((entry) => (
+				<a
+					href={entry.href}
+					class="group rounded-2xl border border-line bg-surface p-5 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2"
+				>
+					<h2 class="font-display text-lg">{entry.label}</h2>
+					<p class="mt-1 text-sm text-muted">{entry.desc}</p>
+				</a>
+			))}
+		</div>
+	</section>
+</Layout>
+
+<script>
+	/*
+	 * 「返回上一页」只在真有上一页时才有意义：直接粘地址进来的话 history.length 是 1，
+	 * 点了没反应反而像坏了，所以那种情况把按钮藏掉。
+	 */
+	const back = document.getElementById('back');
+	if (back && window.history.length > 1) {
+		back.addEventListener('click', () => window.history.back());
+	} else {
+		back?.remove();
+	}
+</script>
