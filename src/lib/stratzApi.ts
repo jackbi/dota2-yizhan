@@ -745,12 +745,13 @@ let lanesPromise: Promise<LaneData | null> | null = null;
 export function fetchHeroLanes(): Promise<LaneData | null> {
 	lanesPromise ??= (async () => {
 		const before = networkFetches;
-	const data = await cached<LaneData>('hero-lanes-v2', LANE_TTL_SECONDS, async () => {
-		/**
+	const data = await cached<LaneData>('hero-lanes-v3', LANE_TTL_SECONDS, async () => {
+		/*
 		 * 一个方向：五个号位各问一次，按**请求的号位**建表。
 		 *
 		 * 不能用行里的 `position`：批量查询时那个字段永远是 `POSITION_1`（见 `buildLaneSlice`）。
-		 * 缓存键因此从 `hero-lanes` 升到 `hero-lanes-v2`——旧缓存里正是那份落错号位的表。
+		 * 缓存键跟着口径升级：`hero-lanes` 是那份落错号位的表，`v2` 的分母是没记结果的
+		 * `matchCount`（把净对线稀释了约 13%），`v3` 才是「记了结果的场次」。
 		 */
 		const collect = async (isWith: boolean): Promise<HeroLanes> => {
 			const out: HeroLanes = {};

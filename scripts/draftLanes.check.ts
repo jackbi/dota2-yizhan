@@ -69,6 +69,18 @@ const ok = (label: string): void => {
 	const moreDraws = buildLaneSlice([{ ...rows[0], winCount: 60, lossCount: 0, drawCount: 20 }], 4);
 	assert.equal(moreDraws['62|4|10'][1], 750, '60 胜 0 负 20 平 → +75.0%，平局不算输');
 
+	/*
+	 * 分母是「胜 + 负 + 平」，不是上游的 `matchCount`：后者比它大约 13%（实测全池 211,681
+	 * 对 184,654），多出来的是没记线上结果的场次，拿它当分母会把净对线稀释掉。
+	 */
+	const noisy = buildLaneSlice([{ heroId1: 8, heroId2: 9, matchCount: 200, winCount: 100, lossCount: 60, drawCount: 0 }], 1);
+	assert.deepEqual(noisy['8|1|9'], [160, 250], '分母取 胜+负+平 = 160，净对线 (100−60)/160 = +25.0%');
+	assert.deepEqual(
+		buildLaneSlice([{ heroId1: 8, heroId2: 9, matchCount: 900, winCount: 20, lossCount: 20, drawCount: 0 }], 1),
+		{},
+		'matchCount 再大，记了结果的场次不到门槛也不建表',
+	);
+
 	// 同一格出现两次（上游把不同周的行混在一起）：取样本大的那次
 	const dup = buildLaneSlice([
 		{ heroId1: 3, heroId2: 4, position: 'POSITION_2', matchCount: 60, winCount: 30, lossCount: 30 },
@@ -93,9 +105,9 @@ const ok = (label: string): void => {
 
 // ---- 汇总：各格等权平均，不是按场次加权 ----
 {
-	// 一格 100 场 net +0.40，一格 5,000 场 net −0.10 → 等权 (−10) 与加权 (+? ) 差很多
+	// 一格 100 场 net +0.40，一格 5,000 场 net −0.10 → 等权与按场次加权差很多
 	const lanes = buildLaneSlice([
-		{ heroId1: 5, heroId2: 6, position: 'POSITION_3', matchCount: 100, winCount: 90, lossCount: 50 },
+		{ heroId1: 5, heroId2: 6, position: 'POSITION_3', matchCount: 100, winCount: 70, lossCount: 30 },
 		{ heroId1: 5, heroId2: 7, position: 'POSITION_3', matchCount: 5000, winCount: 2250, lossCount: 2750 },
 	], 3);
 	const edge = laneEdge(lanes, 5, 3, [6, 7])!;
@@ -120,8 +132,8 @@ const ok = (label: string): void => {
 {
 	const lanes = buildLaneSlice(
 		[
-			// 反方向才有：水晶室女(5) 打 5 号位时线上遇到暗影萨满(27)，净对线 +18.9%
-			{ heroId1: 5, heroId2: 27, matchCount: 74, winCount: 40, lossCount: 26 },
+			// 反方向才有：水晶室女(5) 打 5 号位时线上遇到暗影萨满(27)，74 场里 44 胜 30 负 → +18.9%
+			{ heroId1: 5, heroId2: 27, matchCount: 74, winCount: 44, lossCount: 30 },
 		],
 		5,
 	);
@@ -136,7 +148,7 @@ const ok = (label: string): void => {
 	const both = buildLaneSlice(
 		[
 			{ heroId1: 27, heroId2: 5, matchCount: 60, winCount: 45, lossCount: 15 },
-			{ heroId1: 5, heroId2: 27, matchCount: 74, winCount: 40, lossCount: 26 },
+			{ heroId1: 5, heroId2: 27, matchCount: 74, winCount: 44, lossCount: 30 },
 		],
 		5,
 	);

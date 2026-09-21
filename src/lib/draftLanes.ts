@@ -50,8 +50,12 @@ export function lanePartnerPosition(position: number): number | null {
  * 一格要有多少场才留。
  *
  * 线上对局的样本天然比整局小（一场只有一个线上阶段），全池 127 英雄 × 5 号位 × 126 个对手
- * 实测 79,000 多格里绝大多数是个位数；50 场以上只剩 7,600 格左右、约 0.2MB，
+ * 实测 79,000 多格里绝大多数是个位数；记了结果 50 场以上只剩 4,700 格左右、约 90KB，
  * 再往下放宽只是把噪声塞进依据里。
+ *
+ * 这里的「场」是**记了结果的场次**（胜 + 负 + 平），不是上游的 `matchCount`：
+ * 后者比它大约 13%（实测五号位全池 211,681 对 184,654），多出来的是没记线上结果的场次，
+ * 拿它当分母会把净对线稀释掉。
  */
 export const LANE_MIN_GAMES = 50;
 
@@ -156,7 +160,7 @@ export interface RawLaneRow {
 	matchCount?: number | null;
 	winCount?: number | null;
 	lossCount?: number | null;
-	/** 上游给的平局数。净对线的分子里没有它——平局只在分母（`matchCount`）里出现。 */
+	/** 上游给的平局数。净对线的分子里没有它——平局只在分母里出现。 */
 	drawCount?: number | null;
 }
 
@@ -174,15 +178,20 @@ export function buildLaneSlice(rows: readonly RawLaneRow[], position: LanePositi
 	for (const row of rows) {
 		const heroId = row.heroId1;
 		const otherId = row.heroId2;
-		const matches = row.matchCount ?? 0;
+		/*
+		 * 分母用「胜 + 负 + 平」而不是 `matchCount`：上游的 `matchCount` 比这三项之和大一截
+		 * （实测全池差 12.8%，例如 405 对 358），多出来的是没记线上结果的场次。
+		 * 拿它当分母会把净对线系统性稀释——真实的 −10% 会被写成更小的数。
+		 */
+		const decided = (row.winCount ?? 0) + (row.lossCount ?? 0) + (row.drawCount ?? 0);
 		if (!heroId || !otherId || heroId === otherId) continue;
-		if (matches < minGames) continue;
-		const net = ((row.winCount ?? 0) - (row.lossCount ?? 0)) / matches;
+		if (decided < minGames) continue;
+		const net = ((row.winCount ?? 0) - (row.lossCount ?? 0)) / decided;
 		const perMille = Math.round(net * 1000);
 		const id = key(heroId, position, otherId);
 		// 同一格出现两次（上游把不同周或不同分段的行混在一起）时取样本大的那次。
 		const existing = out[id];
-		if (!existing || matches > existing[0]) out[id] = [matches, perMille];
+		if (!existing || decided > existing[0]) out[id] = [decided, perMille];
 	}
 	return out;
 }
