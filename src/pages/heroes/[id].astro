@@ -70,6 +70,23 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 			<span class="text-cream">{name}</span>
 		</nav>
 
+		{/*
+			攻略的出口放在最上面：这是"我想知道这英雄现在怎么打"最直接的答案，
+			而下面那些数值（属性、技能、天赋树）回答的是"这英雄是什么"。
+		*/}
+		<div class="mb-6">
+			<a
+				href={`/heroes/${id}/guides`}
+				class="inline-flex items-center gap-2.5 rounded-lg border border-line bg-surface px-4 py-2 text-sm text-cream transition hover:border-dota/60 hover:bg-surface-2"
+			>
+				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" class="text-dota-light">
+					<path d="M4 6h16M4 12h16M4 18h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+				</svg>
+				高手攻略
+				<span class="text-xs text-faint">高分对局的加点与出装</span>
+			</a>
+		</div>
+
 		{
 			metaUnavailable ? (
 				<p class="mb-6 rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">

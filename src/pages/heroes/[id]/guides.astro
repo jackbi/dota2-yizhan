@@ -1,0 +1,780 @@
+---
+import Layout from '../../../layouts/Layout.astro';
+import Avatar from '../../../components/player/Avatar.astro';
+import { heroRefMap } from '../../../lib/gameRefs';
+import { StratzError, stratzRuntimeConfigured } from '../../../lib/stratzRuntime';
+import { GUIDE_POSITION_LABEL, guideTime, loadGuideAuthors, loadGuideIndex, type GuideAuthor, type GuidePositionGroup } from '../../../lib/stratzGuides';
+
+/*
+ * 这个页面是 SSR（`prerender = false`），不是像 `/heroes/[id]` 那样构建期渲染。
+ *
+ * 原因是额度：攻略按（英雄 × 位置）拿，126 个英雄 × 5 个位置全量烘焙，光索引一次构建
+ * 就是六百多次调用，而站点每 30 分钟重建一次——当天 1 万次的额度会被构建吃光。
+ * 放到运行时按需取，再叠一层半小时的内存缓存，成本才落到几十次/天。
+ *
+ * 页面上仍然只渲染"谁 + 什么时候 + 哪一场"这三样（三次请求：一次索引、两批玩家名）；
+ * 加点与出装要点开才取（见 `/api/hero/guide`）。爬虫顺着链接爬一遍也只会触发列表那三次。
+ */
+export const prerender = false;
+
+const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路', 3: '劣势路', 4: '游走辅助', 5: '保护辅助' };
+
+const heroId = Number(Astro.params.id);
+const nowSec = Math.floor(Date.now() / 1000);
+
+const heroes = await heroRefMap().catch(() => new Map());
+const heroName = heroes.get(heroId)?.name ?? `英雄 ${heroId}`;
+
+/*
+ * 英雄列表里查不到这个 id，说明地址是编出来的：给搜索引擎一个 404，而不是一个 200 的空壳。
+ * 列表本身取不到（官方接口挂了）时 map 是空的，那种情况**不能**当成"这个英雄不存在"，
+ * 否则上游抖一下整站英雄攻略页全变 404。
+ */
+const heroKnown = heroes.size === 0 || heroes.has(heroId);
+
+let groups: GuidePositionGroup[] = [];
+let problem = '';
+if (!Number.isSafeInteger(heroId) || heroId <= 0) {
+	Astro.response.status = 404;
+	problem = '英雄 id 不合法。';
+} else if (!heroKnown) {
+	Astro.response.status = 404;
+	problem = `没有 id 为 ${heroId} 的英雄。`;
+} else if (!stratzRuntimeConfigured()) {
+	problem = '服务端没有配置 STRATZ token 或中转，取不到攻略数据。';
+} else {
+	try {
+		groups = await loadGuideIndex(heroId);
+	} catch (error) {
+		problem = error instanceof StratzError ? error.message : '取攻略数据失败，稍后再试。';
+	}
+}
+
+/*
+ * 默认落在这个英雄打得最多的位置：STRATZ 每个位置最多给 10 条，但客串位置可能只有一两条
+ * （实测赏金猎人一号位只有 2 条），默认进一个空列表等于第一眼就没东西看。
+ * 条数相同时比样本量（赏金猎人二三四五号位都是 10 条，但四号位样本 6396 场、二号位 21 场），
+ * 那才是"这个英雄通常打哪"的答案。
+ */
+const requested = Number(Astro.url.searchParams.get('p'));
+const available = groups.filter((group) => group.hits.length > 0);
+const active =
+	available.find((group) => group.position === requested) ??
+	available.slice().sort((a, b) => b.hits.length - a.hits.length || b.poolSize - a.poolSize || a.position - b.position)[0] ??
+	null;
+
+let authors = new Map<number, GuideAuthor>();
+let authorsFailed = false;
+if (active) {
+	try {
+		authors = await loadGuideAuthors(active.hits.map((hit) => hit.steamAccountId));
+	} catch {
+		authorsFailed = true;
+	}
+}
+
+const stratzUrl = `https://stratz.com/heroes/${heroId}/guides${active ? `?positionId=POSITION_${active.position}` : ''}`;
+---
+
+<Layout
+	title={`${heroName} 高手攻略 · 加点与出装 · DOTA2 驿站`}
+	description={`${heroName} 在高分与职业对局里的实战加点顺序与出装时间轴，按五个位置分开看，数据来自 STRATZ。`}
+	breadcrumbs={[{ name: '英雄', href: '/heroes' }, { name: heroName, href: `/heroes/${heroId}` }, { name: '攻略' }]}
+>
+	<Fragment slot="head">
+		<meta name="referrer" content="no-referrer" />
+	</Fragment>
+	<section class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
+			<a href="/heroes" class="transition hover:text-dota-light">英雄资料</a>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			<a href={`/heroes/${heroId}`} class="transition hover:text-dota-light">{heroName}</a>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			<span class="text-cream">高手攻略</span>
+		</nav>
+
+		<header class="mb-6">
+			<h1 class="font-display text-2xl">{heroName} · 高手攻略</h1>
+			<p class="mt-2 max-w-3xl text-sm text-muted">
+				这里的每一条不是撰文，而是一场比赛：高分与职业选手在实际对局里的加点顺序、天赋选择和出装时间轴。
+				挑一条点开，看的就是那一局他是怎么打的。
+			</p>
+			<p class="mt-2 text-xs text-faint">
+				对局数据与选手名单来自
+				<a href={stratzUrl} target="_blank" rel="noopener" class="text-dota-light transition hover:text-cream">STRATZ</a>
+				，本站只做整理展示。
+			</p>
+		</header>
+
+		{
+			problem ? (
+				<p class="rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">{problem}</p>
+			) : available.length === 0 ? (
+				<p class="rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">
+					STRATZ 目前没有这个英雄的攻略记录，过一阵再来看看。
+				</p>
+			) : (
+				<>
+					<div class="mb-4 flex flex-wrap gap-2" role="tablist" aria-label="按位置筛选">
+						{groups.map((group) => {
+							const isActive = active?.position === group.position;
+							const empty = group.hits.length === 0;
+							return (
+								<a
+									href={`/heroes/${heroId}/guides?p=${group.position}`}
+									role="tab"
+									aria-selected={isActive ? 'true' : 'false'}
+									aria-disabled={empty ? 'true' : 'false'}
+									title={`${POSITION_HINT[group.position]}${empty ? '：暂时没有攻略' : `：${group.hits.length} 份`}`}
+									class:list={[
+										'rounded-lg border px-3 py-1.5 text-sm transition',
+										isActive ? 'border-dota bg-dota/15 text-dota-light' : 'border-line text-muted hover:text-cream',
+										empty && !isActive && 'pointer-events-none opacity-40',
+									]}
+								>
+									{GUIDE_POSITION_LABEL[group.position]}
+									<span class="ml-1.5 text-xs tabular-nums text-faint">{group.hits.length}</span>
+								</a>
+							);
+						})}
+					</div>
+
+					{authorsFailed ? (
+						<p class="mb-3 rounded-lg border border-line bg-surface/60 px-3 py-2 text-xs text-faint">
+							选手名单这次没取到，下面的名字会显示为「匿名玩家」，不影响点开看加点与出装。
+						</p>
+					) : null}
+
+					<h2 class="sr-only">{GUIDE_POSITION_LABEL[active?.position ?? 1]}的高分对局</h2>
+					<ul class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+						{active?.hits.map((hit) => {
+							const author = authors.get(hit.steamAccountId);
+							return (
+								<li>
+									<button
+										type="button"
+										data-guide
+										data-match={hit.matchId}
+										data-account={hit.steamAccountId}
+										aria-expanded="false"
+										aria-controls="guide-detail"
+										class="group flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2.5 text-left transition hover:border-dota/60 hover:bg-surface-2/60 focus:outline-none focus-visible:border-dota"
+									>
+										{/*
+											Steam 的头像 CDN 在国内直连会被重置，头像组件自带首字母兜底，
+											加载失败只会露出首字母，不会留破图（与个人战绩页同一套）。
+										*/}
+										<Avatar src={author?.avatar} name={author?.name ?? '匿名'} size={36} />
+										<span class="min-w-0 flex-1">
+											<span class="block truncate text-sm font-medium text-cream">{author?.name ?? '匿名玩家'}</span>
+											<span class="block text-xs text-faint">
+												{guideTime(hit.createdAt, nowSec)} · 比赛 {hit.matchId}
+											</span>
+										</span>
+										<span class="shrink-0 text-xs text-dota-light sm:opacity-60 sm:transition sm:group-hover:opacity-100">
+											加点与出装 →
+										</span>
+									</button>
+								</li>
+							);
+						})}
+					</ul>
+
+					{active && active.poolSize > 0 ? (
+						<p class="mt-3 text-xs text-faint">
+							{POSITION_HINT[active.position]}：STRATZ 在这个位置上统计过 {active.poolSize.toLocaleString('zh-CN')} 场对局，
+							上面是它挑出来的 {active.hits.length} 份。换位置看上面的标签。
+						</p>
+					) : null}
+
+					<div id="guide-detail" class="mt-6" role="region" aria-label="攻略详情" hidden></div>
+				</>
+			)
+		}
+	</section>
+
+	<script>
+		/*
+		 * 时间格式与位置名都从 `guideBuild` 引，不在这里再抄一份：那是会被静默改坏的
+		 * 地方（比如把开局买装的负时间夹成 0），两份实现迟早对不上。
+		 */
+		import {
+			formatDuration,
+			guidePositionLabel,
+			hasInventoryTimeline,
+			inventoryAtTime,
+			levelAtTime,
+			purchasesUpTo,
+			SCEPTER_ITEM_IDS,
+			SHARD_ITEM_IDS,
+			spreadColumns,
+			stepsUpTo,
+			summarizeSteps,
+		} from '../../../lib/guideBuild';
+		// 天赋与蓝杖/魔晶的图形（取自 STRATZ 的攻略页，见该文件的说明）。
+		import { talentBadge, upgradeGlyph } from '../../../lib/guideIcons';
+
+		interface ItemView {
+			id: number;
+			name: string;
+			img: string;
+			cost: number;
+		}
+		interface PurchaseView {
+			time: number;
+			item: ItemView;
+		}
+		interface StepView {
+			order: number;
+			time: number;
+			isTalent: boolean;
+			name: string;
+			img: string;
+			level: number | null;
+		}
+		interface InventoryView {
+			time: number;
+			slots: number[];
+			backpack: number[];
+			teleport: number;
+			neutral: number;
+		}
+		interface LevelEventView {
+			time: number;
+			level: number;
+		}
+		interface TalentOptionView {
+			id: number;
+			name: string;
+			picked: boolean;
+		}
+		interface TalentRowView {
+			level: number;
+			left: TalentOptionView;
+			right: TalentOptionView;
+		}
+		interface UpgradeView {
+			item: ItemView;
+			time: number | null;
+			abilities: { id: number; name: string; img: string; granted: boolean }[];
+		}
+		interface DetailView {
+			matchId: number;
+			durationSeconds: number;
+			radiantWin: boolean | null;
+			authorName: string;
+			position: string | null;
+			isRadiant: boolean;
+			kills: number;
+			deaths: number;
+			assists: number;
+			imp: number | null;
+			level: number | null;
+			lastHits: number;
+			denies: number;
+			gpm: number;
+			xpm: number;
+			networth: number;
+			heroDamage: number;
+			buildingDamage: number;
+			steps: StepView[];
+			starting: PurchaseView[];
+			timeline: PurchaseView[];
+			keyItems: PurchaseView[];
+			finalItems: ItemView[];
+			levels: LevelEventView[];
+			inventory: InventoryView[];
+			neutrals: { time: number; itemId: number }[];
+			itemMap: Record<number, ItemView>;
+			talentTree: TalentRowView[];
+			upgrades: { scepter: UpgradeView; shard: UpgradeView };
+		}
+
+		/** 与英雄页同一套转义：选手名来自 Steam，直接拼进 innerHTML 会出问题。 */
+		const esc = (value: unknown): string =>
+			String(value ?? '')
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;');
+
+		const thumb = (item: ItemView, size = 'h-8 w-8'): string =>
+			item.img
+				? `<img src="${esc(item.img)}" alt="" aria-hidden="true" referrerpolicy="no-referrer" loading="lazy" class="${size} shrink-0 rounded border border-line bg-surface-3 object-cover">`
+				: `<span class="${size} flex shrink-0 items-center justify-center rounded border border-line bg-surface-3 text-[10px] text-faint">?</span>`;
+
+		const itemChip = (entry: PurchaseView): string => `
+			<li class="flex items-center gap-2 rounded-lg border border-line bg-surface-2 px-2 py-1" title="${esc(entry.item.name)}">
+				${thumb(entry.item, 'h-7 w-7')}
+				<span class="min-w-0">
+					<span class="block truncate text-xs text-cream">${esc(entry.item.name)}</span>
+					<span class="block text-[10px] text-faint tabular-nums">${formatDuration(entry.time)}</span>
+				</span>
+			</li>`;
+
+		/*
+		 * 出装加点表：**列是英雄等级 1..25**，一行一个技能。
+		 *
+		 * 这不是照抄 STRATZ 的页面（他们的 HTML/CSS 是自家资产、图在他们 CDN 上），但用的是
+		 * **同一份数据**：加点事件的"当时是几级"由回放的升级时间线（`playerUpdateLevelEvents`）
+		 * 推出来，所以忍术落在 1/3/5/7 级这种位置与他们完全一致。图标仍走站内那套官方素材
+		 * （技能图 img.dota2.com.cn、装备图 dota2.com.cn/items/png）。
+		 *
+		 * 列固定 25 列：一局只打到 22 级也照样铺满，免得不同比赛之间列宽跳来跳去。
+		 */
+		const GRID_COLS = 25;
+
+		/** 网格的列定义：左边一列放行标签，右边 25 列放格子。 */
+		const gridStyle = `grid-template-columns:3.5rem repeat(${GRID_COLS}, minmax(0, 1fr))`;
+
+		const gridRow = (label: string, cells: { col: number; html: string }[]): string => `
+			<div class="grid items-center gap-y-1" style="${gridStyle}">
+				<span class="whitespace-nowrap pr-2 text-right text-[11px] text-faint">${esc(label)}</span>
+				${cells.map((cell) => `<span class="flex justify-center" style="grid-column:${cell.col + 1}">${cell.html}</span>`).join('')}
+			</div>`;
+
+		const gridHeader = (): string => `
+			<div class="grid pb-1" style="${gridStyle}">
+				<span></span>
+				${Array.from({ length: GRID_COLS }, (_, index) => `<span class="text-center text-[10px] text-faint tabular-nums">${index + 1}</span>`).join('')}
+			</div>`;
+
+		/** 技能格是带边框的小方块；天赋格换成徽章本身，**不套边框**（官网那天赋图标也是没有框的）。 */
+		const abilityCell = (step: StepView, talentRows: TalentRowView[]): string => {
+			const title = `${esc(step.name)}${step.level === null ? '' : ` · ${step.level} 级`} · ${formatDuration(step.time)}`;
+			if (step.isTalent) return `<span class="flex h-6 w-6 items-center justify-center text-faint" title="${title}">${talentBadge(talentRows, 'h-6 w-6')}</span>`;
+			return `
+				<span class="block h-6 w-6 overflow-hidden rounded border border-line bg-surface-3" title="${title}">
+					${step.img ? `<img src="${esc(step.img)}" alt="${esc(step.name)}" referrerpolicy="no-referrer" loading="lazy" class="h-full w-full object-cover">` : ''}
+				</span>`;
+		};
+
+		/** 装备格子：图标下面挂时间。列宽只有二十几分之一，时间用小字。 */
+		const itemCell = (item: ItemView, time: number): string => `
+			<span class="flex flex-col items-center gap-0.5" title="${esc(item.name)} · ${formatDuration(time)}">
+				${thumb(item, 'h-6 w-6')}
+				<span class="text-[9px] leading-3 text-faint tabular-nums">${formatDuration(time)}</span>
+			</span>`;
+
+		/**
+		 * 加点行：一个技能一行、一格一级。
+		 *
+		 * 没有回放数据时 `step.level` 是 null，退化成按加点先后（第几点）摆——列号还是那一列，
+		 * 只是含义从"几级"变成"第几点"，说明文字也跟着换。
+		 */
+		const abilityRows = (steps: StepView[], talentRows: TalentRowView[]): string => {
+			const groups: { name: string; isTalent: boolean; img: string; cells: { col: number; html: string }[] }[] = [];
+			for (const step of steps) {
+				const col = step.level ?? step.order;
+				// 天赋全部并成一行：三个天赋各占一行会把表格撑得很高，而它们本来就是同一类东西。
+				const key = step.isTalent ? '__talent__' : step.name;
+				let group = groups.find((entry) => (entry.isTalent ? '__talent__' : entry.name) === key);
+				if (!group) {
+					group = { name: step.name, isTalent: step.isTalent, img: step.img, cells: [] };
+					groups.push(group);
+				}
+				group.cells.push({ col, html: abilityCell(step, talentRows) });
+			}
+			return groups.map((group) => gridRow(group.isTalent ? '天赋' : group.name, group.cells)).join('');
+		};
+
+		/**
+		 * 能力总结：技能图标 + 点了几点的圆点，天赋合成一格，末尾是这场出没出蓝杖与魔晶。
+		 *
+		 * 蓝杖/魔晶问的是"这位选手买没买"（买过就亮、没买就灰），而不是"这英雄有没有这件升级"——
+		 * 后者在英雄页已经写了，放这里没有信息量。
+		 */
+		const upgradeChip = (label: string, kind: 'scepter' | 'shard', upgrade: UpgradeView, has: boolean): string => `
+			<span class="group relative flex w-20 flex-col items-center gap-1" tabindex="0">
+				<span class="flex h-9 w-9 items-center justify-center">${upgradeGlyph(kind, has, kind === 'scepter' ? 'h-8 w-8' : 'h-4 w-8')}</span>
+				<span class="text-[10px] ${has ? 'text-gold' : 'text-faint'}">${has ? '出过' : '没出'}</span>
+				<span class="w-full truncate text-center text-[10px] text-faint">${esc(label)}</span>
+				${tooltip(upgradePanel(upgrade, has))}
+			</span>`;
+
+		const abilitySummary = (detail: DetailView): string => {
+			const playback = playbackOf(detail);
+			const rows = summarizeSteps(detail.steps);
+			const imgOf = new Map(detail.steps.map((step) => [`${step.name}|${step.isTalent}`, step.img]));
+
+			const chips = rows
+				.filter((row) => !row.isTalent)
+				.map((row) => {
+					const img = imgOf.get(`${row.name}|false`) ?? '';
+					const dots = Array.from({ length: 4 }, (_, index) => `<span class="h-1.5 w-1.5 rounded-full ${index < row.count ? 'bg-gold' : 'bg-surface-3'}"></span>`).join('');
+					return `
+						<span class="flex w-20 flex-col items-center gap-1" title="${esc(row.name)} ×${row.count}">
+							${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-9 w-9 rounded">` : `<span class="h-9 w-9 rounded bg-surface-3"></span>`}
+							<span class="flex gap-0.5">${dots}</span>
+							<span class="w-full truncate text-center text-[10px] text-faint">${esc(row.name)}</span>
+						</span>`;
+				});
+
+			const talents = rows.filter((row) => row.isTalent);
+			const talentCount = talents.reduce((sum, row) => sum + row.count, 0);
+			const talentChip =
+				talentCount > 0
+					? `
+						<span class="group relative flex w-20 flex-col items-center gap-1" tabindex="0">
+							<span class="flex h-9 w-9 items-center justify-center text-faint">${talentBadge(playback.talentTree, 'h-9 w-9')}</span>
+							<span class="font-display text-[10px] text-gold">${talentCount}</span>
+							<span class="w-full truncate text-center text-[10px] text-faint">天赋</span>
+							${tooltip(talentPanel(detail))}
+						</span>`
+					: '';
+
+			/*
+			 * 蓝杖看购买记录 + 背包快照（肉山掉落的版本不会出现在购买记录里），
+			 * 魔晶只能用购买记录：它是买下即消耗的，用完不在背包里。
+			 */
+			const held = (ids: number[]): boolean =>
+				detail.timeline.some((entry) => ids.includes(entry.item.id)) ||
+				playback.inventory.some((snapshot) => [...snapshot.slots, ...snapshot.backpack].some((id) => ids.includes(id)));
+			// 老版本缓存的响应里没有 upgrades，缺了就不画这两个格子（别让整块渲染挂掉）。
+			const upgrades = detail.upgrades
+				? upgradeChip('蓝杖', 'scepter', detail.upgrades.scepter, held(SCEPTER_ITEM_IDS)) +
+					upgradeChip('魔晶', 'shard', detail.upgrades.shard, held(SHARD_ITEM_IDS))
+				: '';
+
+			return chips.join('') + talentChip + upgrades;
+		};
+
+		const chart = (detail: DetailView): string => {
+			const playback = playbackOf(detail);
+			const keyCells = spreadColumns(detail.keyItems.length, GRID_COLS).map((col, index) => ({
+				col,
+				html: itemCell(detail.keyItems[index].item, detail.keyItems[index].time),
+			}));
+			const neutralCells = spreadColumns(playback.neutrals.length, GRID_COLS).map((col, index) => ({
+				col,
+				html: itemCell(playback.itemMap[playback.neutrals[index].itemId] ?? { id: 0, name: '', img: '', cost: 0 }, playback.neutrals[index].time),
+			}));
+			/*
+			 * 总结那排放在横向滚动容器**外面**：放里面的话，悬停面板会被 overflow 裁掉。
+			 * 等级表本身要滚动（25 列铺不满手机宽度），所以只有它待在容器里。
+			 */
+			return `
+				<div class="mt-3">
+					<div class="flex flex-wrap justify-center gap-1 rounded-lg border border-line bg-surface-2/40 px-3 py-2">${abilitySummary(detail)}</div>
+					<div class="mt-2 overflow-x-auto">
+						<div class="min-w-[38rem] space-y-1 border-t border-line pt-2">
+							${gridHeader()}
+							${abilityRows(detail.steps, playback.talentTree)}
+							${keyCells.length > 0 ? gridRow('主要装备', keyCells) : ''}
+							${neutralCells.length > 0 ? gridRow('中立物品', neutralCells) : ''}
+						</div>
+					</div>
+				</div>`;
+		};
+
+		const section = (title: string, hint: string, body: string): string => `
+			<section class="mt-5">
+				<h3 class="font-display text-sm text-cream">${esc(title)}</h3>
+				${hint ? `<p class="mt-0.5 text-xs text-faint">${esc(hint)}</p>` : ''}
+				${body}
+			</section>`;
+
+		/**
+		 * 游标那一块：左边是那一刻身上的装备（照游戏里的排法：三列两行的六格、右边中立槽、
+		 * 下面背包三格与传送），右边是时间轴。
+		 *
+		 * 背包内容来自回放的背包快照；这场比赛没被解析过时退化成"截至这一刻买到了什么"。
+		 */
+		const cursorUi = (detail: DetailView): string => {
+			const duration = Math.max(1, Math.round(detail.durationSeconds || 0));
+			return `
+				<div class="mt-3 rounded-xl border border-line bg-surface-2/50 p-3">
+					<div class="flex flex-wrap items-center gap-4">
+						<div id="guide-inventory" class="shrink-0"></div>
+						<div class="min-w-56 flex-1">
+							<input
+								id="guide-cursor"
+								type="range"
+								min="0"
+								max="${duration}"
+								step="1"
+								value="${duration}"
+								aria-label="拖动查看某一刻的加点和装备"
+								class="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-surface-3 accent-dota [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-dota [&::-webkit-slider-thumb]:shadow"
+							/>
+							<div class="mt-1 flex items-center justify-between text-[11px] text-faint tabular-nums">
+								<span>00:00</span>
+								<span id="guide-cursor-clock" class="font-display text-sm text-cream">${formatDuration(duration)}</span>
+								<span>${formatDuration(duration)}</span>
+							</div>
+							<p id="guide-cursor-steps" class="mt-2 text-xs text-muted"></p>
+							<p id="guide-cursor-more" class="mt-1 text-[11px] text-faint"></p>
+						</div>
+					</div>
+				</div>`;
+		};
+
+		/*
+		 * 回放那三份数据是后加的字段。浏览器把 `/api/hero/guide` 缓存了一小时，
+		 * 用户手里若留着上个版本缓存的响应，这几个字段就是 undefined——缺了就按空数组走，
+		 * 页面退化成"没有回放数据"的样子，而不是整块报错。
+		 */
+		const playbackOf = (detail: DetailView) => ({
+			levels: detail.levels ?? [],
+			inventory: detail.inventory ?? [],
+			neutrals: detail.neutrals ?? [],
+			itemMap: detail.itemMap ?? {},
+			talentTree: detail.talentTree ?? [],
+		});
+
+		/**
+		 * 悬停/聚焦时浮出的面板。外面那层负责定位，所以调用方必须是 `relative group`。
+		 *
+		 * 面板用 `pointer-events-none`：不这么做，鼠标移到面板上会离开触发元素、面板自己闪掉。
+		 */
+		const tooltip = (body: string): string => `
+			<span class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-max max-w-[min(26rem,80vw)] -translate-x-1/2 group-hover:block group-focus-within:block">
+				<span class="block rounded-xl border border-line bg-surface-2 p-3 text-left shadow-xl">${body}</span>
+			</span>`;
+
+		/** 天赋树悬停面板：25 → 10 四层，每层左右两个选项，这一局点过的是金色。 */
+		const talentPanel = (detail: DetailView): string => {
+			const rows = playbackOf(detail).talentTree;
+			if (rows.length === 0) return '<span class="text-xs text-faint">这场没有天赋记录</span>';
+			const picked = rows.reduce((sum, row) => sum + (row.left.picked ? 1 : 0) + (row.right.picked ? 1 : 0), 0);
+			const cell = (option: TalentOptionView): string =>
+				`<span class="${option.picked ? 'font-medium text-gold' : 'text-faint'}">${option.picked ? '★ ' : ''}${esc(option.name)}</span>`;
+			return `
+				<span class="mb-2 flex items-center gap-1.5 text-xs text-cream">
+					<span class="inline-flex h-4 w-4 items-center justify-center text-faint">${talentBadge(rows, 'h-4 w-4')}</span>
+					天赋树
+					<span class="text-faint">这一局点了 ${picked} 个</span>
+				</span>
+				<span class="block space-y-1">
+					${rows
+						.map(
+							(row) => `
+						<span class="flex items-center gap-2 text-[11px]">
+							<span class="w-5 shrink-0 text-right text-faint tabular-nums">${row.level}</span>
+							<span class="flex-1 text-right">${cell(row.left)}</span>
+							<span class="w-px self-stretch bg-line"></span>
+							<span class="flex-1">${cell(row.right)}</span>
+						</span>`,
+						)
+						.join('')}
+				</span>`;
+		};
+
+		/** 蓝杖/碎片悬停面板：这件装备这一局出没出，以及它升级/召唤了哪几个技能。 */
+		const upgradePanel = (upgrade: UpgradeView, owned: boolean): string => `
+			<span class="flex items-center gap-2 text-xs text-cream">
+				${upgrade.item.img ? `<img src="${esc(upgrade.item.img)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-5 w-5 rounded">` : ''}
+				${esc(upgrade.item.name)}
+				${upgrade.time === null ? '<span class="text-faint">这局没出</span>' : `<span class="text-faint tabular-nums">${formatDuration(upgrade.time)}</span>`}
+			</span>
+			${
+				upgrade.abilities.length === 0
+					? '<span class="mt-1 block text-[11px] text-faint">这个英雄没有对应的升级</span>'
+					: `<span class="mt-1.5 block space-y-1">${upgrade.abilities
+							.map(
+								(ability) => `
+						<span class="flex items-center gap-2 text-[11px]">
+							${ability.img ? `<img src="${esc(ability.img)}" alt="" referrerpolicy="no-referrer" loading="lazy" class="h-5 w-5 rounded">` : ''}
+							<span class="${owned ? 'text-muted' : 'text-faint'}">${esc(ability.name)}</span>
+							<span class="rounded bg-surface-3 px-1 text-[10px] ${ability.granted ? 'text-dota-light' : 'text-gold'}">${ability.granted ? '新' : '升级'}</span>
+						</span>`,
+							)
+							.join('')}</span>`
+			}`;
+
+		const render = (detail: DetailView, heroId: string, matchId: string, accountId: string): string => {
+			const win = detail.radiantWin === null ? null : detail.radiantWin === detail.isRadiant;
+			const result = win === null ? '' : win ? '胜利' : '失败';
+			const facts = [
+				guidePositionLabel(detail.position),
+				detail.isRadiant ? '天辉' : '夜魇',
+				result,
+				formatDuration(detail.durationSeconds),
+				`KDA ${detail.kills}/${detail.deaths}/${detail.assists}`,
+				detail.imp === null ? '' : `IMP ${detail.imp > 0 ? '+' : ''}${detail.imp}`,
+				`正补 ${detail.lastHits}/${detail.denies}`,
+				`GPM ${detail.gpm} / XPM ${detail.xpm}`,
+			].filter(Boolean);
+
+			/*
+			 * 列的含义取决于有没有回放数据：有等级时间线时列是"几级"，否则只能按加点先后编号。
+			 * 提示文字得跟着换，不然会指着"第 3 点"说那是 3 级。
+			 */
+			const playback = playbackOf(detail);
+			// 两句话各管一件事：列是什么、游标能看出什么。两者各有各的降级条件，不能绑在一起说。
+			const columnHint =
+				playback.levels.length > 0
+					? '列是英雄等级：一格表示那一级点掉的技能，金色格子是天赋。'
+					: '这场比赛没有回放数据，加点按先后编号摆（第 N 点）。';
+			const cursorHint = hasInventoryTimeline(playback.inventory)
+				? '拖下面的时间轴看某一刻身上的装备。'
+				: '拖下面的时间轴看那一刻为止买到了什么。';
+			const hint = columnHint + cursorHint;
+			const stratzUrl = `https://stratz.com/guides/view-hero?matchId=${matchId}&steamAccountId=${accountId}`;
+			return `
+				<div class="rounded-2xl border border-line bg-surface p-5">
+					<div class="flex flex-wrap items-baseline justify-between gap-3">
+						<h2 class="font-display text-lg">${esc(detail.authorName)} 的这局</h2>
+						<a href="${esc(stratzUrl)}" target="_blank" rel="noopener" class="text-xs text-dota-light transition hover:text-cream">在 STRATZ 上看这场 ↗</a>
+					</div>
+					<p class="mt-1 text-xs text-faint">${facts.map((fact) => esc(fact)).join(' · ')}</p>
+
+					${section('出装与加点', hint, chart(detail) + cursorUi(detail))}
+
+					${
+						detail.timeline.length > 0
+							? `<details class="mt-4">
+									<summary class="cursor-pointer text-sm text-muted transition hover:text-cream">全部购买记录（${detail.timeline.length} 件，含消耗品与散件）</summary>
+									<ul class="mt-2 flex flex-wrap gap-2">${detail.timeline.map(itemChip).join('')}</ul>
+								</details>`
+							: ''
+					}
+
+					<p class="mt-5 text-xs text-faint">
+						<a href="/heroes/${esc(heroId)}/guides" class="text-dota-light transition hover:text-cream">← 回到攻略列表</a>
+					</p>
+				</div>`;
+		};
+
+		const panel = document.getElementById('guide-detail');
+		const buttons = [...document.querySelectorAll<HTMLButtonElement>('[data-guide]')];
+		const heroId = location.pathname.split('/')[2] ?? '';
+		let current: HTMLButtonElement | null = null;
+
+		const clear = (): void => {
+			current?.setAttribute('aria-expanded', 'false');
+			current = null;
+		};
+
+		/**
+		 * 没有回放数据时的退路：这一刻最多铺几格"已购买"。
+		 *
+		 * 一局下来购买记录能到四十多条（守卫、净化、散件），全铺出来会把面板顶得很长；
+		 * 取最近的 18 件（六列 × 三行）够看出当时的成型件。
+		 */
+		const CURSOR_MAX_ITEMS = 18;
+
+		/** 一个装备槽。空槽画成虚线的空格，跟游戏里一样。 */
+		const slot = (item: ItemView | null, size = 'h-9 w-9'): string => `
+			<span class="flex ${size} shrink-0 items-center justify-center overflow-hidden rounded border ${item ? 'border-line bg-surface-3' : 'border-dashed border-line/70 bg-surface-3/20'}" title="${item ? esc(item.name) : '空'}">
+				${item?.img ? `<img src="${esc(item.img)}" alt="" aria-hidden="true" referrerpolicy="no-referrer" loading="lazy" class="h-full w-full object-cover">` : ''}
+			</span>`;
+
+		/** 照游戏里的排法：三列两行的六格、右边中立槽、下面背包三格加传送。 */
+		const inventoryPanel = (snapshot: InventoryView, detail: DetailView): string => {
+			const { itemMap } = playbackOf(detail);
+			const item = (id: number): ItemView | null => (id > 0 ? (itemMap[id] ?? null) : null);
+			return `
+				<div class="flex items-start gap-2">
+					<div class="grid grid-cols-3 gap-1">${snapshot.slots.map((id) => slot(item(id))).join('')}</div>
+					<div class="flex flex-col items-center gap-1">
+						<span class="text-[9px] text-faint">中立</span>
+						${slot(item(snapshot.neutral))}
+					</div>
+				</div>
+				<div class="mt-1 flex items-center gap-1">
+					${snapshot.backpack.map((id) => slot(item(id), 'h-7 w-7')).join('')}
+					${slot(item(snapshot.teleport), 'h-7 w-7')}
+					<span class="ml-1 text-[9px] text-faint">背包 / 传送</span>
+				</div>`;
+		};
+
+		/** 接上刚刚渲染出来的游标：拖到哪一刻，就重算那一刻的加点与装备。 */
+		const mountCursor = (detail: DetailView): void => {
+			const input = panel?.querySelector<HTMLInputElement>('#guide-cursor');
+			if (!panel || !input) return;
+			const playback = playbackOf(detail);
+			const clockEl = panel.querySelector('#guide-cursor-clock');
+			const stepsEl = panel.querySelector('#guide-cursor-steps');
+			const inventoryEl = panel.querySelector('#guide-inventory');
+			const moreEl = panel.querySelector('#guide-cursor-more');
+
+			const update = (): void => {
+				const time = Number(input.value) || 0;
+				if (clockEl) clockEl.textContent = formatDuration(time);
+
+				const level = levelAtTime(playback.levels, time);
+				const learned = stepsUpTo(detail.steps, time);
+				const last = detail.steps[learned - 1];
+				if (stepsEl) {
+					stepsEl.textContent = [
+						level === null ? '' : `${level} 级`,
+						learned === 0 ? '这一刻还没加点' : `已点 ${learned} 点，最近一手是${last.isTalent ? '天赋' : '技能'}「${last.name}」`,
+					]
+						.filter(Boolean)
+						.join(' · ');
+				}
+
+				// 残缺的背包时间线（只有开局那一条、格子全空）不当数据用，直接走购买清单。
+				const snapshot = hasInventoryTimeline(playback.inventory) ? inventoryAtTime(playback.inventory, time) : null;
+				const bought = purchasesUpTo(detail.timeline, time);
+				if (inventoryEl) {
+					if (snapshot) {
+						inventoryEl.innerHTML = inventoryPanel(snapshot, detail);
+					} else {
+						// 没回放数据：只能列出"截至这一刻买到了什么"，不假装是当时的六格。
+						inventoryEl.innerHTML = `<ul class="grid max-w-60 grid-cols-6 gap-1.5">${bought
+							.slice(-CURSOR_MAX_ITEMS)
+							.map((entry) => `<li class="aspect-square overflow-hidden rounded border border-line bg-surface-3" title="${esc(entry.item.name)} · ${formatDuration(entry.time)}">${entry.item.img ? `<img src="${esc(entry.item.img)}" alt="" aria-hidden="true" referrerpolicy="no-referrer" loading="lazy" class="h-full w-full object-cover">` : ''}</li>`)
+							.join('')}</ul>`;
+					}
+				}
+				if (moreEl) {
+					if (snapshot) {
+						moreEl.textContent = '这一刻身上的装备与背包来自比赛回放解析';
+					} else if (bought.length === 0) {
+						moreEl.textContent = '这一刻还没买东西';
+					} else {
+						// 说清是"没有回放"还是"回放里没记背包"：前者连等级都没有，后者等级是有的。
+						const why = playback.levels.length > 0 ? '这场比赛的回放没记全背包' : '这场比赛没有回放数据';
+						moreEl.textContent = `${why}，这里显示截至这一刻买到的 ${Math.min(bought.length, CURSOR_MAX_ITEMS)} 件（共 ${bought.length} 件）`;
+					}
+				}
+			};
+
+			input.addEventListener('input', update);
+			update();
+		};
+
+		const open = async (button: HTMLButtonElement) => {
+			if (!panel) return;
+			const matchId = button.dataset.match ?? '';
+			const accountId = button.dataset.account ?? '';
+			clear();
+			current = button;
+			button.setAttribute('aria-expanded', 'true');
+			panel.hidden = false;
+			panel.setAttribute('aria-busy', 'true');
+			panel.innerHTML = '<p class="rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">正在取这局的加点与出装…</p>';
+
+			/*
+			 * 取数只包住 fetch 本身：渲染出错时不能再装作"网络不通"，
+			 * 那会把一个真 bug 说成网络问题，排查时白绕一圈。
+			 */
+			let body: { ok: boolean; detail?: DetailView; reason?: string };
+			try {
+				const res = await fetch(`/api/hero/guide?heroId=${heroId}&matchId=${matchId}&steamAccountId=${accountId}`);
+				body = (await res.json()) as { ok: boolean; detail?: DetailView; reason?: string };
+			} catch {
+				panel.innerHTML = '<p class="rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">网络不通，没能取到这局的数据。</p>';
+				panel.removeAttribute('aria-busy');
+				return;
+			}
+			if (!body.ok || !body.detail) {
+				panel.innerHTML = `<p class="rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">${esc(body.reason ?? '取不到这局的数据')}</p>`;
+				panel.removeAttribute('aria-busy');
+				return;
+			}
+			panel.innerHTML = render(body.detail, heroId, matchId, accountId);
+			mountCursor(body.detail);
+			panel.removeAttribute('aria-busy');
+			panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+		};
+
+		for (const button of buttons) button.addEventListener('click', () => void open(button));
+	</script>
+</Layout>
