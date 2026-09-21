@@ -76,7 +76,7 @@ const SOURCES = [
 	 * 虎扑这条不是热榜：取的是版面页最前面的 20 条（最新回复顺序），所以叫「新帖」。
 	 * 名字与口径对不上正是上一版的问题之一——按回复数排完，这一栏全是几天前的老帖。
 	 */
-	{ id: 'hupu', label: `${SOURCE_LABEL.hupu} 热帖`, count: posts.filter((post) => post.source === 'hupu').length },
+	{ id: 'hupu', label: `${SOURCE_LABEL.hupu}新帖`, count: posts.filter((post) => post.source === 'hupu').length },
 ];
 
 /** 默认落在「官网新闻」：这一页从前的入口就是官方新闻列表。 */

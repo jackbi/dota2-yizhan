@@ -1,8 +1,9 @@
 import path from 'node:path';
-import { decodeEntities, summarizeArticle } from './articleHtml';
+import { summarizeArticle } from './articleHtml';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
+import { type HupuThread, selectBoardThreads, toThreads } from './hupuBoard';
 import { createPace } from './pace';
 
 /**
@@ -21,10 +22,10 @@ import { createPace } from './pace';
  *
  * **与 NGA 的口径差异**（页面上有说明）：NGA 的 `replies` 是**时间窗内**的回复数，
  * 虎扑给的是**帖子总回复数**，两者不可直接比较。这里不做归一化、不编数据，
- * 页面上按来源分开筛选时各自可比。
+ * 页面上按来源分栏时各自可比。
  *
- * **窗口归属**：NGA 的窗口来自它自己的热榜接口，虎扑没有对应的窗口参数，
- * 所以按「最后回复时间落在窗口内」归属（见 communityFeed）。
+ * 列表的解析与取帖口径在 `hupuBoard.ts`（纯函数，配 `scripts/hupuBoard.check.ts`）——
+ * 那一栏曾经按回复数重排，把版面页最上面的新帖全挤掉了，原因与修法都写在那边的文件头。
  */
 
 const BOARD_URL = 'https://bbs.hupu.com/dota2';
@@ -35,10 +36,6 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 const LIST_TTL_SECONDS = 30 * 60;
 /** 详情（正文 + 亮评 + 第一页回复）一次抓齐，按小时级刷新。 */
 const DETAIL_TTL_SECONDS = 2 * 3600;
-/** 列表页有 49 条，按回复数取前若干条，与 NGA 那套「每窗 15 条」对齐。 */
-const THREADS_PER_BOARD = 20;
-/** 少于这个回复数的不算热帖，和 NGA 保持一致。 */
-const MIN_REPLIES = 5;
 const FETCH_CONCURRENCY = 4;
 /** 虎扑未见限流，但没必要打太急。 */
 const MIN_INTERVAL_MS = 200;
@@ -46,20 +43,7 @@ const MIN_INTERVAL_MS = 200;
 const USER_AGENT =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-export interface HupuThread {
-	/** 帖子 id，取自列表里的 `/642425918.html` */
-	pid: string;
-	title: string;
-	author: string;
-	/** 帖子总回复数（不是窗口内的） */
-	replies: number;
-	/** 浏览量 */
-	views: number;
-	/** 最后回复时间，Unix 秒 */
-	lastReplyAt: number;
-	/** 主楼首段摘要；抓不到就是空串 */
-	summary: string;
-}
+export type { HupuThread };
 
 /** 一层回复。虎扑不返回楼层号，所以站内只按时间顺序展示，不编号。 */
 export interface HupuReply {
@@ -146,56 +130,10 @@ async function writeCache(key: string, value: unknown): Promise<void> {
 
 // ---------------------------------------------------------------- 列表解析
 
-/**
- * 列表页只给 `MM-DD HH:mm`，没有年份。
- *
- * 按**北京时间**（UTC+8）解成 Unix 秒：虎扑的时间是北京时间，而构建机的时区不一定，
- * 用本地时区解会让 `lastReplyAt` 随构建设备漂移。跨年时解出来的时间会比"现在"还晚，
- * 那就退回上一年。
+/*
+ * 版面页的解析（`toThreads`）与取帖口径（`selectBoardThreads`）在 `hupuBoard.ts`：
+ * 那边是纯函数，能脱离网络与缓存在 `scripts/hupuBoard.check.ts` 里测。
  */
-function parseMonthDay(value: string, nowSec: number): number {
-	const match = /^(\d{2})-(\d{2}) (\d{2}):(\d{2})$/.exec(value.trim());
-	if (!match) return 0;
-	const month = Number(match[1]);
-	const day = Number(match[2]);
-	const hour = Number(match[3]);
-	const minute = Number(match[4]);
-	const at = (year: number) => Math.floor(Date.UTC(year, month - 1, day, hour - 8, minute) / 1000);
-	const currentYear = new Date(nowSec * 1000).getUTCFullYear();
-	const guess = at(currentYear);
-	return guess > nowSec + 3600 ? at(currentYear - 1) : guess;
-}
-
-/** 列表行：标题、地址、`回复 / 浏览`、作者、最后回复时间。 */
-function toThreads(html: string, nowSec: number): HupuThread[] | null {
-	const rows = [...html.matchAll(/<li class="bbs-sl-web-post-body">([\s\S]*?)<\/li>/g)].map((match) => match[1]);
-	if (rows.length === 0) return null;
-	const threads: HupuThread[] = [];
-	for (const block of rows) {
-		const href = /<a href="(\/\d+\.html)"/.exec(block)?.[1];
-		const pid = href?.replace(/\D/g, '') ?? '';
-		const title = stripTags(/class="p-title"[^>]*>([\s\S]*?)<\/a>/.exec(block)?.[1] ?? '');
-		const datum = /class="post-datum">([^<]*)</.exec(block)?.[1] ?? '';
-		const author = stripTags(/class="post-auth">([\s\S]*?)<\/div>/.exec(block)?.[1] ?? '');
-		const [replies, views] = datum.split('/').map((part) => Number(part.trim()) || 0);
-		if (!pid || !title || !author) continue;
-		threads.push({
-			pid,
-			title,
-			author,
-			replies,
-			views,
-			lastReplyAt: parseMonthDay(/class="post-time">([^<]*)</.exec(block)?.[1] ?? '', nowSec),
-			summary: '',
-		});
-	}
-	return threads.filter((thread) => thread.replies >= MIN_REPLIES && thread.lastReplyAt > 0);
-}
-
-/** 列表里的标题与作者带内联标签与实体，统一还原成纯文本。 */
-function stripTags(html: string): string {
-	return decodeEntities(html.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
-}
 
 async function loadBoard(): Promise<HupuThread[]> {
 	const key = 'hupu-list';
@@ -213,8 +151,7 @@ async function loadBoard(): Promise<HupuThread[]> {
 	}
 	if (value === null) return cached?.value ?? [];
 
-	value = value.sort((a, b) => b.replies - a.replies || b.lastReplyAt - a.lastReplyAt || a.pid.localeCompare(b.pid));
-	value = value.slice(0, THREADS_PER_BOARD);
+	value = selectBoardThreads(value);
 	await writeCache(key, value);
 	return value;
 }
@@ -388,7 +325,10 @@ async function loadDetail(pid: string): Promise<HupuThreadDetail | null> {
 
 let boardPromise: Promise<HupuThread[]> | null = null;
 
-/** 列表 + 摘要，一次构建只抓一轮。取不到就返回空数组（页面按"没有数据"处理）。 */
+/**
+ * 列表 + 摘要，一次构建只抓一轮。列表就是版面页最前面的 20 条（最新回复顺序）。
+ * 取不到就返回空数组（页面按"没有数据"处理）。
+ */
 export function fetchHupuThreads(): Promise<HupuThread[]> {
 	if (!boardPromise) boardPromise = loadBoardWithSummaries();
 	return boardPromise;
