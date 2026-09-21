@@ -1,0 +1,40 @@
+# 候选数据源探测（只跑 curl，不构建、不部署）。
+#
+# 为什么单独放一个：**构建机上的连通性和你我本机完全是两回事**。本机挂着代理、出口在国内，
+# curl 得通不等于 GitHub runner 抓得到（runner 是境外直连、没有代理）。想接新源之前先跑这个，
+# 比在本机 curl 一遍、写进代码、再发现 CI 上整栏空掉划算。
+#
+# 用法：Actions → 候选源探测 → Run workflow；看完日志把要接的那条抄进代码。
+name: 候选源探测
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: 逐个探测
+        run: |
+          probe() {
+            local name="$1" url="$2" out
+            rm -f /tmp/body
+            if out=$(curl -sS -o /tmp/body -w '%{http_code} %{size_download}B %{time_total}s' \
+              --max-time 25 -A 'Mozilla/5.0 (compatible; dota2-yizhan probe)' "$url" 2>&1); then
+              printf '%-34s %-28s %s\n' "$name" "$out" "$(head -c 70 /tmp/body | tr -d '\r\n')"
+            else
+              printf '%-34s 失败：%s\n' "$name" "$out"
+            fi
+          }
+
+          echo "== 完美世界电竞：RSSHub 实例 vs 直连接口 =="
+          probe "RSSHub 公共实例 rssforever" "https://rsshub.rssforever.com/wmpvp/news/1"
+          probe "RSSHub 官方公共实例" "https://rsshub.app/wmpvp/news/1"
+          probe "wmpvp 列表接口（直连）" "https://appengine.wmpvp.com/steamcn/community/homepage/getHomeInformation?gameTypeStr=1&pageNum=1&pageSize=20"
+          probe "wmpvp 详情接口（直连）" "https://appactivity.wmpvp.com/steamcn/app/news/getAppNewsById?gameType=1&newsId=303734"
+          probe "wmpvp 文章页（直连）" "https://news.wmpvp.com/news.html?id=303734&gameTypeStr=1"
+
+          echo
+          echo "== 对照：构建期已经在用、确认能通的源 =="
+          probe "dota2.com.cn 装备分类（对照）" "https://www.dota2.com.cn/itemscategory/json"
