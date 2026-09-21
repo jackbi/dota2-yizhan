@@ -43,6 +43,7 @@ const data: DraftData = {
 	windowDays: 7,
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
+	matchupMinGames: 200,
 	heroes: [
 		hero(1, '甲', 0.54),
 		hero(2, '乙', 0.52),

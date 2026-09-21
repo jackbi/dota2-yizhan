@@ -75,6 +75,7 @@ const data: DraftData = {
 	windowDays: 7,
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
+	matchupMinGames: 200,
 	heroes: HEROES,
 	proSample: { picks: 620, bans: 532 },
 	matchups: {},

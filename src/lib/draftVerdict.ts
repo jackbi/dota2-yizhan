@@ -214,7 +214,7 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 	const notes: string[] = [
 		`胜率由「号位偏差 ${(positionEdge * 100).toFixed(1)} + 对位偏差 ${(counterEdge * 100).toFixed(1)}」相加得到（百分点），没有做回归，所以它是相对强弱的读数，不是校准过的概率。`,
 		'结构分、能力维度、时间曲线来自官方角色等级与人工名单，是启发式，只做横向对比，不进胜率。',
-		'对位只收了样本 ≥200 场的那些对偶（约 1600 对，见 `draftMatchup`），接近五五开的也在里面——正因为不按偏差筛，平均值才不偏向极端；两个方向是同一份记录的正反面，故按镜像展示。',
+		`对位只收了样本 ≥${input.data.matchupMinGames} 场的那些对偶（共 ${input.data.matchupPairs} 对，见 \`draftMatchup\`），接近五五开的也在里面——正因为不按偏差筛，平均值才不偏向极端；两个方向是同一份记录的正反面，故按镜像展示。`,
 		'对位偏差按五个号位摊开：一个英雄的克制关系不完全等于整队的胜率优势，摊开之后它与号位胜率的量级可比。',
 		`号位胜率口径：${input.data.bracketLabel}近 ${input.data.windowDays} 天，少于 ${input.data.minPositionMatches} 场的号位不算数${input.data.patch.version ? `；版本 ${input.data.patch.version}` : ''}。`,
 	];

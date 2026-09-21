@@ -311,7 +311,7 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 			数据口径：号位胜率来自 STRATZ 的 {data.bracketLabel}统计（近 {data.windowDays} 天，单个号位少于 {data.minPositionMatches} 场不计），
 			对应版本 {data.patch.version || '未知'}{data.patch.date ? `（${data.patch.date} 发布）` : ''}{data.patch.straddles ? '，这批样本跨了一次版本更新，胜率混着旧版本的场次' : ''}；
 			职业出场与被禁来自 OpenDota 的职业样本，总量只有 {data.proSample.picks} 出场 / {data.proSample.bans} 被禁，只能当热度看。
-			对位（谁好打谁）来自 STRATZ 的高分局统计，只保留场次 ≥ 500 且胜率偏离五五开 4 个百分点以上的对位，
+			对位（谁好打谁）来自 STRATZ 的高分局统计，只按场次筛（≥ {data.matchupMinGames} 场，接近五五开的也留着），
 			共 {data.matchupPairs.toLocaleString('zh-CN')} 对；它不区分分路，是个粗口径的克制信号。
 			建议是按号位胜率做的启发式估计，不是胜率预测，也不代表任何队伍的真实战术。
 		</p>

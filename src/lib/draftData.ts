@@ -6,6 +6,7 @@ import { fetchPatchUpdates } from './patchesApi';
 import {
 	HERO_META_BRACKET_LABEL,
 	HERO_META_WINDOW_DAYS,
+	MATCHUP_MIN_GAMES,
 	fetchHeroMatchups,
 	fetchHeroMeta,
 	fetchHeroTimeline,
@@ -84,6 +85,8 @@ export interface DraftData {
 	matchups: HeroMatchups;
 	/** 留存的对位数；0 表示这次没拿到，打分里就不算克制这一项。 */
 	matchupPairs: number;
+	/** 对位的场次门槛。页面上要把口径写出来，所以由构建期带出来，不在这里另抄一个数。 */
+	matchupMinGames: number;
 	/** 两类数据的可用性，缺哪一类界面上就少一类建议依据。 */
 	hasPositionData: boolean;
 	hasProData: boolean;
@@ -208,6 +211,7 @@ export function loadDraftData(): Promise<DraftData> {
 			proSample: { picks: proPicks, bans: proBans },
 			matchups: matchups?.pairs ?? {},
 			matchupPairs: matchups?.pairCount ?? 0,
+			matchupMinGames: MATCHUP_MIN_GAMES,
 			hasPositionData,
 			hasProData,
 		};

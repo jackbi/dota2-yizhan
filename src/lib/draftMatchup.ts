@@ -14,8 +14,11 @@
 export type HeroMatchups = Record<string, [number, number]>;
 
 /**
- * 查 a 打 b 的胜率。没有留存的对位（样本不够或接近五五开）时返回 null，
- * 调用方按"这一对没有依据"处理。
+ * 查 a 打 b 的胜率。**没有留存的对位**时返回 null：样本没过场次门槛，或这一对压根没被抓到
+ * （抓数失败、缓存里没有）。调用方按"这一对没有依据"处理。
+ *
+ * 注意胜率接近五五开**不是**返回 null 的理由：门槛那层早就不按偏差筛了，
+ * 门槛本身在 `stratzApi` 的 `MATCHUP_MIN_GAMES`（≥200 场），这层不引它，只为能在浏览器里跑。
  */
 export function matchupRate(matchups: HeroMatchups | undefined, a: number, b: number): { rate: number; games: number } | null {
 	if (!matchups || a === b) return null;
