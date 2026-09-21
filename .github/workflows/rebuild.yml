@@ -61,6 +61,10 @@ jobs:
           # STRATZ 只能从固定出口调用（token 绑 IP），CI 里同样走那台机器上的中转。
           STRATZ_RELAY_URL: ${{ secrets.STRATZ_RELAY_URL }}
           STRATZ_RELAY_TOKEN: ${{ secrets.STRATZ_RELAY_TOKEN }}
+          # Reddit 应用凭据（app-only）。匿名端点连着抓两个版块，第二个就 429，
+          # 所以这两个得传进来让构建走 OAuth；没配也能跑，只是退回 RSS 那点额度。
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
 
       # 部署按仓库里的 wrangler.jsonc 走：Worker 入口是 src/worker/index.ts，静态资源指向 dist。
       # Worker 上已有的 secret（SESSION_SECRET 等）不受影响。
