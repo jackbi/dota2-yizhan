@@ -138,6 +138,23 @@ const base = { data, ourSide: 'radiant' as const, selfTeam: '我方队', foeTeam
 	ok('对位取平均、另一边镜像，量级与号位偏差可比');
 }
 
+// 对位表稀疏时，同一场对局从两边算出来的胜率必须互补。
+//
+// 这不是理论问题：真实数据里 5v5 的 25 对常常只留 22–24 对，而我方算的是「每个我方英雄对它
+// 对面五人的平均」、对面算的是按他们的人分组——同一批缺失在两种分组下分母不同，
+// 于是两边的平均不是精确的相反数（实测能差 3 个百分点）。所以两边都有数据时取中间值。
+{
+	// 我方 1 号位对 6 / 7 都有记录，2 号位只和 8 有记录；对面那侧的分组完全不同。
+	const sparse: DraftData = { ...data, matchups: { '1-6': [2000, 0.6], '1-7': [2000, 0.8], '2-8': [2000, 0.5] }, matchupPairs: 3 };
+	const forward = buildVerdict({ ...base, data: sparse, ourIds: strong, theirIds: weak });
+	const backward = buildVerdict({ ...base, data: sparse, ourIds: weak, theirIds: strong, ourSide: 'dire' });
+	assert.ok(forward && backward, '两边都要能算');
+	const sum = forward!.winRate.ours + backward!.winRate.ours;
+	assert.ok(Math.abs(sum - 1) < 1e-9, `同一场对局从两边算必须互补，实际加起来是 ${(sum * 100).toFixed(2)}%`);
+	assert.equal(forward!.theirs.counter, -forward!.ours.counter, '两列仍然要镜像展示');
+	ok('对位表稀疏时胜率与视角无关');
+}
+
 // 对面拿到熟手只列出来，不折算进胜率——没有换算系数就不该编一个。
 {
 	const foeForm = {

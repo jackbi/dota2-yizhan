@@ -159,8 +159,16 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 	 * 对位只算**一边**：同一对英雄的两个方向是同一份记录的反面（见 `draftMatchup`），
 	 * 两边各算一次等于把同一件事数了两遍，还会放大成 ±40 个百分点那种不像胜率的数。
 	 * 我方有记录就用我方；我方一对都没有时才取对面的反面。
+	 *
+	 * 但两边的「平均」不是精确的相反数：对位表本身有缺失（5v5 最多 25 对，实测常见 22–24 对），
+	 * 而我方算的是「每个我方英雄对他对面五个人的平均」，对面算的是按他们的人分组——
+	 * 同一批缺失的对位，在两种分组下的分母不一样。直接取一边会让同一场对局
+	 * 从两边算出来的胜率加起来不是 100（实测能差 3 个百分点）。
+	 * 所以两边都有数据时取中间值：结论与视角无关，也与界面上「镜像展示」的说法一致。
 	 */
-	const matchupAverage = ours.counterPairs > 0 ? ours.counter : theirs.counterPairs > 0 ? -theirs.counter : 0;
+	const oursView = ours.counterPairs > 0 ? ours.counter : null;
+	const theirsView = theirs.counterPairs > 0 ? -theirs.counter : null;
+	const matchupAverage = oursView !== null && theirsView !== null ? (oursView + theirsView) / 2 : (oursView ?? theirsView ?? 0);
 	ours.counter = matchupAverage;
 	// 镜像展示：同一份记录换一边看就是反号。写成两个"独立"的数会让人以为有两份证据。
 	theirs.counter = -matchupAverage;
