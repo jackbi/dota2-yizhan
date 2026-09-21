@@ -57,7 +57,8 @@ const FEATURES = [
 	{ href: '/tournaments', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
 	{ href: '/draft', title: '阵容分析', desc: '看比赛时录 BP，按号位胜率给出下一手建议，并可让模型解释。', icon: 'sword' },
 	{ href: '/patches', title: '版本信息', desc: '从 7.08 到最新的官方更新日志完整存档，改动按英雄与物品分好类。', icon: 'patch' },
-	{ href: '/heroes', title: '英雄与装备', desc: '查阅英雄属性、定位与主流出装思路。', icon: 'sword' },
+	{ href: '/heroes', title: '英雄资料', desc: '按属性与难度筛英雄，近一周胜率榜、出场榜与详细数值技能。', icon: 'sword' },
+	{ href: '/items', title: '装备库', desc: '从基础件到中立物品，查价格、效果与合成配方。', icon: 'items' },
 ] as const;
 ---
 
@@ -125,7 +126,7 @@ const FEATURES = [
 
 	<!-- Features -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-		<SectionHeader eyebrow="站点板块" title="你想看的，都在这里" subtitle="七大板块随心探索，覆盖直播、资讯、赛事与资料。" />
+		<SectionHeader eyebrow="站点板块" title="你想看的，都在这里" subtitle="八大板块随心探索，覆盖直播、资讯、赛事与资料。" />
 		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 			{FEATURES.map((f) => (
 				<a href={f.href} class="group flex flex-col rounded-2xl border border-line bg-surface p-6 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2">
@@ -137,6 +138,7 @@ const FEATURES = [
 							{f.icon === 'trophy' && <path d="M8 4h8v4a4 4 0 0 1-8 0zM8 5H4v2a3 3 0 0 0 3 3M16 5h4v2a3 3 0 0 1-3 3M12 12v4M8 20h8M9 20v-2h6v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 							{f.icon === 'patch' && <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6zM9 12l2 2 4-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 							{f.icon === 'sword' && <path d="M14 4l6 6-9 9-5 1 1-5zM4 20l3-3M12 6l6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
+							{f.icon === 'items' && <path d="M4 8h16v12H4zM8.5 8V6a3.5 3.5 0 0 1 7 0v2M9 13h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />}
 						</svg>
 					</span>
 					<h3 class="mt-4 font-display text-lg">{f.title}</h3>
