@@ -36,7 +36,14 @@ export interface ItemDetail {
 	lore: string;
 	mc: string;
 	cd: string;
-	components: string;
+	/**
+	 * 合成配方：散件的内部名，`recipe_*` 是图纸。
+	 *
+	 * 接口里 `components` 这个字段**恒为空**（实测 614 件全空），配方其实写在 `requirements`：
+	 * 137 件有值，`*` 后缀表示那件要拿升级件来合。以前这里读的是 `components`，
+	 * 所以"合成配方"从来没显示过。
+	 */
+	requirements: string[];
 	imgUrl: string;
 }
 
@@ -140,7 +147,7 @@ export function loadItemDetails(): Promise<Record<string, ItemDetail>> {
 					lore: v.lore,
 					mc: v.mc,
 					cd: v.cd,
-					components: v.components,
+					requirements: Array.isArray(v.requirements) ? v.requirements.map((key: string) => String(key)) : [],
 					imgUrl: v.img_url,
 				};
 			}

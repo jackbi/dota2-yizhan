@@ -1,5 +1,18 @@
 ---
 import Layout from '../layouts/Layout.astro';
+import { fetchItemSections } from '../lib/itemApi';
+
+/*
+ * 装备列表在构建期就取好、画进 HTML。
+ *
+ * 原先这一整块是客户端 `fetchItemSections()` 现拉的，构建产物里**一件装备名都没有**——
+ * 百度基本不执行 JS，Google 要等二次渲染，那一步还得依赖 dota2.com.cn 的连通性。
+ * 现在服务端渲染，客户端只做筛选与悬浮详情（详情仍是按需拉的 JSONP，614 件一次性下太大）。
+ *
+ * 取不到不算构建失败：换成一句"下一轮构建会重试"，别让页面看着像坏了。
+ */
+const itemSections = await fetchItemSections().catch(() => null);
+const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce((n, g) => n + g.items.length, 0), 0) ?? 0;
 ---
 
 <Layout title="装备资料 · DOTA2 驿站" description="DOTA2 装备库，实时来自官方 itemscategory 接口，按基础 / 升级 / 中立分类浏览。">
@@ -11,6 +24,15 @@ import Layout from '../layouts/Layout.astro';
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">装备图鉴</p>
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">装备资料库</h1>
 			<p class="mt-3 max-w-2xl text-muted">数据实时来自 DOTA2 官方接口。点击装备可查看价格、效果与合成配方。</p>
+			<p class="mt-4">
+				<a
+					href="/heroes"
+					class="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-cream transition hover:border-dota hover:text-dota-light"
+				>
+					查英雄资料
+					<span aria-hidden="true">→</span>
+				</a>
+			</p>
 		</div>
 
 		<div class="sticky top-16 z-40 -mx-4 mb-6 border-b border-line/60 bg-ink/95 px-4 py-3 backdrop-blur-xl sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
@@ -37,25 +59,68 @@ import Layout from '../layouts/Layout.astro';
 			</div>
 		</div>
 
-		<p id="item-count" class="mb-4 text-sm text-muted">正在加载装备数据…</p>
+		<p id="item-count" class="mb-4 text-sm text-muted">{itemSections ? `共 ${itemTotal} 件装备` : '装备数据暂缺'}</p>
 
-		<div id="item-status" class="hidden rounded-2xl border border-line bg-surface p-8 text-center">
-			<p class="text-muted">装备数据加载失败，请检查网络后重试。</p>
-			<button id="item-retry" type="button" class="mt-4 rounded-lg bg-dota px-5 py-2.5 text-sm font-medium text-white transition hover:bg-dota-dark">重新加载</button>
-		</div>
+		{
+			itemSections ? null : (
+				<div class="rounded-2xl border border-line bg-surface p-8 text-center">
+					<p class="text-muted">本次构建没有取到官方装备数据，这一块先空着，下一轮构建会重试。</p>
+				</div>
+			)
+		}
 
-		<div id="item-grid" class="min-h-[300px]">
-			<div class="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
-				{Array.from({ length: 12 }).map(() => (
-					<div class="flex animate-pulse flex-col overflow-hidden rounded-2xl border border-line bg-surface">
-						<div class="aspect-square bg-surface-2"></div>
-						<div class="space-y-2 p-3">
-							<div class="h-4 rounded bg-surface-3"></div>
-							<div class="h-3 w-1/2 rounded bg-surface-3"></div>
-						</div>
+		<p id="item-empty" class="hidden rounded-2xl border border-line bg-surface p-10 text-center text-muted">没有符合筛选条件的装备。</p>
+
+		<div id="item-grid">
+			{itemSections?.map((sec) => (
+				<section id={`sec-${sec.key}`} data-section class="mb-12 scroll-mt-24">
+					<h2 class="mb-4 flex items-end gap-3 font-display text-2xl text-gold">
+						{sec.label}
+						<span data-section-count class="pb-1 text-xs font-normal text-faint">
+							{sec.groups.reduce((n, g) => n + g.items.length, 0)} 件
+						</span>
+					</h2>
+					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">
+						{sec.groups.flatMap((group) =>
+							group.items.map((it) => (
+								<button
+									type="button"
+									data-item={it.name}
+									data-name={`${it.nameLoc} ${it.name}`.toLowerCase()}
+									data-loc={it.nameLoc}
+									data-img={it.imgUrl}
+									data-cost={it.cost}
+									class="group flex flex-col overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-[0_1px_0_rgba(255,255,255,0.03)] transition duration-200 hover:-translate-y-0.5 hover:border-dota/40 hover:bg-surface-2 hover:shadow-lg hover:shadow-dota/10"
+								>
+									<span class="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-surface-2 to-surface-3">
+										<img
+											src={it.imgUrl}
+											alt={it.nameLoc}
+											loading="lazy"
+											referrerpolicy="no-referrer"
+											class="h-full w-full object-contain p-3 transition duration-300 group-hover:scale-105"
+										/>
+										<span class="absolute left-2 top-2 rounded-md bg-ink/70 px-1.5 py-0.5 text-[11px] text-muted backdrop-blur">
+											{group.name}
+										</span>
+										<span class="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-ink/70 px-1.5 py-0.5 text-xs font-medium tabular-nums text-gold backdrop-blur">
+											<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+												<circle cx="12" cy="12" r="10" fill="var(--color-gold)" />
+												<circle cx="12" cy="12" r="6.5" fill="var(--color-gold-deep)" />
+											</svg>
+											{it.cost.toLocaleString('en-US')}
+										</span>
+										<span class="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-surface/70 to-transparent" aria-hidden="true" />
+									</span>
+									<span class="block min-w-0 px-3 pb-3 pt-2">
+										<span class="block break-words text-sm font-medium leading-snug text-cream">{it.nameLoc}</span>
+									</span>
+								</button>
+							)),
+						)}
 					</div>
-				))}
-			</div>
+				</section>
+			))}
 		</div>
 
 		<button id="back-top" type="button" aria-label="回到顶部" class="fixed bottom-6 right-6 z-40 flex h-11 w-11 items-center justify-center rounded-full border border-line bg-surface/90 text-cream opacity-0 shadow-lg backdrop-blur transition duration-200 hover:border-dota/50 hover:bg-surface-2 hover:text-gold pointer-events-none">
@@ -90,18 +155,24 @@ import Layout from '../layouts/Layout.astro';
 </style>
 
 <script>
-	import { fetchItemSections, loadItemDetails, cleanItemText } from '../lib/itemApi';
+	import { loadItemDetails, cleanItemText } from '../lib/itemApi';
 
+	/*
+	 * 装备列表已经在构建期画进 HTML（见上面的 `itemSections`），这里只做两件事：
+	 * 按关键词筛卡片、给卡片挂悬浮详情。
+	 *
+	 * 不再像以前那样先拉一次分类接口再整块重渲染：那份数据服务端已经渲染过，
+	 * 客户端再来一次只会白打一次接口，抓不到时整页还是空的。
+	 * 装备详情（614 件的价格 / 效果 / 配方）仍然按需拉——一次性下太大，没必要进首屏。
+	 */
 	(() => {
 		const grid = document.getElementById('item-grid');
 		const count = document.getElementById('item-count');
+		const empty = document.getElementById('item-empty');
 		const search = document.getElementById('item-search') as HTMLInputElement | null;
-		const status = document.getElementById('item-status');
-		const retry = document.getElementById('item-retry') as HTMLButtonElement | null;
-		if (!grid || !count) return;
 
-		let sections: import('../lib/itemApi').ItemSection[] = [];
-		let q = '';
+		const cards = grid ? Array.from(grid.querySelectorAll<HTMLButtonElement>('button[data-item]')) : [];
+		const sections = grid ? Array.from(grid.querySelectorAll<HTMLElement>('[data-section]')) : [];
 		let detailMap: Record<string, import('../lib/itemApi').ItemDetail> | null = null;
 
 		const esc = (s: string) =>
@@ -111,40 +182,30 @@ import Layout from '../layouts/Layout.astro';
 		const MANA_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/mana.png';
 		const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.png';
 
-		const tile = (it: import('../lib/itemApi').ItemListItem, grpName: string) => `
-			<button type="button" data-item="${esc(it.name)}" class="group flex flex-col overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-[0_1px_0_rgba(255,255,255,0.03)] transition duration-200 hover:-translate-y-0.5 hover:border-dota/40 hover:bg-surface-2 hover:shadow-lg hover:shadow-dota/10">
-				<span class="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-surface-2 to-surface-3">
-					<img src="${esc(it.imgUrl)}" alt="${esc(it.nameLoc)}" loading="lazy" referrerpolicy="no-referrer" class="h-full w-full object-contain p-3 transition duration-300 group-hover:scale-105">
-					<span class="absolute left-2 top-2 rounded-md bg-ink/70 px-1.5 py-0.5 text-[11px] text-muted backdrop-blur">${esc(grpName)}</span>
-					<span class="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-ink/70 px-1.5 py-0.5 text-xs font-medium tabular-nums text-gold backdrop-blur">
-						<svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="var(--color-gold)"/><circle cx="12" cy="12" r="6.5" fill="var(--color-gold-deep)"/></svg>
-						${fullCost(it.cost)}
-					</span>
-					<span class="pointer-events-none absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-surface/70 to-transparent" aria-hidden="true"></span>
-				</span>
-				<span class="block min-w-0 px-3 pb-3 pt-2">
-						<span class="block break-words text-sm font-medium leading-snug text-cream">${esc(it.nameLoc)}</span>
-				</span>
-			</button>`;
-
-		const render = () => {
-			const ql = q.trim().toLowerCase();
-			let html = '';
+		/*
+		 * 筛选 = 给卡片切可见性，再顺手把空掉的分类整块藏起来、更新分类里的件数。
+		 *
+		 * 用内联 `display` 而不是 `class="hidden"`：卡片自带 `flex`，两个工具类谁覆盖谁
+		 * 要看样式表里的顺序，内联样式则一定生效。
+		 */
+		const applyFilter = () => {
+			const ql = (search?.value ?? '').trim().toLowerCase();
 			let shown = 0;
-			for (const sec of sections) {
-				const items = sec.groups
-					.flatMap((g) => g.items.map((it) => ({ ...it, grpName: g.name })))
-					.filter((it) => !ql || (it.nameLoc + ' ' + it.name).toLowerCase().includes(ql));
-				if (!items.length) continue;
-				shown += items.length;
-				html += `<section id="sec-${sec.key}" class="mb-12 scroll-mt-24">
-					<h2 class="mb-4 flex items-end gap-3 font-display text-2xl text-gold">${esc(sec.label)}<span class="pb-1 text-xs font-normal text-faint">${items.length} 件</span></h2>
-					<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6">${items.map((it) => tile(it, it.grpName)).join('')}</div>
-				</section>`;
+			for (const card of cards) {
+				const visible = !ql || (card.dataset.name ?? '').includes(ql);
+				card.style.display = visible ? '' : 'none';
+				if (visible) shown += 1;
 			}
-			count.textContent = shown ? `共 ${shown} 件装备` : '未找到匹配的装备';
-			grid.innerHTML = html || `<div class="col-span-full rounded-2xl border border-line bg-surface p-10 text-center text-muted">没有符合筛选条件的装备。</div>`;
-			bindTip();
+			for (const section of sections) {
+				const visibleCount = Array.from(section.querySelectorAll<HTMLButtonElement>('button[data-item]')).filter(
+					(card) => card.style.display !== 'none',
+				).length;
+				section.style.display = visibleCount > 0 ? '' : 'none';
+				const badge = section.querySelector('[data-section-count]');
+				if (badge) badge.textContent = `${visibleCount} 件`;
+			}
+			if (count) count.textContent = shown ? `共 ${shown} 件装备` : '未找到匹配的装备';
+			empty?.classList.toggle('hidden', shown > 0);
 		};
 
 		const sectionText = (title: string, body: string) =>
@@ -207,14 +268,21 @@ import Layout from '../layouts/Layout.astro';
 			tip.style.top = `${top}px`;
 		};
 
-		const showTip = (anchor: HTMLElement, listItem: import('../lib/itemApi').ItemListItem) => {
-			const d = detailMap?.[listItem.name];
-			const nameLoc = d?.nameLoc || listItem.nameLoc;
+		/*
+		 * 悬浮详情只拿卡片自己身上的 data-*：卡片是构建期渲染的，本来就把名字、图标、
+		 * 价格带在属性里了，没必要为了这些再在客户端留一份列表。
+		 * 详细文案（描述 / 效果 / 配方）还是要 `detailMap`，那是按需拉的。
+		 */
+		const showTip = (anchor: HTMLElement) => {
+			const key = anchor.dataset.item ?? '';
+			const d = detailMap?.[key];
+			const nameLoc = d?.nameLoc || anchor.dataset.loc || key;
 			const nameEn = d?.nameEn || '';
-			const imgUrl = d?.imgUrl || listItem.imgUrl;
-			const cost = d?.cost || listItem.cost;
+			const imgUrl = d?.imgUrl || anchor.dataset.img || '';
+			const cost = d?.cost || Number(anchor.dataset.cost) || 0;
 			const isActive = /主动|使用/.test(`${d?.desc || ''}${d?.attrib || ''}`);
-			const components = (d?.components || '').split(/[;,]/).map((s) => s.trim()).filter(Boolean);
+			// `*` 是接口里的标记（那件要拿升级件来合），展示时去掉。
+			const components = (d?.requirements ?? []).map((key) => key.replace(/\*$/, '')).filter(Boolean);
 			const compChips = components.slice(0, 12).map((key) => {
 				const c = detailMap?.[key];
 				return `<span class="flex items-center gap-1.5 rounded-lg border border-line bg-surface-2 px-2 py-1 text-xs text-cream">
@@ -266,44 +334,25 @@ import Layout from '../layouts/Layout.astro';
 		tip.addEventListener('mouseenter', cancelHide);
 		tip.addEventListener('mouseleave', scheduleHide);
 
-		const bindTip = () => {
-			grid.querySelectorAll<HTMLButtonElement>('button[data-item]').forEach((btn) => {
-				const name = btn.dataset.item!;
-				const listItem = sections.flatMap((s) => s.groups.flatMap((g) => g.items)).find((it) => it.name === name);
-				if (!listItem) return;
-				btn.addEventListener('mouseenter', () => showTip(btn, listItem));
-				btn.addEventListener('mouseleave', scheduleHide);
-				btn.addEventListener('focus', () => showTip(btn, listItem));
-				btn.addEventListener('blur', hideTip);
-			});
-		};
+		// 卡片不再重建，所以每个只管挂一次监听。
+		for (const btn of cards) {
+			btn.addEventListener('mouseenter', () => showTip(btn));
+			btn.addEventListener('mouseleave', scheduleHide);
+			btn.addEventListener('focus', () => showTip(btn));
+			btn.addEventListener('blur', hideTip);
+		}
 
-		search?.addEventListener('input', () => {
-			q = search.value ?? '';
-			render();
-		});
+		search?.addEventListener('input', applyFilter);
 
-		const load = async () => {
-			grid.classList.remove('hidden');
-			if (status) status.classList.add('hidden');
-			count.textContent = '正在加载装备数据…';
-			try {
-				sections = await fetchItemSections();
-				render();
-				loadItemDetails()
-					.then((m) => {
-						detailMap = m;
-					})
-					.catch(() => {});
-			} catch (e) {
-				console.error(e);
-				grid.innerHTML = '';
-				if (status) status.classList.remove('hidden');
-				count.textContent = '加载失败';
-			}
-		};
-		retry?.addEventListener('click', load);
-		load();
+		/*
+		 * 详情按需拉一次就够，失败也不影响列表本身——那时悬浮框用卡片上的
+		 * data-* 渲染，只是少了描述与配方。
+		 */
+		loadItemDetails()
+			.then((map) => {
+				detailMap = map;
+			})
+			.catch(() => {});
 
 		// ---- 回到顶部 ----
 		const backTop = document.getElementById('back-top') as HTMLButtonElement | null;
