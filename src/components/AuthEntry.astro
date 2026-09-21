@@ -7,6 +7,8 @@
  * 若要在服务端出登录态，就得把所有页面都改成 SSR，代价远大于一次 `/api/me` 请求。
  *
  * 未登录态同时是没有 JS 时的兜底：`/api/auth/steam/login` 是 GET 跳转，直接点就能用。
+ *
+ * 下面这段**必须是 `is:inline`**，也**必须紧跟在元素后面**，两个原因都在脚本里写了。
  */
 ---
 
@@ -25,69 +27,136 @@
 	</a>
 </div>
 
-<script>
-	interface SessionUser {
-		accountId: number;
-		name: string;
-		avatar: string;
-	}
-
-	/**
-	 * 全部用 createElement + textContent 拼 DOM。
+<script is:inline>
+	/*
+	 * 页头的登录态渲染。
 	 *
-	 * 昵称来自 Steam、头像 URL 来自 STRATZ，都是**用户可控**的输入；用 innerHTML 拼字符串
-	 * 就等于把 XSS 挂在每个页面的页头上。这里不给任何注入留口子。
+	 * **为什么是内联脚本、为什么紧跟在元素后面。**
+	 * 这原来是 Astro 的模块脚本，会被打包成外链 js：浏览器得先发一次请求、拿到文件才执行，
+	 * 而第一帧早就画完了。加上拿到登录态还要等 `/api/me` 回来，于是每次翻页都能看见
+	 * 「Steam 登录」先亮一下、再变成头像。更烦的是页头是 `justify-between`
+	 * （logo / 导航 / 右侧这一组），右侧宽度一变，**中间那排导航就跟着横跳**。
+	 * 改成 `is:inline` 后脚本在解析到它的那一刻同步执行，浏览器还没画第一帧：
+	 * 缓存里已经有身份就直接画出来，宽度不再变化，导航也就不会跳。
+	 *
+	 * 缓存只存展示用的 id / 昵称 / 头像。会话本身是 HttpOnly 的签名 Cookie，这里既拿不到、
+	 * 也不需要——缓存**只负责先画**，登录态一律以 `/api/me` 为准：它回来之后要么确认，
+	 * 要么把缓存清掉、退回登录链接（所以不会出现"已经登出却一直显示头像"）。
 	 */
-	function renderUser(container: HTMLElement, user: SessionUser): void {
-		container.textContent = '';
+	(function () {
+		var CACHE_KEY = 'auth:entry:v1';
+		var entry = document.getElementById('auth-entry');
+		if (!entry) return;
 
-		const profile = document.createElement('a');
-		profile.href = '/me';
-		profile.className =
-			'flex items-center gap-2 rounded-md border border-line py-1 pl-1 pr-3 transition hover:border-dota hover:bg-surface-2';
-		profile.title = '查看我的战绩';
+		/*
+		 * 静态渲染出来的登录链接，留着在"缓存过期但人已登出"时还原。
+		 * 它是本站自己的固定 markup，不含任何用户输入——和下面 renderUser 里
+		 * 「只用 createElement + textContent」那条防 XSS 的规矩不冲突。
+		 */
+		var loginMarkup = entry.innerHTML;
 
-		if (user.avatar) {
-			const img = document.createElement('img');
-			img.src = user.avatar;
-			img.alt = '';
-			img.width = 28;
-			// Steam 的头像 CDN 会拒掉带 Referer 的请求（站内其它头像也一并用 no-referrer）。
-			img.referrerPolicy = 'no-referrer';
-			// 取不到时不要让破图占位，直接摘掉。
-			img.addEventListener('error', () => img.remove());
-			img.className = 'h-7 w-7 shrink-0 rounded object-cover';
-			profile.append(img);
+		/**
+		 * 全部用 createElement + textContent 拼 DOM。
+		 *
+		 * 昵称来自 Steam、头像 URL 来自 STRATZ，都是**用户可控**的输入；用 innerHTML 拼字符串
+		 * 就等于把 XSS 挂在每个页面的页头上。这里不给任何注入留口子。
+		 */
+		function renderUser(user) {
+			entry.textContent = '';
+
+			var profile = document.createElement('a');
+			profile.href = '/me';
+			profile.className =
+				'flex items-center gap-2 rounded-md border border-line py-1 pl-1 pr-3 transition hover:border-dota hover:bg-surface-2';
+			profile.title = '查看我的战绩';
+
+			if (user.avatar) {
+				var img = document.createElement('img');
+				img.src = user.avatar;
+				img.alt = '';
+				img.width = 28;
+				// Steam 的头像 CDN 会拒掉带 Referer 的请求（站内其它头像也一并用 no-referrer）。
+				img.referrerPolicy = 'no-referrer';
+				// 取不到时不要让破图占位，直接摘掉。
+				img.addEventListener('error', function () {
+					img.remove();
+				});
+				img.className = 'h-7 w-7 shrink-0 rounded object-cover';
+				profile.append(img);
+			}
+
+			var name = document.createElement('span');
+			name.textContent = user.name;
+			name.className = 'max-w-28 truncate text-sm font-medium text-cream';
+			profile.append(name);
+
+			var logout = document.createElement('form');
+			logout.method = 'POST';
+			logout.action = '/api/auth/logout';
+
+			var button = document.createElement('button');
+			button.type = 'submit';
+			button.className = 'rounded-md px-2 py-2 text-xs text-faint transition hover:bg-surface-2 hover:text-cream';
+			button.textContent = '登出';
+			button.title = '登出';
+
+			logout.append(button);
+			entry.append(profile, logout);
 		}
 
-		const name = document.createElement('span');
-		name.textContent = user.name;
-		name.className = 'max-w-28 truncate text-sm font-medium text-cream';
-		profile.append(name);
+		/*
+		 * localStorage 在无痕模式、被策略禁用的第三方上下文里会直接抛错。
+		 * 缓存是锦上添花的东西，坏掉最多退回"没有缓存"的老行为，不该让页头整个不工作。
+		 */
+		function readCache() {
+			try {
+				var raw = localStorage.getItem(CACHE_KEY);
+				if (!raw) return null;
+				var user = JSON.parse(raw);
+				return user && typeof user.accountId === 'number' && typeof user.name === 'string' ? user : null;
+			} catch (error) {
+				return null;
+			}
+		}
 
-		const logout = document.createElement('form');
-		logout.method = 'POST';
-		logout.action = '/api/auth/logout';
+		function writeCache(user) {
+			try {
+				localStorage.setItem(CACHE_KEY, JSON.stringify(user));
+			} catch (error) {
+				/* 存不进去就算了，下次翻页多闪一下而已 */
+			}
+		}
 
-		const button = document.createElement('button');
-		button.type = 'submit';
-		button.className = 'rounded-md px-2 py-2 text-xs text-faint transition hover:bg-surface-2 hover:text-cream';
-		button.textContent = '登出';
-		button.title = '登出';
+		function clearCache() {
+			try {
+				localStorage.removeItem(CACHE_KEY);
+			} catch (error) {
+				/* 同上 */
+			}
+		}
 
-		logout.append(button);
-		container.append(profile, logout);
-	}
+		var cached = readCache();
+		if (cached) renderUser(cached);
 
-	const entry = document.getElementById('auth-entry');
-	if (entry) {
 		fetch('/api/me', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
-			.then((res) => (res.ok ? res.json() : null))
-			.then((data: { user: SessionUser | null } | null) => {
-				// 未登录就保持静态渲染出来的那个链接，什么都不用做。
-				if (data?.user) renderUser(entry, data.user);
+			.then(function (res) {
+				return res.ok ? res.json() : null;
 			})
-			// 取不到登录态不是错误：页头保持未登录样子即可，不该在控制台吓人。
-			.catch(() => {});
-	}
+			.then(function (data) {
+				var user = data && data.user;
+				if (user) {
+					renderUser(user);
+					writeCache(user);
+					return;
+				}
+				/*
+				 * `data` 为空 = 接口没返回（断网、5xx、被拦截），**不能当成登出**：
+				 * 保持缓存画出来的样子，也别在控制台吓人。
+				 */
+				if (!data) return;
+				clearCache();
+				if (cached) entry.innerHTML = loginMarkup;
+			})
+			.catch(function () {});
+	})();
 </script>
