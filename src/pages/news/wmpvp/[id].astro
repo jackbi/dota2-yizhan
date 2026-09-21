@@ -1,0 +1,129 @@
+---
+import Layout from '../../../layouts/Layout.astro';
+import { formatIso } from '../../../lib/format';
+import { type WmpvpNews, fetchWmpvpNews } from '../../../lib/wmpvpApi';
+
+interface Props {
+	item: WmpvpNews;
+	/** 列表按时间倒序：前一条更新，后一条更早。 */
+	newer: WmpvpNews | null;
+	older: WmpvpNews | null;
+}
+
+/*
+ * 完美世界电竞的站内详情页。
+ *
+ * 正文在构建期就抓回来了（见 `wmpvpApi.ts`），所以这一页是纯静态的：
+ * 点开即读，不用等第三方站点。原文入口留在页头和页尾——镜像正文是为了国内能打开，
+ * 不是为了把人留在站内。
+ */
+export async function getStaticPaths() {
+	const items = await fetchWmpvpNews();
+	return items.map((item, index) => ({
+		params: { id: item.id },
+		props: { item, newer: items[index - 1] ?? null, older: items[index + 1] ?? null },
+	}));
+}
+
+const { item, newer, older } = Astro.props;
+
+// 列表封面常常就是正文里的第一张图，重复时只保留正文里的那张。
+const coverName = item.cover.split('/').pop()?.split('?')[0] ?? '';
+const showCover = Boolean(item.cover) && !item.content.includes(coverName);
+---
+
+<Layout
+	title={`${item.title} · 资讯 · DOTA2 驿站`}
+	description={item.summary || item.title}
+	breadcrumbs={[{ name: '资讯', href: '/news' }, { name: item.title }]}
+>
+	<Fragment slot="head">
+		<meta name="referrer" content="no-referrer" />
+	</Fragment>
+
+	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+		{/* 锚点就是资讯页那一栏的 id，两边不用各记一份映射。 */}
+		<a href="/news#wmpvp" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			返回资讯中心
+		</a>
+
+		<header class="mt-5 border-b border-line pb-6">
+			<div class="flex flex-wrap items-center gap-2 text-xs">
+				<span class="rounded-md bg-gold/15 px-2 py-1 font-semibold text-gold">完美世界电竞</span>
+				{item.published ? <span class="text-faint">{formatIso(item.published)}</span> : null}
+			</div>
+			<h1 class="mt-3 font-display text-2xl leading-tight text-cream sm:text-3xl">{item.title}</h1>
+			<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+				{item.author ? <span>{item.author}</span> : null}
+				<a href={item.url} target="_blank" rel="noopener noreferrer" class="text-dota-light transition hover:text-gold">
+					查看原文 ↗
+				</a>
+			</div>
+		</header>
+
+		{
+			showCover ? (
+				<img
+					src={item.cover}
+					alt={item.title}
+					referrerpolicy="no-referrer"
+					class="mt-6 w-full rounded-2xl border border-line object-cover"
+				/>
+			) : null
+		}
+
+		<div class="article-content mt-6 rounded-2xl border border-line bg-surface p-5 sm:p-8">
+			{
+				item.content ? (
+					<div set:html={item.content} />
+				) : (
+					<p class="text-muted">
+						正文这次没抓到（国服接口或兜底实例之一不通），先去
+						<a href={item.url} target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">原文</a>
+						看。下一轮构建会重试。
+					</p>
+				)
+			}
+		</div>
+
+		{
+			older || newer ? (
+				<nav class="mt-10 grid gap-3 sm:grid-cols-2" aria-label="相邻资讯">
+					{older ? (
+						<a
+							href={`/news/wmpvp/${older.id}`}
+							class="group rounded-2xl border border-line bg-surface p-4 transition hover:border-dota/50 hover:bg-surface-2"
+						>
+							<span class="text-xs text-faint">← 更早</span>
+							<span class="mt-1 line-clamp-2 block font-medium text-cream group-hover:text-dota-light">{older.title}</span>
+						</a>
+					) : (
+						<span />
+					)}
+					{newer ? (
+						<a
+							href={`/news/wmpvp/${newer.id}`}
+							class="group rounded-2xl border border-line bg-surface p-4 text-right transition hover:border-dota/50 hover:bg-surface-2"
+						>
+							<span class="text-xs text-faint">更新 →</span>
+							<span class="mt-1 line-clamp-2 block font-medium text-cream group-hover:text-dota-light">{newer.title}</span>
+						</a>
+					) : (
+						<span />
+					)}
+				</nav>
+			) : null
+		}
+
+		<p class="mt-10 text-center text-xs text-faint">
+			本文版权归
+			<a href="https://news.wmpvp.com/" target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">完美世界电竞</a>
+			与原作者所有，站内只镜像正文，完整内容请以
+			<a href={item.url} target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">原文</a>
+			为准。
+		</p>
+	</section>
+</Layout>

@@ -264,6 +264,33 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 构建期那份目录落在 `.cache/items/catalog.json`（6 小时），上游挂了就退回旧缓存、多旧都用；
 一件都拿不到时不建装备页，宁可没有也不能出 500 个空壳。
 
+## 完美世界电竞：直连为主，RSSHub 兜底
+
+国服运营方（完美世界）的 DOTA2 资讯，中文，和官网那 46 篇不是一回事，所以在资讯页单开一栏。
+
+**主路直连它自己的两个 JSON 接口**（`appengine.wmpvp.com` 列表、`appactivity.wmpvp.com` 正文），
+无 cookie、无 puppeteer。下面这组是**在 GitHub runner 上**测的——本机挂着代理、出口在国内，
+两边结论经常不一样（`候选源探测` 那个 workflow 就是干这个的）：
+
+| 探测点 | 结果 |
+| --- | --- |
+| 直连列表接口 | 200 · 28KB · 0.7s |
+| 直连正文接口 | 200 · 4KB · 0.7s |
+| RSSHub 公共实例 `rsshub.rssforever.com` | 200 · 103KB · 5.3s |
+| RSSHub 官方实例 `rsshub.app` | 403（Cloudflare 挑战，用不了） |
+
+**兜底走 RSSHub 的 `/wmpvp/news/1`。** 它的价值不在"能取到"（直连也能），而在上游改字段时
+那条路由由 RSSHub 的维护者跟着改，等于白捡一层别人替你维护的解析。代价是它自带 5 分钟缓存、
+而且是**别人的服务**——它挂了这一栏不该跟着空，反过来也一样，所以只当备胎。实例地址读
+`RSSHUB_BASE` 环境变量（默认上面那个公共实例），换自建实例不用改代码。
+
+缓存：列表半小时（`.cache/wmpvp/list.json`），正文按 id 永久缓存（`.cache/wmpvp/news-<id>.json`，
+发布后基本不改）。两条路都不通就退回旧缓存、多旧都用，再没有就整栏不展示，健康记录里写清楚。
+
+**别指望这个实例上别的路由也能用。** 同一个实例我试过 `/tieba/forum/dota2` 与 `/zhihu/hotlist`
+都是 503、`/bilibili/ranking/...` 是 301——能不能出数据取决于它自己的出口 IP 与配置，
+要接哪条就先用探测 workflow 探哪条。
+
 ## 赛事数据来自 Liquipedia
 
 赛程与赛果取自 Liquipedia 的 [`Liquipedia:Matches`](https://liquipedia.net/dota2/Liquipedia:Matches)
