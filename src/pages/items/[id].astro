@@ -1,0 +1,321 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import { cleanItemText } from '../../lib/itemApi';
+import { type ItemCatalogEntry, itemCatalog } from '../../lib/itemCatalog';
+import { itemPatchIndex } from '../../lib/patchItems';
+
+/*
+ * 每件装备一个页面。
+ *
+ * 之前 614 件装备全挤在 `/items` 一个 URL 里，标题只能写「装备资料库」——有人搜
+ * 「闪烁匕首 合成」时没有任何页面能承接，而英雄那边 127 个详情页早就把这个位置占了。
+ * 这里给的也不只是 SEO：装备库的悬浮框只答得了「它由什么合成」，答不了
+ * 「它能合成什么」「最近被削了没有」，那两块正好需要一个页面来放。
+ *
+ * 上游挂了（`itemCatalog()` 返回 null）就不建页：宁可没有装备页，也不要 500 个空壳。
+ */
+export async function getStaticPaths() {
+	const catalog = await itemCatalog();
+	if (!catalog) return [];
+	const { entries } = catalog;
+	return entries.map((entry, index) => ({
+		params: { id: entry.key },
+		props: {
+			entry,
+			prevKey: entries[(index - 1 + entries.length) % entries.length].key,
+			prevName: entries[(index - 1 + entries.length) % entries.length].detail.nameLoc,
+			nextKey: entries[(index + 1) % entries.length].key,
+			nextName: entries[(index + 1) % entries.length].detail.nameLoc,
+		},
+	}));
+}
+
+const { entry, prevKey, prevName, nextKey, nextName } = Astro.props as {
+	entry: ItemCatalogEntry;
+	prevKey: string;
+	prevName: string;
+	nextKey: string;
+	nextName: string;
+};
+
+const catalog = await itemCatalog();
+const byKey = catalog?.byKey ?? new Map<string, ItemCatalogEntry>();
+
+const { detail } = entry;
+const name = detail.nameLoc;
+const desc = cleanItemText(detail.desc);
+const attrib = cleanItemText(detail.attrib);
+const notes = cleanItemText(detail.notes);
+const lore = cleanItemText(detail.lore);
+/** 和装备库悬浮框同一条判据：正文里出现「主动 / 使用」就当主动道具。 */
+const isActive = /主动|使用/.test(`${detail.desc}${detail.attrib}`);
+
+/*
+ * 合成配方。`requirements` 里的重复项是要两份（魔杖要两根铁树枝干），所以这里不过滤重复；
+ * `*` 是接口的标记（那件要拿升级件来合），展示与查表时都去掉。
+ */
+const reagentKeys = detail.requirements.map((raw) => raw.replace(/\*$/, '')).filter(Boolean);
+const reagents = reagentKeys.map((key) => ({ key, item: byKey.get(key) ?? null }));
+/** 图纸单独标出来：价格拆解里它是「另算的那一笔」。 */
+const isRecipe = (key: string) => key.startsWith('recipe_');
+const partsTotal = reagents
+	.filter((r) => !isRecipe(r.key))
+	.reduce((sum, r) => sum + (r.item?.detail.cost ?? 0), 0);
+const recipeTotal = reagents
+	.filter((r) => isRecipe(r.key))
+	.reduce((sum, r) => sum + (r.item?.detail.cost ?? 0), 0);
+const total = partsTotal + recipeTotal;
+/** 合计与成品价对得上时不用再让用户自己算——对不上就照实说，别装作一致。 */
+const priceMatches = total > 0 && total === detail.cost;
+
+const buildsInto = entry.buildsInto.map((key) => byKey.get(key)).filter((item): item is ItemCatalogEntry => Boolean(item));
+
+/** 「这件装备最近被改过没有」——和英雄页同一份索引，只是键换成了物品内部名。 */
+const patches = (await itemPatchIndex()).get(entry.key) ?? [];
+
+/** 摘要取描述第一句：搜索结果里那句话比「价格、效果与合成配方」这种套话有用。 */
+const summary = (desc || attrib).split('\n')[0].replace(/\s+/g, ' ').trim();
+const description = [`DOTA2 ${name}（${detail.nameEn}）`, detail.cost > 0 ? `${detail.cost} 金币` : '', summary.slice(0, 60)]
+	.filter(Boolean)
+	.join('：')
+	.concat('。含合成配方、升级路线与版本改动记录。');
+
+const SECTION_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/mana.png';
+const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.png';
+---
+
+<Layout
+	title={`${name} · 装备资料 · DOTA2 驿站`}
+	description={description}
+	breadcrumbs={[{ name: '装备', href: '/items' }, { name }]}
+>
+	<Fragment slot="head">
+		<meta name="referrer" content="no-referrer" />
+	</Fragment>
+
+	<section class="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
+		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
+			<a href="/items" class="transition hover:text-dota-light">装备资料</a>
+			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			<span class="text-cream">{name}</span>
+		</nav>
+
+		<!-- 头部：图标 + 名字 + 价格 + 分类 -->
+		<div class="flex flex-wrap items-start gap-5">
+			<div class="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-line bg-surface">
+				<img src={detail.imgUrl} alt={name} referrerpolicy="no-referrer" class="h-full w-full object-contain p-2" />
+			</div>
+			<div class="min-w-0 flex-1">
+				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">装备图鉴</p>
+				<h1 class="mt-1.5 font-display text-3xl sm:text-4xl">{name}</h1>
+				<p class="mt-1 truncate text-sm text-muted">{detail.nameEn}</p>
+				<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+					<span class="font-display text-lg text-gold tabular-nums">
+						{detail.cost.toLocaleString('en-US')}
+						<span class="text-[11px] font-normal text-faint">金币</span>
+					</span>
+					<span
+						class:list={[
+							'inline-flex rounded px-2 py-0.5 text-xs font-medium',
+							isActive ? 'bg-dota/15 text-dota-light' : 'bg-zinc-600/15 text-zinc-400',
+						]}
+					>
+						{isActive ? '主动' : '被动'}
+					</span>
+					{entry.sectionLabel ? (
+						<a href={`/items#sec-${entry.section}`} class="text-xs text-muted transition hover:text-dota-light">
+							{entry.sectionLabel}
+							{entry.group ? ` · ${entry.group}` : ''}
+						</a>
+					) : null}
+				</div>
+			</div>
+		</div>
+
+		{
+			desc || attrib || notes ? (
+				<div class="mt-8 space-y-5">
+					{desc ? (
+						<section>
+							<h2 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-widest text-gold">
+								<span class="h-1.5 w-1.5 rounded-full bg-gold" />描述
+							</h2>
+							<div class="rounded-xl border border-line/60 bg-surface-2/40 px-4 py-3">
+								<p class="whitespace-pre-line text-sm leading-relaxed text-cream/90">{desc}</p>
+							</div>
+						</section>
+					) : null}
+					{attrib ? (
+						<section>
+							<h2 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-widest text-gold">
+								<span class="h-1.5 w-1.5 rounded-full bg-gold" />效果
+							</h2>
+							<div class="rounded-xl border border-line/60 bg-surface-2/40 px-4 py-3">
+								<p class="whitespace-pre-line text-sm leading-relaxed text-cream/90">{attrib}</p>
+							</div>
+						</section>
+					) : null}
+					{detail.cd || detail.mc ? (
+						<section>
+							<h2 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-widest text-gold">
+								<span class="h-1.5 w-1.5 rounded-full bg-gold" />基础信息
+							</h2>
+							<div class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-line/60 bg-surface-2/40 px-4 py-3">
+								{detail.cd ? (
+									<span class="flex items-center gap-1.5 text-sm text-cream tabular-nums">
+										<img src={CD_ICON} alt="" referrerpolicy="no-referrer" class="h-[18px] w-[18px] object-contain" />
+										冷却 {detail.cd}
+									</span>
+								) : null}
+								{detail.mc ? (
+									<span class="flex items-center gap-1.5 text-sm text-cream tabular-nums">
+										<img src={SECTION_ICON} alt="" referrerpolicy="no-referrer" class="h-[18px] w-[18px] object-contain" />
+										魔法消耗 {detail.mc}
+									</span>
+								) : null}
+							</div>
+						</section>
+					) : null}
+					{notes ? (
+						<section>
+							<h2 class="mb-2 flex items-center gap-2 text-xs font-semibold tracking-widest text-gold">
+								<span class="h-1.5 w-1.5 rounded-full bg-gold" />备注
+							</h2>
+							<div class="rounded-xl border border-line/60 bg-surface-2/40 px-4 py-3">
+								<p class="whitespace-pre-line text-sm leading-relaxed text-cream/90">{notes}</p>
+							</div>
+						</section>
+					) : null}
+				</div>
+			) : null
+		}
+
+		<!-- 合成配方与价格 -->
+		{
+			reagents.length > 0 ? (
+				<section class="mt-10 border-t border-line pt-6" aria-labelledby="item-recipe-title">
+					<h2 id="item-recipe-title" class="font-display text-xl">
+						合成配方
+					</h2>
+					<p class="mt-2 text-sm text-muted">
+						{priceMatches ? `散件与图纸合计 ${total.toLocaleString('en-US')} 金币，与成品价一致。` : `合计 ${total.toLocaleString('en-US')} 金币，成品价 ${detail.cost.toLocaleString('en-US')} 金币。`}
+						{partsTotal > 0 ? ` 其中散件 ${partsTotal.toLocaleString('en-US')}` : ''}
+						{recipeTotal > 0 ? `，图纸 ${recipeTotal.toLocaleString('en-US')}` : ''}
+					</p>
+					<ul class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						{reagents.map((reagent) =>
+							reagent.item ? (
+								<li>
+									<a
+										href={`/items/${reagent.key}`}
+										class="flex items-center gap-3 rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
+									>
+										<img
+											src={reagent.item.detail.imgUrl}
+											alt=""
+											referrerpolicy="no-referrer"
+											loading="lazy"
+											class="h-9 w-9 shrink-0 rounded object-contain"
+										/>
+										<span class="min-w-0 flex-1 truncate text-cream">{reagent.item.detail.nameLoc}</span>
+										{isRecipe(reagent.key) ? <span class="shrink-0 text-[11px] text-faint">图纸</span> : null}
+										<span class="shrink-0 text-xs tabular-nums text-gold">{reagent.item.detail.cost.toLocaleString('en-US')}</span>
+									</a>
+								</li>
+							) : (
+								// 名字表里查不到的散件（历史遗留条目）不给链接，免得点到 404。
+								<li class="flex items-center gap-3 rounded-lg border border-line/60 bg-surface/20 px-3 py-2 text-sm text-muted">
+									<span class="min-w-0 flex-1 truncate">{reagent.key}</span>
+								</li>
+							),
+						)}
+					</ul>
+				</section>
+			) : (
+				<section class="mt-10 border-t border-line pt-6">
+					<h2 class="font-display text-xl">合成配方</h2>
+					<p class="mt-2 text-sm text-muted">基础物品，没有合成配方。</p>
+				</section>
+			)
+		}
+
+		<!-- 升级为 -->
+		{
+			buildsInto.length > 0 ? (
+				<section class="mt-10 border-t border-line pt-6" aria-labelledby="item-builds-title">
+					<h2 id="item-builds-title" class="font-display text-xl">
+						升级为
+					</h2>
+					<p class="mt-2 text-sm text-muted">{buildsInto.length} 件装备用到了它。</p>
+					<div class="mt-4 flex flex-wrap gap-2">
+						{buildsInto.map((target) => (
+							<a
+								href={`/items/${target.key}`}
+								class="flex items-center gap-2 rounded-lg border border-line bg-surface/40 px-2.5 py-1.5 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
+							>
+								<img
+									src={target.detail.imgUrl}
+									alt=""
+									referrerpolicy="no-referrer"
+									loading="lazy"
+									class="h-6 w-6 shrink-0 object-contain"
+								/>
+								<span class="text-cream">{target.detail.nameLoc}</span>
+								<span class="text-xs tabular-nums text-faint">{target.detail.cost.toLocaleString('en-US')}</span>
+							</a>
+						))}
+					</div>
+				</section>
+			) : null
+		}
+
+		<!-- 版本改动记录 -->
+		{
+			patches.length > 0 ? (
+				<section class="mt-10 border-t border-line pt-6" aria-labelledby="item-patches-title">
+					<h2 id="item-patches-title" class="font-display text-xl">
+						版本改动记录
+					</h2>
+					<p class="mt-2 text-sm text-muted">
+						这件装备在最近 {patches.length} 个版本里被调整过（新 → 旧）。
+					</p>
+					<ul class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+						{patches.slice(0, 12).map((patch) => (
+							<li>
+								<a
+									href={`/patches/${patch.id}`}
+									class="flex items-baseline gap-3 rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
+								>
+									<span class="shrink-0 font-display text-gold">{patch.version}</span>
+									<span class="shrink-0 text-xs text-faint tabular-nums">{patch.date}</span>
+									<span class="truncate text-muted">{patch.summary}</span>
+								</a>
+							</li>
+						))}
+					</ul>
+					{patches.length > 12 ? (
+						<p class="mt-3 text-xs text-faint">
+							只列最近 12 个版本，全部改动见 <a href="/patches" class="text-dota-light hover:text-cream">版本信息</a>。
+						</p>
+					) : null}
+				</section>
+			) : null
+		}
+
+		{lore ? <p class="mt-10 border-t border-line pt-6 text-sm italic leading-relaxed text-faint">{lore}</p> : null}
+
+		<div class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
+			<a href={`/items/${prevKey}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+				<span aria-hidden="true">←</span>
+				<span class="max-w-40 truncate">{prevName}</span>
+			</a>
+			<a href="/items" class="text-sm text-muted transition hover:text-dota-light">装备资料库</a>
+			<a href={`/items/${nextKey}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+				<span class="max-w-40 truncate">{nextName}</span>
+				<span aria-hidden="true">→</span>
+			</a>
+		</div>
+	</section>
+</Layout>

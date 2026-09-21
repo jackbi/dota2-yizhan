@@ -128,6 +128,30 @@ function loadJsonp(url: string, callbackName: string): Promise<any> {
 	});
 }
 
+/**
+ * 把 `items/json` 里的一条原始记录折成 `ItemDetail`。
+ *
+ * 服务端（`itemCatalog.ts`，给构建期的装备详情页用）与浏览器（下面的 `loadItemDetails`，
+ * 给装备库的悬浮框用）共用这一份——两边要是各写一份，字段漏一个就会出现
+ * 「页面上有、悬浮框里没有」这种只有肉眼才看得出来的差异。
+ */
+export function normalizeItemDetail(key: string, v: any): ItemDetail {
+	return {
+		id: key,
+		nameLoc: v.dname,
+		nameEn: v.en,
+		cost: Number(v.cost) || 0,
+		desc: v.desc,
+		attrib: v.attrib,
+		notes: v.notes,
+		lore: v.lore,
+		mc: v.mc,
+		cd: v.cd,
+		requirements: Array.isArray(v.requirements) ? v.requirements.map((item: string) => String(item)) : [],
+		imgUrl: v.img_url,
+	};
+}
+
 /** 懒加载全部装备详情（JSONP），缓存复用。 */
 export function loadItemDetails(): Promise<Record<string, ItemDetail>> {
 	if (!detailCache) {
@@ -136,20 +160,7 @@ export function loadItemDetails(): Promise<Record<string, ItemDetail>> {
 			const itemdata = payload.itemdata;
 			const map: Record<string, ItemDetail> = {};
 			for (const [key, v] of Object.entries<any>(itemdata)) {
-				map[key] = {
-					id: key,
-					nameLoc: v.dname,
-					nameEn: v.en,
-					cost: Number(v.cost) || 0,
-					desc: v.desc,
-					attrib: v.attrib,
-					notes: v.notes,
-					lore: v.lore,
-					mc: v.mc,
-					cd: v.cd,
-					requirements: Array.isArray(v.requirements) ? v.requirements.map((key: string) => String(key)) : [],
-					imgUrl: v.img_url,
-				};
+				map[key] = normalizeItemDetail(key, v);
 			}
 			return map;
 		})();
