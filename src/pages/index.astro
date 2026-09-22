@@ -2,12 +2,14 @@
 import Layout from '../layouts/Layout.astro';
 import SectionHeader from '../components/SectionHeader.astro';
 import LiveCard from '../components/LiveCard.astro';
+import PlayerCount from '../components/PlayerCount.astro';
 import NewsCard from '../components/NewsCard.astro';
 import TournamentCard from '../components/TournamentCard.astro';
 import { OB_MEMBERS } from '../data/ob';
 import { getTournaments } from '../lib/tournamentsApi';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { localizeAvatars } from '../lib/avatars';
+import { fetchPlayers } from '../lib/steamPlayers';
 import { fetchOfficialNews, toNewsCard } from '../lib/newsApi';
 import { fetchCommunityThreads } from '../lib/ngaApi';
 import { fetchPatchUpdates } from '../lib/patchesApi';
@@ -60,6 +62,9 @@ const liveAvatars = await localizeAvatars(
 		avatar: liveSnapshot.statuses[`${m.platform}:${m.roomId}`]?.avatar,
 	})),
 );
+
+/** 在线人数：官方接口与本地历史都拿不到时整块不展示（和站里其它源同一条规矩）。 */
+const players = await fetchPlayers();
 // 时间格式化工具统一使用 Unix 秒，Date.now() 是毫秒。
 const now = Math.floor(Date.now() / 1000);
 const notFinished = bundle.events.filter((e) => e.status !== 'completed');
@@ -146,6 +151,9 @@ const FEATURES = [
 			</div>
 		</div>
 	</section>
+
+	<!-- 在线人数 -->
+	{players && <PlayerCount snapshot={players} />}
 
 	<!-- Features -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">

@@ -1,0 +1,404 @@
+---
+import SectionHeader from './SectionHeader.astro';
+import { ALL_TIME_PEAK, type PlayerSnapshot } from '../lib/steamPlayers';
+import { formatCount, formatIso } from '../lib/format';
+
+/**
+ * 首页的「刀塔有多热」：三个大数字 + 一条能悬停看数值的折线。
+ *
+ * 折线**默认由服务端画好**（没有 JS 也能看），另外把整条序列压成紧凑 JSON 塞进页面，
+ * 客户端拿它做两件事：切换时间窗、悬停显示具体数值。所以没 JS 时只是不能缩放与悬停，
+ * 有 JS 时按钮和提示框接管，重画的是同一份数据，两边不会打架。
+ *
+ * 不引图表库：路径就是几十行数学，400 个点压完 2KB 上下，比拉一个 charting 库划算。
+ *
+ * 这条线有多长取决于我们记了多久（见 `steamPlayers.ts`）：刚开张只有几个点时，
+ * 页面直接说「折线才刚开始记」，不假装是长期趋势。
+ */
+
+interface Props {
+	snapshot: PlayerSnapshot;
+}
+
+const { snapshot } = Astro.props;
+
+const WINDOWS = [
+	{ id: '24h', label: '24 小时', seconds: 24 * 3600 },
+	{ id: '7d', label: '7 天', seconds: 7 * 24 * 3600 },
+	{ id: '30d', label: '30 天', seconds: 30 * 24 * 3600 },
+] as const;
+const DEFAULT_WINDOW = WINDOWS[1];
+
+/** 画布尺寸，和客户端脚本共用（通过 data-* 传过去，免得两边各写一份）。 */
+const W = 640;
+const H = 120;
+const PAD_Y = 12;
+
+const firstAt = snapshot.points[0]?.at ?? Math.floor(Date.parse(snapshot.at) / 1000);
+const lastAt = snapshot.points[snapshot.points.length - 1]?.at ?? firstAt;
+const historyHours = (lastAt - firstAt) / 3600;
+/** 记满 6 小时之前，这条线还看不出一天里的起伏；与其让人误读，不如直说。 */
+const tooShort = snapshot.points.length < 2 || historyHours < 6;
+
+const windowPoints = snapshot.points.filter((point) => point.at >= lastAt - DEFAULT_WINDOW.seconds);
+const values = windowPoints.map((point) => point.players);
+const min = Math.min(...values);
+const max = Math.max(...values);
+const valueSpan = Math.max(1, max - min);
+const timeSpan = Math.max(1, lastAt - (windowPoints[0]?.at ?? lastAt));
+const xOf = (at: number): number => ((at - (windowPoints[0]?.at ?? lastAt)) / timeSpan) * W;
+const yOf = (value: number): number => H - PAD_Y - ((value - min) / valueSpan) * (H - PAD_Y * 2);
+const linePath = windowPoints
+	.map((point, index) => `${index === 0 ? 'M' : 'L'}${xOf(point.at).toFixed(1)},${yOf(point.players).toFixed(1)}`)
+	.join(' ');
+const areaPath = windowPoints.length > 1 ? `${linePath} L${W},${H} L0,${H} Z` : '';
+const seriesPayload = JSON.stringify(snapshot.points.map((point) => [point.at, point.players]));
+
+const dayAgo = snapshot.dayAgo;
+const change = dayAgo ? ((snapshot.players - dayAgo.players) / dayAgo.players) * 100 : null;
+
+/**
+ * 涨跌：跟随国内行情的习惯——**涨用红、跌用绿**，和欧美那套正好相反。
+ * 箭头另有 `sr-only` 的「上涨 / 下降」，读屏不会只念出一个百分号。
+ */
+const deltaTone: 'up' | 'down' | 'flat' = change === null ? 'flat' : Math.abs(change) < 0.05 ? 'flat' : change > 0 ? 'up' : 'down';
+
+const HEADLINES = [
+	{
+		label: '当前在线',
+		value: formatCount(snapshot.players),
+		sub: snapshot.players.toLocaleString('en-US'),
+		note: snapshot.stale ? `最后记录于 ${formatIso(snapshot.at)}` : `更新于 ${formatIso(snapshot.at)}`,
+	},
+	snapshot.peak
+		? {
+				label: '24 小时峰值',
+				value: formatCount(snapshot.peak),
+				sub: snapshot.peak.toLocaleString('en-US'),
+				note: '来自 Steam 官方接口',
+			}
+		: null,
+	{
+		label: '历史峰值',
+		value: formatCount(ALL_TIME_PEAK.players),
+		sub: ALL_TIME_PEAK.players.toLocaleString('en-US'),
+		note: `${ALL_TIME_PEAK.month} · ${ALL_TIME_PEAK.source} 统计`,
+	},
+].filter((item): item is { label: string; value: string; sub: string; note: string } => item !== null);
+
+interface SideStat {
+	label: string;
+	value: string;
+	note: string;
+	/** 有 arrow 的才是涨跌那一格：箭头方向与颜色由它决定。 */
+	arrow?: '↑' | '↓';
+	tone?: 'up' | 'down' | 'flat';
+}
+
+const SIDE_STATS: SideStat[] = [
+	...(snapshot.rank ? [{ label: 'Steam 全站', value: `第 ${snapshot.rank}`, note: '按当前在线排' }] : []),
+	...(dayAgo
+		? [
+				{
+					label: '较 24 小时前',
+					value: `${Math.abs(change ?? 0).toFixed(1)}%`,
+					note: `${dayAgo.players.toLocaleString('en-US')} → ${snapshot.players.toLocaleString('en-US')}`,
+					arrow: deltaTone === 'up' ? '↑' : deltaTone === 'down' ? '↓' : undefined,
+					tone: deltaTone,
+				} satisfies SideStat,
+			]
+		: []),
+];
+---
+
+<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
+	<SectionHeader
+		eyebrow="实时"
+		title="刀塔有多热"
+		subtitle="数字来自 Valve 官方接口，每轮构建刷新；折线是本站自己记的，鼠标移上去能看具体数值。"
+	/>
+
+	<div class="rounded-2xl border border-line bg-surface p-5 sm:p-6">
+		<div class="grid grid-cols-1 gap-6 sm:grid-cols-3">
+			{
+				HEADLINES.map((headline) => (
+					<div>
+						<p class="text-xs font-medium tracking-wider text-muted">{headline.label}</p>
+						<p class="mt-1 flex items-baseline gap-2">
+							<span class="font-display text-3xl text-gold tabular-nums sm:text-4xl">{headline.value}</span>
+							<span class="text-xs text-faint tabular-nums">{headline.sub}</span>
+						</p>
+						<p class="mt-1 text-xs text-faint">{headline.note}</p>
+					</div>
+				))
+			}
+		</div>
+
+		{
+			SIDE_STATS.length > 0 && (
+				<div class="mt-6 flex flex-wrap gap-x-10 gap-y-3 border-t border-line pt-5">
+					{SIDE_STATS.map((stat) => (
+						<div class="flex items-baseline gap-2">
+							<span class="text-xs text-muted">{stat.label}</span>
+							{stat.arrow ? (
+								<span
+									class:list={[
+										'font-display text-lg tabular-nums',
+										stat.tone === 'up' ? 'text-[#f87171]' : stat.tone === 'down' ? 'text-[#4ade80]' : 'text-cream',
+									]}
+								>
+									<span aria-hidden="true">{stat.arrow}</span>
+									<span class="sr-only">{stat.tone === 'up' ? '上涨' : '下降'}</span>
+									{stat.value}
+								</span>
+							) : (
+								<span class="font-display text-lg text-cream tabular-nums">{stat.value}</span>
+							)}
+							<span class="text-xs text-faint tabular-nums">{stat.note}</span>
+						</div>
+					))}
+				</div>
+			)
+		}
+
+		<div class="mt-5 border-t border-line pt-5">
+			{
+				tooShort ? (
+					<p class="py-6 text-center text-sm text-muted">
+						折线才刚开始记：本站从 {formatIso(new Date(firstAt * 1000).toISOString())} 起每轮构建记一次，
+						记满一天就能看出作息。想要更长的历史，
+						<a href="https://steamdb.info/app/570/charts/" target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">
+							SteamDB
+						</a>
+						那份数据更全。
+					</p>
+				) : (
+					<>
+						<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+							<div id="pc-windows" class="flex flex-wrap gap-1.5" role="group" aria-label="折线时间窗">
+								{WINDOWS.map((window) => (
+									<button
+										type="button"
+										data-window={window.id}
+										data-seconds={window.seconds}
+										aria-pressed={window.id === DEFAULT_WINDOW.id ? 'true' : 'false'}
+										class="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-muted transition hover:border-dota/50 hover:text-cream aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+									>
+										{window.label}
+									</button>
+								))}
+							</div>
+							<p class="text-xs text-faint tabular-nums">
+								<span id="pc-window-label">最近 {DEFAULT_WINDOW.label}</span> · 最低 <span id="pc-min">{formatCount(min)}</span> · 最高
+								<span id="pc-max">{formatCount(max)}</span>
+							</p>
+						</div>
+
+						<div id="pc-chart" class="relative">
+							<svg
+								viewBox={`0 0 ${W} ${H}`}
+								class="h-32 w-full"
+								preserveAspectRatio="none"
+								role="img"
+								aria-label={`在线人数折线：最近 ${DEFAULT_WINDOW.label}最低 ${min}、最高 ${max}`}
+								data-w={W}
+								data-h={H}
+								data-pad={PAD_Y}
+							>
+								<defs>
+									<linearGradient id="player-count-fill" x1="0" y1="0" x2="0" y2="1">
+										<stop offset="0%" stop-color="var(--color-gold)" stop-opacity="0.28" />
+										<stop offset="100%" stop-color="var(--color-gold)" stop-opacity="0" />
+									</linearGradient>
+								</defs>
+								<path id="pc-area" d={areaPath} fill="url(#player-count-fill)" />
+								<path id="pc-line" d={linePath} fill="none" stroke="var(--color-gold)" stroke-width="2" stroke-linejoin="round" />
+								<line
+									id="pc-guide"
+									x1="0"
+									x2="0"
+									y1="0"
+									y2={H}
+									stroke="var(--color-gold)"
+									stroke-opacity="0.45"
+									stroke-dasharray="3 3"
+									opacity="0"
+								/>
+								<circle id="pc-dot" cx="0" cy="0" r="3.5" fill="var(--color-gold)" opacity="0" />
+							</svg>
+							<div
+								id="pc-tip"
+								class="pointer-events-none absolute z-20 hidden -translate-x-1/2 -translate-y-full rounded-lg border border-line bg-ink/95 px-3 py-2 text-xs shadow-xl backdrop-blur"
+								role="status"
+								aria-live="polite"
+							>
+								<p id="pc-tip-time" class="text-faint">—</p>
+								<p class="mt-0.5">
+									<span class="text-muted">在线</span>
+									<span id="pc-tip-value" class="ml-1 font-display text-sm text-gold tabular-nums">—</span>
+								</p>
+							</div>
+						</div>
+					</>
+				)
+			}
+			<p class="mt-2 text-xs text-faint">
+				当前在线与 24 小时峰值来自 Steam 官方接口；历史峰值没有官方口径，取 {ALL_TIME_PEAK.source} 的统计（
+				<a href={ALL_TIME_PEAK.url} target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">来源</a>
+				，各家采样不同，SteamDB 给的是 1,295,114）。折线是本站从
+				{formatIso(new Date(firstAt * 1000).toISOString())} 起自己记的，每半小时一个点，只留最近 30 天。
+			</p>
+		</div>
+	</div>
+</section>
+
+<!-- 整条序列（[时间, 在线数]）留给客户端切窗口与悬停：压成数组比对象省一半字节。 -->
+<script type="application/json" id="pc-series" set:html={seriesPayload} is:inline />
+
+<script>
+	/*
+	 * 折线的客户端部分：切时间窗 + 悬停看数值。
+	 *
+	 * 服务端已经把默认窗口画好了，所以这段只做「增强」：拿不到序列就什么都不做，
+	 * 页面照样能用（静态 SVG 还在）。
+	 */
+	(() => {
+		const chart = document.getElementById('pc-chart');
+		const payload = document.getElementById('pc-series');
+		const line = document.getElementById('pc-line') as SVGPathElement | null;
+		if (!chart || !payload || !line) return;
+
+		const svg = line.ownerSVGElement;
+		const area = document.getElementById('pc-area') as SVGPathElement | null;
+		const guide = document.getElementById('pc-guide') as SVGLineElement | null;
+		const dot = document.getElementById('pc-dot') as SVGCircleElement | null;
+		const tip = document.getElementById('pc-tip');
+		const tipTime = document.getElementById('pc-tip-time');
+		const tipValue = document.getElementById('pc-tip-value');
+		const minLabel = document.getElementById('pc-min');
+		const maxLabel = document.getElementById('pc-max');
+		const windowLabel = document.getElementById('pc-window-label');
+		const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('#pc-windows button'));
+		if (!svg || !tip || !tipTime || !tipValue || buttons.length === 0) return;
+
+		/** 服务端塞进来的 [时间, 在线数]，按时间升序。 */
+		let series: [number, number][] = [];
+		try {
+			const parsed = JSON.parse(payload.textContent ?? '[]');
+			if (Array.isArray(parsed)) {
+				series = parsed.filter(
+					(row): row is [number, number] => Array.isArray(row) && Number.isFinite(row[0]) && Number.isFinite(row[1]),
+				);
+			}
+		} catch {
+			return;
+		}
+		if (series.length < 2) return;
+
+		const W = Number(svg.dataset.w ?? 640);
+		const H = Number(svg.dataset.h ?? 120);
+		const PAD = Number(svg.dataset.pad ?? 12);
+		const lastAt = series[series.length - 1][0];
+
+		/** 时间统一按北京时间渲染，和站里其它地方一致。 */
+		const fmt = new Intl.DateTimeFormat('zh-CN', {
+			timeZone: 'Asia/Shanghai',
+			month: 'long',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+			hour12: false,
+		});
+		const count = (value: number): string => `${(value / 10_000).toFixed(1)} 万`;
+
+		/** 当前窗口的点与标尺，悬停时用它们做命中判断。 */
+		let points: [number, number][] = [];
+		let min = 0;
+		let max = 1;
+		let firstAt = lastAt;
+		let span = 1;
+		const xOf = (at: number): number => ((at - firstAt) / span) * W;
+		const yOf = (value: number): number => H - PAD - ((value - min) / Math.max(1, max - min)) * (H - PAD * 2);
+
+		const hideTip = (): void => {
+			tip.classList.add('hidden');
+			guide?.setAttribute('opacity', '0');
+			dot?.setAttribute('opacity', '0');
+		};
+
+		const draw = (seconds: number): void => {
+			points = series.filter(([at]) => at >= lastAt - seconds);
+			// 窗口比记录还长（刚开张那几天）时，至少留最后两个点，免得画不出线。
+			if (points.length < 2) points = series.slice(-2);
+			min = Math.min(...points.map(([, value]) => value));
+			max = Math.max(...points.map(([, value]) => value));
+			firstAt = points[0][0];
+			span = Math.max(1, points[points.length - 1][0] - firstAt);
+
+			const path = points
+				.map(([at, value], index) => `${index === 0 ? 'M' : 'L'}${xOf(at).toFixed(1)},${yOf(value).toFixed(1)}`)
+				.join(' ');
+			line.setAttribute('d', path);
+			area?.setAttribute('d', `${path} L${W},${H} L0,${H} Z`);
+			if (minLabel) minLabel.textContent = count(min);
+			if (maxLabel) maxLabel.textContent = count(max);
+			hideTip();
+		};
+
+		const showTip = (event: PointerEvent): void => {
+			// 还没画过（或序列太短）时 points 是空的，先画再谈悬停。
+			if (points.length === 0) return;
+			const rect = chart.getBoundingClientRect();
+			if (rect.width === 0) return;
+			// 指针位置 → 时间：反着用 xOf 就行。
+			const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+			const targetAt = firstAt + ratio * span;
+			let nearest = points[0];
+			for (const point of points) {
+				if (Math.abs(point[0] - targetAt) < Math.abs(nearest[0] - targetAt)) nearest = point;
+			}
+			const [at, value] = nearest;
+			const x = (xOf(at) / W) * rect.width;
+			const y = (yOf(value) / H) * rect.height;
+
+			guide?.setAttribute('x1', String(xOf(at)));
+			guide?.setAttribute('x2', String(xOf(at)));
+			guide?.setAttribute('opacity', '1');
+			dot?.setAttribute('cx', String(xOf(at)));
+			dot?.setAttribute('cy', String(yOf(value)));
+			dot?.setAttribute('opacity', '1');
+
+			tipTime.textContent = fmt.format(new Date(at * 1000));
+			tipValue.textContent = value.toLocaleString('en-US');
+			tip.classList.remove('hidden');
+			// 贴着指针，但不许越出容器。
+			const width = tip.offsetWidth;
+			const half = width / 2 + 4;
+			tip.style.left = `${Math.min(Math.max(x, half), Math.max(half, rect.width - half))}px`;
+			tip.style.top = `${Math.max(y - 8, 0)}px`;
+		};
+
+		chart.addEventListener('pointermove', showTip);
+		chart.addEventListener('pointerdown', showTip);
+		chart.addEventListener('pointerleave', hideTip);
+		// 触屏：点一下看数值，两秒多后自己收起（那上面没有 hover 概念）。
+		chart.addEventListener('touchend', () => window.setTimeout(hideTip, 2500));
+
+		for (const button of buttons) {
+			button.addEventListener('click', () => {
+				for (const other of buttons) other.setAttribute('aria-pressed', 'false');
+				button.setAttribute('aria-pressed', 'true');
+				if (windowLabel) windowLabel.textContent = `最近 ${button.textContent?.trim() ?? ''}`;
+				draw(Number(button.dataset.seconds ?? 0));
+			});
+		}
+
+		/*
+		 * 按当前选中的窗口先画一次：服务端画的默认窗口是同一份数据、结果一样，
+		 * 但客户端这边得先有 `points` 才能响应悬停——第一版就是漏了这一步，
+		 * 鼠标移上去直接 "nearest is not iterable"。
+		 */
+		const pressed = buttons.find((button) => button.getAttribute('aria-pressed') === 'true') ?? buttons[0];
+		draw(Number(pressed.dataset.seconds ?? 7 * 24 * 3600));
+	})();
+</script>
