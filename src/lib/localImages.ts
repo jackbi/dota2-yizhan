@@ -47,6 +47,20 @@ export interface ImageChannel {
 	maxBytes: number;
 	/** 同一个主机的并发数。 */
 	concurrency: number;
+	/**
+	 * 直连时要额外带的请求头。
+	 *
+	 * 完美世界那个图床判 Referer：不带、或者不是 `news.wmpvp.com`，一律 403。
+	 * 而页面上的 `<img>` 我们控制不了浏览器发什么——站里为了迁就 Steam 的 CDN 还统一
+	 * `referrerpolicy="no-referrer"`，那对这种图床就是必然 403。所以只能构建期带上它自己家的
+	 * Referer 把字节取回来，跟别的频道一样存到本地。
+	 */
+	headers?: Record<string, string>;
+	/**
+	 * 代理兜底时的裁剪方式，默认 `cover`（裁成固定比例，头像与封面要的就是这个）。
+	 * 文章配图用 `contain`——按长边缩进框里，不裁掉内容。
+	 */
+	fit?: 'cover' | 'contain';
 }
 
 /** 一个待本地化的图片来源。 */
@@ -106,7 +120,8 @@ async function tryDirect(url: string, channel: ImageChannel): Promise<Uint8Array
 	if (PROXY_MODE === 'jina') return null;
 	try {
 		const res = await fetch(url, {
-			headers: { 'User-Agent': UA, Accept: 'image/avif,image/webp,image/*,*/*;q=0.8' },
+			// UA 与 Accept 放最后：频道自带的头不该悄悄把它们顶掉。
+			headers: { ...channel.headers, 'User-Agent': UA, Accept: 'image/avif,image/webp,image/*,*/*;q=0.8' },
 			signal: AbortSignal.timeout(DIRECT_TIMEOUT_MS),
 		});
 		return await readImage(res, channel.maxBytes);
@@ -119,7 +134,7 @@ async function tryDirect(url: string, channel: ImageChannel): Promise<Uint8Array
 async function tryProxy(url: string, channel: ImageChannel): Promise<Uint8Array | null> {
 	if (PROXY_MODE === 'off') return null;
 	try {
-		const query = `url=${encodeURIComponent(url)}&w=${channel.width}&h=${channel.height}&fit=cover&output=jpg`;
+		const query = `url=${encodeURIComponent(url)}&w=${channel.width}&h=${channel.height}&fit=${channel.fit ?? 'cover'}&output=jpg`;
 		const res = await fetch(`${IMAGE_PROXY}?${query}`, { signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
 		return await readImage(res, channel.maxBytes);
 	} catch {

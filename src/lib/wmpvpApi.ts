@@ -4,6 +4,7 @@ import { decodeEntities, sanitizeArticleHtml, summarizeArticle } from './article
 import { cacheFile as cachePath, isFresh, readCacheJson, readRawJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
+import { type ImageChannel, type LocalImageSource, localizeImages } from './localImages';
 
 /**
  * 完美世界电竞（DOTA2 国服运营方）的资讯。
@@ -43,6 +44,81 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 const FETCH_CONCURRENCY = 4;
 const USER_AGENT =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+/**
+ * 配图频道。
+ *
+ * `cdn.wmpvp.com` 判 Referer：实测不带 403、带本站 403、只有带 `news.wmpvp.com` 才 200。
+ * 而站里的 `<img>` 一律 `referrerpolicy="no-referrer"`（为了迁就 Steam 的 CDN），
+ * 热链出去必然是满屏 403——只能构建期带上它自己家的 Referer 把图取回来。
+ *
+ * 尺寸给得宽松、`fit` 用 `contain`：这是文章配图，不能像头像那样裁成固定比例。
+ */
+export const WMPVP_IMAGE_CHANNEL: ImageChannel = {
+	dir: 'wmpvp-images',
+	width: 1200,
+	height: 1200,
+	// 实测单张 0.5MB 上下，留 4MB 余量；再大就当抓错了。
+	maxBytes: 4 * 1024 * 1024,
+	concurrency: 4,
+	headers: { Referer: 'https://news.wmpvp.com/' },
+	fit: 'contain',
+};
+
+/**
+ * 让图床自己把图压小。
+ *
+ * 原图最大 3.8MB、中位 1.5MB，111 张就是 200MB——部署要传、读者要下，两边都不能接受。
+ * 好在 `cdn.wmpvp.com` 是阿里云 OSS，认 `x-oss-process` 这类参数（那些带
+ * `resize,m_fixed,h_599,w_948` 的地址就是它自己生成的）。把参数换成我们要的尺寸与格式，
+ * 取回来的就已经压好了：实测同一张图 553KB → 77KB（长边 1080 / q80 / webp）。
+ *
+ * 参数是**替换**不是追加：一个地址上挂两个 `x-oss-process`，行为不可控。
+ */
+function optimizeImageUrl(url: string): string {
+	const [base] = url.split('?');
+	return `${base}?x-oss-process=image/resize,m_lfit,w_1080/quality,q_80/format,webp`;
+}
+
+/**
+ * 把一条资讯里用到的图取回本地，并把 HTML 与封面上的外链换成本站路径。
+ *
+ * 缓存里存的仍是**原始外链**（见 `load()`）：本地化只在渲染这一轮做，所以哪天图床不判 Referer、
+ * 或者换了策略，删掉 `.cache/wmpvp-images/` 重跑就行，不用把正文缓存一起作废。
+ */
+async function localizeItemImages(items: WmpvpNews[]): Promise<void> {
+	const sources = new Map<string, LocalImageSource>();
+	for (const item of items) {
+		for (const match of item.content.matchAll(/<img[^>]*\ssrc="([^"]+)"/gi)) {
+			const url = decodeEntities(match[1]);
+			if (/^https?:\/\//i.test(url)) sources.set(url, { key: url, url });
+		}
+		if (item.cover) sources.set(item.cover, { key: item.cover, url: item.cover });
+	}
+	if (sources.size === 0) return;
+
+	const list = [...sources.values()];
+	// 先按「让 CDN 压过」的地址取：字节少七倍，构建与被访问都省。
+	const map = await localizeImages(
+		WMPVP_IMAGE_CHANNEL,
+		list.map((source) => ({ ...source, url: optimizeImageUrl(source.url ?? '') })),
+	);
+	// 压过的地址不一定都认（原图不在 OSS 上、参数被拒），这些退回原地址再来一轮。
+	const missing = list.filter((source) => !map.has(source.key));
+	if (missing.length > 0) {
+		for (const [key, value] of await localizeImages(WMPVP_IMAGE_CHANNEL, missing)) map.set(key, value);
+	}
+
+	const rewrite = (_whole: string, prefix: string, url: string, suffix: string): string => {
+		const to = map.get(decodeEntities(url));
+		return to ? `${prefix}${to}${suffix}` : _whole;
+	};
+	for (const item of items) {
+		const local = map.get(item.cover);
+		if (local) item.cover = local;
+		item.content = item.content.replace(/(<img[^>]*\ssrc=")([^"]+)(")/gi, rewrite);
+	}
+}
 
 export interface WmpvpNews {
 	/** `newsId`，同时是站内详情页的路由参数。 */
@@ -247,6 +323,11 @@ async function load(): Promise<WmpvpNews[]> {
 		items = cached.value.items;
 		via = '旧缓存';
 	}
+
+	// 配图一律构建期取回本地：直接热链必然 403（见 `WMPVP_IMAGE_CHANNEL`）。
+	// 放在这里而不是 `fetchArticle()` 里，是因为列表命中缓存的那一轮也得把图重新标记成
+	// 「本轮用到过」，否则它们会被 30 天回收规则当成没人要的图删掉。
+	await localizeItemImages(items);
 
 	await reportSource(
 		'wmpvp',
