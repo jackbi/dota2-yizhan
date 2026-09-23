@@ -28,7 +28,23 @@ const LEGACY_FALLBACK_NAME = /^玩家 \d+$/;
  * 「每刷新一次就打一次 STRATZ」。成功的那份由 `cached()` 的 6 小时兜住，不进这张表。
  */
 const FAILED_COOLDOWN_MS = 5 * 60_000;
+/** 上限只是防止内存无界增长：正常量级远够，真被刷也有个头。 */
+const MAX_FAILED_ENTRIES = 400;
 const failedAt = new Map<number, number>();
+
+/**
+ * 记一次失败。**先删再塞**：Map 保持插入顺序，直接 `set` 已存在的键不会把它挪到队尾，
+ * 那样"老在失败的账号"会一直卡在队的头部，淘汰时第一个被丢——正好丢掉最该被冷却的那个。
+ */
+function rememberFailure(accountId: number): void {
+	failedAt.delete(accountId);
+	failedAt.set(accountId, Date.now());
+	while (failedAt.size > MAX_FAILED_ENTRIES) {
+		const oldest = failedAt.keys().next().value;
+		if (oldest === undefined) break;
+		failedAt.delete(oldest);
+	}
+}
 
 export function profileMissing(session: SessionUser | null): boolean {
 	if (!session) return false;
@@ -57,7 +73,7 @@ export async function hydrateSessionProfile(
 
 	const profile = await loadPlayerAvatar(session.accountId).catch(() => null);
 	if (!profile?.name) {
-		failedAt.set(session.accountId, Date.now());
+		rememberFailure(session.accountId);
 		return session;
 	}
 	failedAt.delete(session.accountId);
