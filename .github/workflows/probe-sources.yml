@@ -10,6 +10,10 @@ name: 候选源探测
 on:
   workflow_dispatch:
 
+# 只跑 curl，给它读仓库的权限就够了（默认权限偏宽）。
+permissions:
+  contents: read
+
 jobs:
   probe:
     runs-on: ubuntu-latest

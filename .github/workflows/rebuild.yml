@@ -21,6 +21,11 @@ concurrency:
   group: rebuild-deploy
   cancel-in-progress: false
 
+# 默认的 GITHUB_TOKEN 权限对这个 job 来说太宽了：它只需要读仓库。
+# （部署用的是 CLOUDFLARE_API_TOKEN，不是 GITHUB_TOKEN，所以收窄不影响发布。）
+permissions:
+  contents: read
+
 jobs:
   rebuild:
     runs-on: ubuntu-latest
