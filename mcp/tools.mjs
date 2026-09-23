@@ -27,6 +27,23 @@ const ROLE_NAMES = ['核心', '辅助', '爆发', '控制', '打野', '耐久', 
 
 const ATTR_NAMES = { STR: '力量', AGI: '敏捷', INT: '智力', UNI: '全才' };
 
+/**
+ * 只做横向对比、不进胜率的那些行。
+ *
+ * 用于「胜率与结构打架」时的提醒：胜率只看号位偏差加对位偏差，一个四近战、没有团战点、
+ * 还塞了三个纯核的阵容照样可能算出高胜率——单独看那个数字会得出完全错的结论。
+ */
+const STRUCTURE_KEYS = new Set([
+	'control', 'burst', 'initiate', 'push', 'front', 'support',
+	'ranged', 'teamfight', 'clear', 'phaseEarly', 'phaseLate', 'greedyCore', 'melee',
+]);
+
+/** 这一行离参考值差多远（按相对量算，越大越糟）。已经达标的返回 0，不参与提醒。 */
+function shortfall(row, value) {
+	if (row.target <= 0) return 0;
+	return row.lowerIsBetter ? Math.max(0, (value - row.target) / row.target) : Math.max(0, (row.target - value) / row.target);
+}
+
 /** 一行口径说明。每个工具的输出结尾都带上它，模型才知道这批数字是什么时候的。 */
 function caliber(data) {
 	const patch = data.patch?.version ? `版本 ${data.patch.version}` : '版本未知';
@@ -202,10 +219,47 @@ async function analyzeLineup({ radiant, dire, firstPicker = 'radiant' }) {
 		return `- ${edge.side === 'ours' ? '天辉' : '夜魇'} ${positionLabel(edge.position)} ${edge.hero.name} 线上遇 ${opponents}`;
 	});
 
+	/*
+	 * 胜率与结构打架时说清楚。
+	 *
+	 * 胜率 = 50% + 号位偏差 + 对位偏差，**不含**团战点、清场、近战数、纯核数这些结构项。
+	 * 实测过一套阵容：四个近战、团战点 0、清场 0、三个纯核，胜率照样算出 76.5%。
+	 * 只把那个数字递给模型，它就会理直气壮地说这套阵容很强。
+	 */
+	const rateEdge = verdict.winRate.ours - 0.5;
+	const favored = rateEdge >= 0 ? '天辉' : '夜魇';
+	const structureRow = verdict.rows.find((row) => row.key === 'structure');
+	const gaps = [];
+	if (Math.abs(rateEdge) > 0.05 && structureRow) {
+		for (const row of verdict.rows) {
+			if (!STRUCTURE_KEYS.has(row.key)) continue;
+			// 只看「被胜率看好的那一边反而更差」的项，方向一致就不用提醒。
+			const [favoredValue, otherValue] = rateEdge >= 0 ? [row.ours, row.theirs] : [row.theirs, row.ours];
+			const gap = shortfall(row, favoredValue);
+			if (gap <= 0) continue;
+			gaps.push({ row, favoredValue, otherValue, gap });
+		}
+		gaps.sort((a, b) => b.gap - a.gap);
+	}
+	const structureWarning =
+		gaps.length > 0
+			? [
+					`注意：${favored}的胜率占优，但同一份数据里它的结构项明显不达标：`,
+					gaps
+						.slice(0, 6)
+						.map((item) => `${item.row.label} ${item.favoredValue} : ${item.otherValue}（参考 ${item.row.target}）`)
+						.join('、'),
+					`。结构分 ${structureRow.ours.toFixed(2)} : ${structureRow.theirs.toFixed(2)}（参考 ${structureRow.target}）。`,
+					'胜率只由号位偏差与对位偏差相加，不包含上面这些结构项，所以两者可以完全相反。',
+					'回答时要把这组矛盾一起讲出来，不要只念胜率。',
+			].join('')
+			: '';
+
 	return [
 		`天辉胜率 ${pct(verdict.winRate.ours)} ｜ 夜魇 ${pct(verdict.winRate.theirs)}`,
 		`胜率 = 50% + 号位偏差 ${(verdict.edge.position * 100).toFixed(1)}% + 对位偏差 ${(verdict.edge.counter * 100).toFixed(1)}%`,
 		'（这两项都是实测胜率；下面的结构分与时间曲线只做横向对比，没有算进胜率。）',
+		...(structureWarning ? ['', structureWarning] : []),
 		'',
 		`天辉：${ourRows.map((row) => row.hero.name).join('、')}`,
 		`夜魇：${theirRows.map((row) => row.hero.name).join('、')}`,
@@ -273,10 +327,31 @@ async function suggestPick({ ourSide, firstPicker, ourPicks = [], theirPicks = [
 		theirBans: theirBanIds,
 		theirPicks: theirPickIds,
 	});
+	const byId = new Map(data.heroes.map((hero) => [hero.id, hero]));
+	const nameOf = (id) => byId.get(id)?.name ?? `英雄 id=${id}`;
 	if (leftover.length > 0) {
-		const detail = leftover.map((row) => `${row.side}多出的${row.action}英雄 id=${row.heroId}`).join('、');
+		/*
+		 * 报错要能让模型自己改对：把「排到第几手、那一手之前两边各该有几个 ban / pick」写出来。
+		 * 只说「对不上」的话，模型多半会把同一份输入再原样试一遍。
+		 */
+		const ourOwner = firstPicker === ourSide ? 'first' : 'second';
+		const upTo = recorded.length + 1;
+		const countAt = (owner, action) =>
+			CM_STEPS.slice(0, upTo).filter((step) => step.owner === owner && step.action === action).length;
+		const ownerName = (owner) => (owner === ourOwner ? '我方' : '对方');
+		const expected = [
+			`${ownerName('first')}（先选方）${countAt('first', 'ban')} 禁 ${countAt('first', 'pick')} 选`,
+			`${ownerName('second')}（后选方）${countAt('second', 'ban')} 禁 ${countAt('second', 'pick')} 选`,
+		].join('、');
+		const detail = leftover
+			.map((row) => `${row.side}多出的${row.action}：${nameOf(row.heroId)}`)
+			.join('、');
 		throw new Error(
-			`给出的英雄与队长模式的顺序对不上：${detail}。第 ${recorded.length + 1} 手之前，那一方不可能有这么多手，检查一下是不是把某一边的 ban / pick 记混了。`,
+			[
+				`给出的英雄与队长模式的顺序排不下去：按顺序排到第 ${upTo} 手时，${detail}。`,
+				`排到这一手时，双方最多只能有 ${expected}（${firstPicker === 'radiant' ? '天辉' : '夜魇'}先选）。`,
+				'请核对 firstPicker 是不是给反了，以及各边的 ban / pick 数量与游戏里是否一致。',
+			].join(''),
 		);
 	}
 
@@ -310,12 +385,9 @@ async function suggestPick({ ourSide, firstPicker, ourPicks = [], theirPicks = [
 	});
 	if (!advice) throw new Error('这一手算不出建议，可能 BP 已经录满了（24 手）。');
 
-	const byId = new Map(data.heroes.map((hero) => [hero.id, hero]));
-	const nameOf = (id) => byId.get(id)?.name ?? `英雄 id=${id}`;
-
 	const candidateBlock = (rows) =>
 		rows.map((row, index) => {
-			const head = `${index + 1}. ${nameOf(row.heroId)} 打 ${positionLabel(row.position)} · 该号位胜率 ${pct(row.rate)}${row.hasSample ? '' : '（这个号位没有采样）'}`;
+			const head = `${index + 1}. ${nameOf(row.heroId)} 打 ${positionLabel(row.position)} · 该号位胜率 ${pct(row.rate)}${row.hasSample ? '' : '（这个号位没有采样，按 50% 处理）'}`;
 			const reasons = row.reasons.map((reason) => `   - ${reason}`);
 			return [head, ...reasons, `   - 风险：${row.risk}`].join('\n');
 		});

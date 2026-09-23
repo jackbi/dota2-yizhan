@@ -160,6 +160,22 @@ try {
 	const unmatched = Object.keys(HERO_ALIASES).filter((name) => !names.has(name));
 	if (unmatched.length) bad(`这些键在英雄表里找不到：${unmatched.join('、')}`);
 	else ok(`${data.heroes.length} 个英雄全部对上`);
+
+	/*
+	 * 胜率与结构打架时必须说出来。
+	 *
+	 * 这组阵容是实测出来的反例：四个近战、团战点 0、清场 0、三个纯核，光看结构是一套烂阵容，
+	 * 但胜率算出来 76.5%——因为胜率只由号位偏差与对位偏差相加。MCP 里如果只把这个数字递出去，
+	 * 模型会理直气壮地说这套阵容很强。
+	 */
+	const { TOOLS } = await import(new URL('../mcp/tools.mjs', import.meta.url));
+	const analyze = TOOLS.find((tool) => tool.name === 'analyze_lineup');
+	const report = await analyze.run({
+		radiant: ['斯温', '幻影长矛手', '龙骑士', '赏金猎人', '天涯墨客'],
+		dire: ['斧王', '影魔', '莉娜', '暗影萨满', '钢背兽'],
+	});
+	if (report.includes('结构项明显不达标')) ok('胜率与结构相反时会给出提醒');
+	else bad('这套阵容的胜率远高于结构表现，但输出里没有提醒，模型会只念胜率');
 } catch (error) {
 	console.log(`  · 跳过（拿不到线上英雄表：${error.message}）`);
 }
