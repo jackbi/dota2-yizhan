@@ -26,6 +26,18 @@
 		],
 	},
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["PartyRoom", "PartyLobby"] }],
+	/*
+	 * 重建的触发者。**这是主力，不是备胎。**
+	 *
+	 * GitHub Actions 的 `on.schedule` 是尽力而为的，官方文档写着高负载时会丢任务；实测
+	 * 66.8 小时里本该跑 134 次只跑了 18 次（13%），中位间隔三个多小时。内容页都是构建期
+	 * 预渲染的，新鲜度直接等于重建频率，靠它撑不住——于是改由这里的 Cron 准点调
+	 * GitHub 的 workflow_dispatch（见 src/worker/index.ts）。
+	 *
+	 * 分钟数与 `.github/workflows/rebuild.yml` 里那条兜底的 schedule 错开，避免同一分钟
+	 * 触发两次、白烧一轮上游额度。
+	 */
+	"triggers": { "crons": ["17,47 * * * *"] },
   /*
    * 静态资源就是构建产物。构建结束时适配器会把这里改写成 `../client`（相对 `dist/server/`），
    * 所以这里写的是 Astro 的 outDir，不是它最终读的那个目录。
@@ -36,6 +48,8 @@
 		"SITE_URL": "https://dota2.hiwenbin.com",
 		// STRATZ 固定出口中转（新加坡那台机器上的 nginx）。口令走 `wrangler secret put STRATZ_RELAY_TOKEN`。
 		"STRATZ_RELAY_URL": "https://proxy3000.hiwenbin.com/stratz/graphql",
+		// Cron 触发哪个仓库的重建。fork 之后改成自己的 `owner/repo`。
+		"GITHUB_REPO": "jackbi/dota2-yizhan",
 	},
   "observability": { "enabled": true },
 }

@@ -7,12 +7,24 @@
 #
 # 间隔取 30 分钟，理由写在 docs/deploy.md：Workers 产物每轮都要重传一遍，
 # 5 分钟那种频率更适合自托管（`pnpm rebuild` 切目录 + 重启进程）。
+#
+# 触发者**不是**下面那条 schedule，而是 Cloudflare 的 Cron Trigger——它准点调本工作流的
+# workflow_dispatch。原因见 schedule 上面的注释。
 name: 定时重建并部署
 
 on:
+  # 兜底，不是主力。
+  #
+  # 这里原本是 `17,47 * * * *`，指望它每 30 分钟跑一轮。实测 66.8 小时里本该 134 次、
+  # 实际只跑了 18 次（13%），间隔中位数三个多小时。GitHub 官方文档对 schedule 的说法是
+  # 「can be delayed during periods of high loads…some queued jobs may be dropped」；
+  # 而真正跑到的那几次分针紧贴 `:17` / `:47`，说明是被丢掉而不是被延后，改 cron 治不了。
+  #
+  # 主力改成了 Cloudflare 的 Cron（`wrangler.jsonc` 的 `triggers.crons` 与
+  # `src/worker/index.ts` 的 scheduled）。这条留着是为了「Worker 挂了 / token 过期」时
+  # 站点别彻底停止更新：6 小时一次，分钟数也跟 Cloudflare 那条错开，免得同一分钟叠两轮。
   schedule:
-    # 每 30 分钟。刻意避开 :00/:30——GitHub 的定时队列在整点最挤，实测常延迟十几分钟。
-    - cron: '17,47 * * * *'
+    - cron: '23 */6 * * *'
   # 手动跑一次：上线前试，或者看了日志想重跑。
   workflow_dispatch:
 
