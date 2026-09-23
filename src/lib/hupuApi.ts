@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { summarizeArticle } from './articleHtml';
+import { sanitizeArticleHtml, summarizeArticle } from './articleHtml';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
@@ -177,26 +177,12 @@ const MAIN_POST_RE = /<div class="thread-content-detail">/;
 /**
  * 清洗虎扑正文。
  *
- * 拿到的就是 HTML（不是 BBCode），标签只有 `p / img / br / a / div / span`，
- * 实测没有内联 style 与 class，所以只要去掉脚本、事件属性，并把相对地址补成绝对地址即可。
- * 相对地址按 **bbs.hupu.com** 补，不能复用官方新闻那套（那是按 dota2.com.cn 补的）。
+ * 正文是用户内容，清洗一律走 `articleHtml.ts` 的白名单（那边有整套用例），
+ * 这里只提供两件虎扑特有的事：相对地址按 **bbs.hupu.com** 补（不能沿用官方新闻那套
+ * dota2.com.cn 的域名），以及把 `data-imgid` 这类虎扑自己的私有属性交给白名单自动丢掉。
  */
 function sanitizeHupuHtml(html: string): string {
-	return html
-		.replace(/<script[\s\S]*?<\/script>/gi, '')
-		.replace(/<style[\s\S]*?<\/style>/gi, '')
-		.replace(/<!--[\s\S]*?-->/g, '')
-		.replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
-		.replace(/\s(?:contenteditable|tabindex|draggable|data-imgid)\s*=\s*"[^"]*"/gi, '')
-		.replace(/(\s(?:src|href)\s*=\s*")([^"]*)"/gi, (_whole, prefix: string, url: string) => `${prefix}${resolveHupuUrl(url)}"`)
-		.replace(/<img\b(?![^>]*\bloading=)/gi, '<img loading="lazy"');
-}
-
-function resolveHupuUrl(url: string): string {
-	if (!url || /^(?:data:|mailto:|javascript:|#)/i.test(url)) return url;
-	if (url.startsWith('//')) return `https:${url}`;
-	if (url.startsWith('/')) return `${ORIGIN}${url}`;
-	return url;
+	return sanitizeArticleHtml(html, { baseOrigin: ORIGIN });
 }
 
 function toReply(raw: unknown): HupuReply | null {
@@ -307,7 +293,8 @@ export function fetchHupuThreadDetail(pid: string): Promise<HupuThreadDetail | n
 
 async function loadDetail(pid: string): Promise<HupuThreadDetail | null> {
 	// 键里的版本号跟解析格式绑定：清洗规则一变就得换，否则旧结果会一直吃到过期。
-	const key = `hupu-thread-v2-${pid}`;
+	// v3：正文清洗从黑名单换成白名单（`articleHtml.ts`），v2 缓存里可能存着漏网的 `onerror`。
+	const key = `hupu-thread-v3-${pid}`;
 	const cached = await readCache<HupuThreadDetail>(key);
 	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return cached.value;
 	if (OFFLINE) return cached?.value ?? null;

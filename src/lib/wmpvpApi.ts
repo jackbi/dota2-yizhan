@@ -239,7 +239,11 @@ export function parseRss(xml: string): WmpvpNews[] {
 }
 
 function articleCacheFile(id: string): string {
-	return cachePath(CACHE_DIR, `news-${id.replace(/[^a-z0-9]+/gi, '')}.json`);
+	/*
+	 * 文件名里的版本号跟**清洗规则**绑定：这里存的是清洗完的正文，而它的 TTL 是「永久」
+	 * （正文发布后基本不改），清洗一变旧结果就再也不会被重写。v2 = 清洗从黑名单换成白名单。
+	 */
+	return cachePath(CACHE_DIR, `news-v2-${id.replace(/[^a-z0-9]+/gi, '')}.json`);
 }
 
 /** 正文：先看永久缓存（正文发布后基本不改），没有再联网。拿不到返回空串，页面只显示标题。 */
