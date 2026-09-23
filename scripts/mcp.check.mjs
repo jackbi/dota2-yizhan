@@ -13,7 +13,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = new URL('../', import.meta.url);
@@ -85,9 +85,14 @@ else bad(`根 package.json 是 ${rootPkg.version}，mcp/package.json 是 ${mcpPk
  * 顺带把「改了引擎忘了重新打包」这件事挡在发布之前——包里带的是旧口径、但代码看起来是新的，
  * 是这类工具最难查的一种坏法。
  */
-const before = readFileSync(new URL('mcp/dist/engine.mjs', ROOT), { throwIfNoEntry: false })?.length ?? 0;
+/*
+ * 用 existsSync 判在不在，别指望 readFileSync 的 `throwIfNoEntry`——那是 statSync 系列的选项，
+ * readFileSync 会直接忽略它然后抛 ENOENT。本地 dist/ 一直在，这个错只在全新克隆（CI）上才炸。
+ */
+const enginePath = new URL('mcp/dist/engine.mjs', ROOT);
+const before = existsSync(enginePath) ? readFileSync(enginePath).length : 0;
 execFileSync(process.execPath, ['scripts/build-mcp.mjs'], { cwd: root, stdio: 'pipe' });
-const after = readFileSync(new URL('mcp/dist/engine.mjs', ROOT)).length;
+const after = readFileSync(enginePath).length;
 
 console.log('引擎打包');
 ok(before === after ? `产物与源码一致（${(after / 1024).toFixed(1)}KB）` : `产物已重新生成（${(before / 1024).toFixed(1)}KB → ${(after / 1024).toFixed(1)}KB）`);
