@@ -1,0 +1,35 @@
+{
+  "name": "dota2-yizhan",
+  "version": "0.4.4",
+  "description": "DOTA2 驿站 MCP：BP 陪练、阵容分析、英雄实测胜率与对位，数据来自 dota2.hiwenbin.com 构建期抓取的公开数据",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "jackbi",
+  "homepage": "https://dota2.hiwenbin.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackbi/dota2-yizhan.git",
+    "directory": "mcp"
+  },
+  "bugs": "https://github.com/jackbi/dota2-yizhan/issues",
+  "keywords": ["dota2", "mcp", "model-context-protocol", "draft", "bp", "esports"],
+  "bin": {
+    "dota2-yizhan": "cli.mjs"
+  },
+  "files": [
+    "cli.mjs",
+    "server.mjs",
+    "tools.mjs",
+    "heroes.mjs",
+    "heroAliases.mjs",
+    "data.mjs",
+    "dist/"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node ../scripts/build-mcp.mjs",
+    "prepublishOnly": "node ../scripts/build-mcp.mjs"
+  }
+}

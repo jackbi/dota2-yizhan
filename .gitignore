@@ -49,3 +49,6 @@ promo/
 # 代码索引（codegraph）：本地生成的，换台机器重新索引即可。
 .codegraph/
 .playwright-mcp/
+
+# MCP 打包产物：由 pnpm mcp:build 生成，发版前重新生成即可，不进仓库。
+mcp/dist/

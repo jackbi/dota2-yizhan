@@ -3,6 +3,7 @@
   "type": "module",
   "version": "0.4.4",
   "license": "Apache-2.0",
+  "private": true,
   "engines": {
     "node": ">=22.12.0"
   },
@@ -13,7 +14,8 @@
     "rebuild": "sh scripts/rebuild.sh",
     "deploy": "DEPLOY_TARGET=cloudflare astro build && wrangler deploy",
     "fonts": "node scripts/fonts.mjs",
-    "check": "node --experimental-strip-types scripts/articleHtml.check.ts && node --experimental-strip-types scripts/inlineJson.check.ts && node --experimental-strip-types scripts/md5.check.ts && node --experimental-strip-types scripts/danmaku.check.ts && node --experimental-strip-types scripts/buildCache.check.ts && node --experimental-strip-types scripts/cachePrune.check.ts && node --experimental-strip-types scripts/liveStream.check.ts && node --experimental-strip-types scripts/stratzEndpoint.check.ts && node --experimental-strip-types scripts/fonts.check.ts && node --experimental-strip-types scripts/patchNotes.check.ts && node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/partyProtocol.check.ts && node --experimental-strip-types scripts/partyEmoji.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/partyVisibility.check.ts && node --experimental-strip-types scripts/partyDrag.check.ts && node --experimental-strip-types scripts/draftOrder.check.ts && node --experimental-strip-types scripts/draftLanes.check.ts && node --experimental-strip-types scripts/draftScore.check.ts && node --experimental-strip-types scripts/draftFoe.check.ts && node --experimental-strip-types scripts/draftVerdict.check.ts && node --experimental-strip-types scripts/draftPrompt.check.ts && node --experimental-strip-types scripts/draftPage.check.ts && node --experimental-strip-types scripts/stratzGuides.check.ts && node --experimental-strip-types scripts/hupuBoard.check.ts",
+    "mcp:build": "node scripts/build-mcp.mjs",
+    "check": "node scripts/mcp.check.mjs && node --experimental-strip-types scripts/articleHtml.check.ts && node --experimental-strip-types scripts/inlineJson.check.ts && node --experimental-strip-types scripts/md5.check.ts && node --experimental-strip-types scripts/danmaku.check.ts && node --experimental-strip-types scripts/buildCache.check.ts && node --experimental-strip-types scripts/cachePrune.check.ts && node --experimental-strip-types scripts/liveStream.check.ts && node --experimental-strip-types scripts/stratzEndpoint.check.ts && node --experimental-strip-types scripts/fonts.check.ts && node --experimental-strip-types scripts/patchNotes.check.ts && node --experimental-strip-types scripts/partyLogic.check.ts && node --experimental-strip-types scripts/partyProtocol.check.ts && node --experimental-strip-types scripts/partyEmoji.check.ts && node --experimental-strip-types scripts/steamId.check.ts && node --experimental-strip-types scripts/partyVisibility.check.ts && node --experimental-strip-types scripts/partyDrag.check.ts && node --experimental-strip-types scripts/draftOrder.check.ts && node --experimental-strip-types scripts/draftLanes.check.ts && node --experimental-strip-types scripts/draftScore.check.ts && node --experimental-strip-types scripts/draftFoe.check.ts && node --experimental-strip-types scripts/draftVerdict.check.ts && node --experimental-strip-types scripts/draftPrompt.check.ts && node --experimental-strip-types scripts/draftPage.check.ts && node --experimental-strip-types scripts/stratzGuides.check.ts && node --experimental-strip-types scripts/hupuBoard.check.ts",
     "astro": "astro"
   },
   "dependencies": {
@@ -31,6 +33,7 @@
     "@astrojs/cloudflare": "^14.3.1",
     "@astrojs/sitemap": "^3.7.4",
     "@types/node": "^22.20.2",
+    "esbuild": "^0.28.0",
     "wrangler": "^4.131.2"
   }
 }

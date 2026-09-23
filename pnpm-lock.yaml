@@ -36,6 +36,9 @@ importers:
       '@types/node':
         specifier: ^22.20.2
         version: 22.20.2
+      esbuild:
+        specifier: ^0.28.0
+        version: 0.28.2
       wrangler:
         specifier: ^4.131.2
         version: 4.131.2(@types/node@22.20.2)
