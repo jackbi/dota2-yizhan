@@ -66,6 +66,19 @@ pnpm check      # 纯 node 的自检：缓存写入、弹幕编解码、队伍�
 
 换 logo、重抓字体、改主题色见 [品牌资源与主题色板](./docs/branding.md)。
 
+## MCP（可选）
+
+`mcp/` 下是一个 MCP server，把站里的英雄胜率、对位和 BP 建议做成 AI 能调的工具——
+在 Claude、Cursor、Codex 里问「这局该怎么 ban」，它查的是同一份实测数据，不是模型凭记忆编。
+
+```sh
+claude mcp add dota2 -- npx -y dota2-yizhan
+```
+
+一共五个工具：`search_hero`（认「火猫」「AM」这类俗称）、`get_hero_stats`、`get_matchup`、
+`analyze_lineup`、`suggest_pick`。它不直连 STRATZ 或 OpenDota，只读站点已经发布的那几份
+公开 JSON，所以不需要任何 token。细节与取舍见 [docs/mcp.md](./docs/mcp.md)。
+
 ## 部署
 
 自托管（Node）：
@@ -119,6 +132,7 @@ README 只留「是什么 / 怎么跑 / 怎么部署」，实现细节与踩过�
 | 开黑房间：协议、身份来源、连不上时的表现与取舍 | [docs/party.md](./docs/party.md) |
 | 阵容分析：顺序表来源、候选怎么算、模型负责什么 | [docs/draft.md](./docs/draft.md) |
 | SEO：sitemap、canonical、结构化数据与搜索引擎提交 | [docs/seo.md](./docs/seo.md) |
+| MCP：工具清单、数据来源、引擎打包与发布 | [docs/mcp.md](./docs/mcp.md) |
 | logo / 字体 / 主题色板 | [docs/branding.md](./docs/branding.md) |
 | 与 dart_simple_live 的直播做法差异（为什么浏览器里做不到同样的效果） | [docs/live-source-deltas.md](./docs/live-source-deltas.md) |
 
