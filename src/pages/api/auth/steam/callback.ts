@@ -14,7 +14,7 @@ export const prerender = false;
  */
 export const GET: APIRoute = async ({ url, cookies, redirect }) => {
 	if (!sessionConfigured()) {
-		return new Response('未配置 SESSION_SECRET，无法登录。', {
+		return new Response('未配置 SESSION_SECRET，或长度不足 32 个字符，无法登录。', {
 			status: 500,
 			headers: { 'Content-Type': 'text/plain; charset=utf-8' },
 		});

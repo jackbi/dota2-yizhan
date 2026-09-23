@@ -45,8 +45,8 @@ const errorText = ERROR_TEXT[error] ?? '';
 					</a>
 				) : (
 					<p class="mt-7 rounded-md border border-line bg-surface-2 px-4 py-3 text-left text-sm text-muted">
-						站点尚未配置 <code class="text-gold">SESSION_SECRET</code>，无法签发登录状态。
-						请参考 README 的「环境变量」一节补齐后重启服务。
+						站点尚未配置好 <code class="text-gold">SESSION_SECRET</code>（需要至少 32 个字符），
+						无法签发登录状态。请参考 README 的「环境变量」一节补齐后重启服务。
 					</p>
 				)
 			}

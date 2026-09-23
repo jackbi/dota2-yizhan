@@ -11,8 +11,8 @@ import { SESSION_SECRET } from 'astro:env/server';
  * Workers 时没有 Node 内置模块，用了 `node:crypto` 就得整层重写；`crypto.subtle`
  * 在 Node 18+ 与 Workers 都是全局可用的。
  *
- * 密钥没配（`SESSION_SECRET` 为空）时一律拒绝签发与校验，**不回退到默认密钥**——
- * 否则任何人都能用公开的默认值伪造出别人的登录态。
+ * 密钥没配、或短于 `MIN_SECRET_LENGTH` 时一律拒绝签发与校验，**不回退到默认密钥**——
+ * 否则任何人都能用公开的默认值、或穷举出来的短密钥伪造出别人的登录态。
  */
 
 export interface SessionUser {
@@ -31,8 +31,18 @@ export const SESSION_COOKIE = 'd2s_session';
 /** 30 天。STRATZ 自己的 token 也是一年有效，这里取更短的窗口。 */
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 3600;
 
+/**
+ * 密钥的最小长度。**只判"非空"是不够的。**
+ *
+ * 签名本身不是秘密（会话 Cookie 里就带着一个），所以任何人都能拿自己那份 Cookie 离线穷举密钥：
+ * 十来个字符的密钥用现成字典跑一遍就能猜到，猜到之后就能伪造任意人的登录态。
+ * README 给的生成方式是 `openssl rand -hex 32`（64 个字符），这里按它的一半取门槛，
+ * 留出"自己随手敲一串"也能过的空间。
+ */
+const MIN_SECRET_LENGTH = 32;
+
 export function sessionConfigured(): boolean {
-	return typeof SESSION_SECRET === 'string' && SESSION_SECRET.trim().length > 0;
+	return typeof SESSION_SECRET === 'string' && SESSION_SECRET.trim().length >= MIN_SECRET_LENGTH;
 }
 
 // ---------------------------------------------------------------- 编解码
