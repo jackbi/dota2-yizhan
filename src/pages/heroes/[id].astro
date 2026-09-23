@@ -1,12 +1,13 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import { formatIso } from '../../lib/format';
-import { fetchHeroList } from '../../lib/heroApi';
+import { fetchHeroListCached } from '../../lib/heroList';
 import { fetchHeroMeta, stratzConfigured } from '../../lib/stratzApi';
 import { heroPatchIndex } from '../../lib/patchHeroes';
 
 export async function getStaticPaths() {
-	const list = await fetchHeroList();
+	// 走带缓存的这层：这一份直接决定 127 个英雄页生不生成，裸 fetch 一失败整轮构建就中止。
+	const list = await fetchHeroListCached();
 	const order = ['STR', 'AGI', 'INT', 'UNI'];
 	const sorted = [...list].sort((a, b) => order.indexOf(a.attr) - order.indexOf(b.attr) || a.name.localeCompare(b.name, 'zh'));
 	return sorted.map((h, i) => {

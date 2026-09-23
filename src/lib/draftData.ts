@@ -1,5 +1,6 @@
 import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, TEAMFIGHT_NAMES, resolveHeroNames } from '../data/heroTraits';
-import { ROLE_COUNT, fetchHeroList, fetchHeroProfile } from './heroApi';
+import { ROLE_COUNT, fetchHeroProfile } from './heroApi';
+import { fetchHeroListCached } from './heroList';
 import { reportSource } from './dataHealth';
 import { fetchProHeroStats, getHeroMap, openDotaFetchCount } from './opendota';
 import { fetchPatchUpdates } from './patchesApi';
@@ -120,7 +121,7 @@ export function loadDraftData(): Promise<DraftData> {
 		// 起点的联网计数：末尾拿它判断这一轮到底是新抓的还是吃缓存。
 		const before = stratzFetchCount() + openDotaFetchCount();
 		const [heroList, meta, proStats, patchList] = await Promise.all([
-			fetchHeroList().catch(() => []),
+			fetchHeroListCached().catch(() => []),
 			fetchHeroMeta(),
 			fetchProHeroStats(),
 			fetchPatchUpdates().catch(() => []),

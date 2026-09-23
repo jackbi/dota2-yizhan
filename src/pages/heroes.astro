@@ -1,6 +1,7 @@
 ---
 import Layout from '../layouts/Layout.astro';
-import { ATTRIBUTES, ATTRIBUTE_ICON, fetchHeroList } from '../lib/heroApi';
+import { ATTRIBUTES, ATTRIBUTE_ICON } from '../lib/heroApi';
+import { fetchHeroListCached } from '../lib/heroList';
 import { formatIso } from '../lib/format';
 import { HERO_META_WINDOW_DAYS, fetchHeroMeta, stratzConfigured } from '../lib/stratzApi';
 
@@ -20,7 +21,7 @@ const metaUnavailable = meta === null && stratzConfigured();
  *
  * 取不到（官方接口挂了）不算构建失败：网格位置换成一句"下一轮构建会重试"，不让页面看着像坏了。
  */
-const heroList = await fetchHeroList().catch(() => null);
+const heroList = await fetchHeroListCached().catch(() => null);
 const heroNames = new Map<number, { name: string; img: string }>();
 for (const hero of heroList ?? []) heroNames.set(hero.id, { name: hero.name, img: hero.img });
 
