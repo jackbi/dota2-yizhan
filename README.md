@@ -90,8 +90,10 @@ node --env-file=.env dist/server/entry.mjs   # 监听 PORT / HOST，默认 4321
 
 定时重建**用 `pnpm rebuild`，不要用 `pnpm build`**：它先构建到暂存目录，成功后再整体切换、重启进程；
 就地重建会把正在服务的资源挖空。Cloudflare Workers 也已经接好，一条命令 `pnpm deploy`。
-线上那一份现在由 GitHub Actions 每 30 分钟自动重建并部署一轮（`.github/workflows/rebuild.yml`，
-需要哪几条 secret 见下面的部署文档）。
+线上那一份每 30 分钟重建并部署一轮，重建本身在 `.github/workflows/rebuild.yml` 里。
+**触发者是 Cloudflare 的 Cron，不是 GitHub 自带的定时队列**——后者会丢任务（实测 66.8 小时里
+只跑到 13%），所以改由 Worker 的 Cron 准点调 `workflow_dispatch`，GitHub 那条只留作 6 小时一次的兜底。
+需要哪几条 secret 见下面的部署文档。
 
 两边的完整步骤（含「为什么不能就地重建」）、`.cache/` 的缓存与回收策略、定时任务怎么写，
 都在 [构建、缓存与部署](./docs/deploy.md)。

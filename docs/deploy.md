@@ -104,13 +104,15 @@ Cloudflare 侧有三个配置是**必须**的，都是实测踩出来的（原�
 pnpm exec wrangler login                  # 只需一次
 pnpm exec wrangler secret put SESSION_SECRET
 pnpm exec wrangler secret put STRATZ_TOKEN
+# 定时重建要用：一个只勾了 Actions: write 的细粒度 token，见「部署与重建频率」
+pnpm exec wrangler secret put GITHUB_DISPATCH_TOKEN
 pnpm deploy                               # = DEPLOY_TARGET=cloudflare astro build && wrangler deploy
 ```
 
 本地先看一眼效果（workerd 里跑真产物，不是 `astro dev`）：把开发用的密钥写进根目录 `.dev.vars`
 （已在 `.gitignore`），然后 `pnpm exec wrangler dev`。
 
-变量对号入座：**服务端运行时**要用的两个密钥走 `wrangler secret put`（加密存储，既不进仓库也不进
+变量对号入座：**服务端运行时**要用的那几个密钥走 `wrangler secret put`（加密存储，既不进仓库也不进
 `wrangler.jsonc`），其余非敏感的（`SITE_URL`）写进 `wrangler.jsonc` 的 `vars`；**构建期**那些
 （`LIVE_PROXY`、`LIQUIPEDIA_CONTACT` 之类）仍然只在本机的 `.env` 里读，Cloudflare 不参与构建。
 完整清单见 README 的「[环境变量](../README.md#环境变量)」。
@@ -329,9 +331,36 @@ Runtime 侧遇到中转自己回的 401（两边口令不一致）会直接说�
 表（直播状态 5 分钟、新闻/社区/赛程 30 分钟、Reddit 1 小时…）决定的是「这一轮要重新抓
 哪些」，它需要一个触发者。
 
-**Cloudflare Workers 这条路已经接好了**：`.github/workflows/rebuild.yml` 每 30 分钟
-（cron `17,47 * * * *`）跑一轮 `pnpm check` → `astro build` → `wrangler deploy`，
-也能用 `workflow_dispatch` 手动跑一次。换仓库或换账号时需要配这些 repo secret：
+**触发者是 Cloudflare 的 Cron Trigger，不是 GitHub 的定时队列。** 这个选择有实测依据：
+
+一轮重建做的事是 `pnpm check` → `astro build` → `wrangler deploy`（都在
+`.github/workflows/rebuild.yml` 里，也可以 `workflow_dispatch` 手动跑），但**谁来按点触发它**
+一开始选错了。GitHub Actions 的 `on.schedule` 是尽力而为的，官方文档的原话是
+「can be delayed during periods of high loads…some queued jobs may be dropped」。
+
+2026-09-20 到 09-23 实测：按 `17,47 * * * *` 本该跑 134 次，实际只跑了 **18 次（13%）**，
+间隔最短 118 分钟、中位 190 分钟、最长 423 分钟。而真正跑到的那几次分针紧贴 `:17` / `:47`
+（偏差 0–12 分钟），说明是**被丢掉**而不是被延后——改 cron 表达式治不了这个。
+内容页都是构建期预渲染的，新鲜度直接等于重建频率，13% 意味着页面上的「数据更新于」
+经常停在好几个小时前。
+
+所以主力换成了 `wrangler.jsonc` 里那条 Cron Trigger（同样 `17,47 * * * *`）：到点触发
+`src/worker/index.ts` 的 `scheduled()`，由它 POST 一次 GitHub 的 `workflow_dispatch`。
+Cloudflare 的 Cron 是准点的，Worker 本来就在同一个域名上跑着，不额外计费。
+
+GitHub 那条 `on.schedule` 保留着，但放宽到 6 小时一次（`23 */6 * * *`）当兜底——
+token 过期或 Worker 挂了的时候，站点至少还在动。分钟数与 Cloudflare 那条错开，免得同一分钟叠两轮。
+
+要配的东西分两处：
+
+**Worker 侧**（触发的发起方）：
+
+| 位置 | 名字 | 怎么来 |
+| --- | --- | --- |
+| `wrangler.jsonc` 的 `vars` | `GITHUB_REPO` | `owner/repo`，默认已填本仓库，fork 后改掉 |
+| `wrangler secret` | `GITHUB_DISPATCH_TOKEN` | [细粒度 token](https://github.com/settings/personal-access-tokens/new)：仓库只勾本仓库、权限只勾 `Actions: Read and write`。它只能触发工作流，读不到代码也推不了东西 |
+
+**仓库侧**（给那条兜底 schedule 和手动触发用）需要这些 repo secret：
 
 | secret | 用途 |
 | --- | --- |
