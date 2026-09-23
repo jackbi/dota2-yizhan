@@ -9,8 +9,9 @@ import { translateToChinese } from './translate';
 /**
  * Reddit 内容层：构建期抓取两个版块的热帖（r/DotA2 总版 + r/compDota2 赛事版）。
  *
- * 取数思路参考 Horizon（https://github.com/Thysrael/Horizon）：优先官方接口，
- * 不行再退到公开端点。区别是这边不接 AI —— 只做原文搬运，不抓评论、不润色、不翻译。
+ * 取数思路参考 Horizon（https://github.com/Thysrael/Horizon）：优先官方接口，不行再退到公开端点。
+ * 与它不同的是这边**不接 AI**：正文照搬上游、不抓评论、不润色；标题、摘要与正文会走
+ * 机器翻译（见 `translate.ts`，有道或 Azure，不是模型改写），翻不出来就退回英文。
  *
  * 本机实测：old.reddit.com 与 www.reddit.com 的 HTML、.json 一律 403（返回 Blocked），
  * 只有 .rss 能通，而且几分钟内连发几次就 429。所以：
@@ -334,7 +335,16 @@ function parseListing(raw: unknown, feed: RedditFeed): RedditPost[] {
 		const id = String(data.id ?? '');
 		const title = String(data.title ?? '').trim();
 		if (!id || !title) continue;
-		const raw = stripRssFooter(decodeEntities(String(data.selftext_html ?? ''))).trim();
+		/*
+		 * **不要在这里 `decodeEntities`。**
+		 *
+		 * `selftext_html` 是 Reddit 已经渲染并转义好的 HTML：用户写 `<img src=x onerror=…>`，
+		 * 上游存的是 `&lt;img …&gt;`。再反解一次就把用户的文字还原成真标签，等于替攻击者把
+		 * payload 拆封——线上就是因为这一句出过存储型 XSS（清洗侧当时也是黑名单，两层一起漏）。
+		 *
+		 * 翻译那条路要的是纯文本，它在 `bodyToText()` 里自己反解实体，与这里无关。
+		 */
+		const raw = stripRssFooter(String(data.selftext_html ?? '')).trim();
 		posts.push(
 			toPost(feed, {
 				id,
