@@ -357,6 +357,7 @@ key 的边界写清楚：存在浏览器 `localStorage`，请求由浏览器直�
 | `src/lib/stratzRuntime.ts` | 运行时 STRATZ 的公共底座：端点解析与重试 |
 | `src/pages/api/draft/foe.ts` | `GET /api/draft/foe?id=`：把队伍偏好交给页面 |
 | `src/pages/draft-teams.json.ts` | 构建期烘焙的队名 → 队伍 id 索引 |
+| `src/pages/draft-data.json.ts` | `GET /draft-data.json`：页面内联的那份数据，供程序取用（同一次构建、同一个单飞） |
 | `src/scripts/draftBoard.ts` | 客户端：渲染、交互、DeepSeek 调用 |
 | `scripts/draftOrder.check.ts` | 顺序表的自检 |
 | `scripts/draftScore.check.ts` | 打分层的自检（候选顺序必须说得通） |
