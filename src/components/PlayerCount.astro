@@ -2,6 +2,7 @@
 import SectionHeader from './SectionHeader.astro';
 import { ALL_TIME_PEAK, type PlayerSnapshot } from '../lib/steamPlayers';
 import { formatCount, formatIso } from '../lib/format';
+import { inlineJson } from '../lib/inlineJson';
 
 /**
  * 首页的「刀塔有多热」：三个大数字 + 一条能悬停看数值的折线。
@@ -52,7 +53,7 @@ const linePath = windowPoints
 	.map((point, index) => `${index === 0 ? 'M' : 'L'}${xOf(point.at).toFixed(1)},${yOf(point.players).toFixed(1)}`)
 	.join(' ');
 const areaPath = windowPoints.length > 1 ? `${linePath} L${W},${H} L0,${H} Z` : '';
-const seriesPayload = JSON.stringify(snapshot.points.map((point) => [point.at, point.players]));
+const seriesPayload = inlineJson(snapshot.points.map((point) => [point.at, point.players]));
 
 const dayAgo = snapshot.dayAgo;
 const change = dayAgo ? ((snapshot.players - dayAgo.players) / dayAgo.players) * 100 : null;

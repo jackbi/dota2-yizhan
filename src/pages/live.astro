@@ -4,6 +4,7 @@ import { OB_MEMBERS } from '../data/ob';
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { fetchPopularRooms } from '../lib/roomList';
 import { localizeAvatars } from '../lib/avatars';
+import { inlineJson } from '../lib/inlineJson';
 import { roomUrl } from '../data/site';
 import type { RoomRef } from '../data/types';
 
@@ -38,7 +39,8 @@ const avatars = await localizeAvatars(allRooms);
 for (const r of allRooms) r.avatar = avatars.get(r.key);
 
 const liveCount = obRooms.filter((r) => r.live === 'live').length;
-const payload = JSON.stringify({ ob: obRooms, popular: popularOnly, snapshotAt: snapshot.at });
+// 房间标题与主播昵称来自斗鱼/虎牙（主播自己可改），走 inlineJson 免得 `</script>` 提前闭合脚本元素。
+const payload = inlineJson({ ob: obRooms, popular: popularOnly, snapshotAt: snapshot.at });
 
 const FILTERS = [
 	{ id: 'all', label: '全部' },

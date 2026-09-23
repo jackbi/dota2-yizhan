@@ -1,6 +1,7 @@
 ---
 import '../styles/global.css';
 import AuthEntry from '../components/AuthEntry.astro';
+import { inlineJson } from '../lib/inlineJson';
 import { NAV } from '../data/site';
 
 interface Props {
@@ -85,6 +86,11 @@ const structuredData = [
 			]
 		: []),
 ];
+/*
+ * 内联 JSON-LD 走 `inlineJson`：里面的 title / description / 面包屑名字是第三方内容
+ * （帖子标题、英雄名…），`JSON.stringify` 不碰 `<`，一个 `</script>` 就能提前闭合脚本元素。
+ */
+const structuredJson = inlineJson(structuredData);
 ---
 
 <!doctype html>
@@ -123,7 +129,7 @@ const structuredData = [
 		<meta name="twitter:title" content={title} />
 		<meta name="twitter:description" content={description} />
 		<meta name="twitter:image" content={ogImage} />
-		<script type="application/ld+json" set:html={JSON.stringify(structuredData)} />
+		<script type="application/ld+json" set:html={structuredJson} />
 		{/*
 			字体是自托管的：`@font-face` 在 global.css 里（由 scripts/fonts.mjs 生成，
 			分片文件和 unicode-range 都取自 Google Fonts）。原先这里引 fonts.googleapis.com，

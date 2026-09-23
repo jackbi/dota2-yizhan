@@ -4,6 +4,7 @@ import { loadDraftData } from '../lib/draftData';
 import { formatMatchTime } from '../lib/format';
 import { ATTRIBUTE_ICON } from '../lib/heroApi';
 import { getTournaments } from '../lib/tournamentsApi';
+import { inlineJson } from '../lib/inlineJson';
 import type { EsportsMatch } from '../data/types';
 
 /**
@@ -14,7 +15,8 @@ import type { EsportsMatch } from '../data/types';
  */
 
 const data = await loadDraftData();
-const payload = JSON.stringify(data);
+// 走 inlineJson 而不是裸 JSON.stringify：英雄名与队名来自第三方，`</script>` 会提前闭合脚本元素。
+const payload = inlineJson(data);
 
 /**
  * 比赛选择器用的赛程快照。
