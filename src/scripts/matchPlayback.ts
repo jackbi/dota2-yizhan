@@ -1,4 +1,14 @@
-import { GRID_SIZE, LANE_PATHS, MAP_BUILDINGS, PLAYFIELD, RIVER_PATH, ROSHAN_PITS, SIDE_COLOR, toCanvas } from '../lib/dotaMap';
+import {
+	GRID_SIZE,
+	LANE_PATHS,
+	MAP_BUILDINGS,
+	PLAYFIELD,
+	RIVER_PATH,
+	ROSHAN_PITS,
+	SIDE_COLOR,
+	toCanvas,
+	wardKindColor,
+} from '../lib/dotaMap';
 import { formatElapsed } from '../lib/format';
 
 /**
@@ -61,6 +71,8 @@ interface PlaybackWard {
 	x: number;
 	y: number;
 	kind: string;
+	/** 插眼方阵营（0 天辉 / 1 夜魇），对不上槽位时为 null。 */
+	side: 0 | 1 | null;
 	end: number | null;
 }
 
@@ -169,35 +181,15 @@ function setup(meta: Meta, root: HTMLElement, canvas: HTMLCanvasElement): void {
 		if (!playback) return;
 
 		// 眼位：SPAWN 到 DESPAWN 之间才算「当时看得见」。没被反掉的眼一直画到结束。
-		// 形状分真假眼、颜色分阵营——「对面在这儿插了眼」是复盘时最常问的一句话，
-		// 只画成一个灰点等于没画。
+		// 画成一只眼睛：**填充色分真假眼**（绿 = 假眼、蓝 = 真眼），**描边色分插眼方**
+		// （天辉绿、夜魇红）。两个信息都留着——「这是真眼还是假眼」和「谁插的」是复盘时
+		// 最常问的两句，挤在一个点上也只能靠颜色和描边各表一边。
 		if (showWards) {
 			for (const ward of playback.wards) {
 				if (time < ward.t) continue;
 				if (ward.end !== null && time >= ward.end) continue;
 				const [x, y] = project(ward.x, ward.y);
-				const color = ward.side === null ? '#cbd5e1' : SIDE_COLOR[ward.side];
-				ctx.globalAlpha = 0.9;
-				if (ward.kind === 'SENTRY') {
-					// 真眼：菱形
-					const r = 0.62 * UNIT;
-					ctx.beginPath();
-					ctx.moveTo(x, y - r);
-					ctx.lineTo(x + r, y);
-					ctx.lineTo(x, y + r);
-					ctx.lineTo(x - r, y);
-					ctx.closePath();
-				} else {
-					// 假眼：圆
-					ctx.beginPath();
-					ctx.arc(x, y, 0.72 * UNIT, 0, Math.PI * 2);
-				}
-				ctx.fillStyle = color;
-				ctx.fill();
-				ctx.lineWidth = 0.22 * UNIT;
-				ctx.strokeStyle = 'rgba(21,8,6,0.85)';
-				ctx.stroke();
-				ctx.globalAlpha = 1;
+				drawEye(ctx, x, y, wardKindColor(ward.kind), ward.side === null ? 'rgba(21,8,6,0.85)' : SIDE_COLOR[ward.side]);
 			}
 		}
 
@@ -439,6 +431,34 @@ function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width:
 	ctx.lineTo(x, y + r);
 	ctx.quadraticCurveTo(x, y, x + r, y);
 	ctx.closePath();
+}
+
+/**
+ * 眼位标记：一只眼睛（柳叶形轮廓 + 瞳孔）。
+ *
+ * 两条二次曲线合成上下眼睑——`(w/2, h)` 这类尺寸都以「格」为单位，随 `UNIT` 缩放，
+ * 将来改地图缩放时不用逐个改魔数。
+ */
+function drawEye(ctx: CanvasRenderingContext2D, x: number, y: number, fill: string, stroke: string): void {
+	const width = 2.7 * UNIT;
+	const lid = 1.15 * UNIT;
+	ctx.globalAlpha = 0.92;
+	ctx.beginPath();
+	ctx.moveTo(x - width / 2, y);
+	ctx.quadraticCurveTo(x, y - lid * 2, x + width / 2, y);
+	ctx.quadraticCurveTo(x, y + lid * 2, x - width / 2, y);
+	ctx.closePath();
+	ctx.fillStyle = fill;
+	ctx.fill();
+	ctx.lineWidth = 0.34 * UNIT;
+	ctx.strokeStyle = stroke;
+	ctx.stroke();
+
+	ctx.beginPath();
+	ctx.arc(x, y, 0.55 * UNIT, 0, Math.PI * 2);
+	ctx.fillStyle = 'rgba(21,8,6,0.9)';
+	ctx.fill();
+	ctx.globalAlpha = 1;
 }
 
 /** 最后一个不晚于 `t` 的采样点下标；全都在 `t` 之后时返回 -1。 */

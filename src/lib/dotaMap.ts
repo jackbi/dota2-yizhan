@@ -184,3 +184,14 @@ export function toCanvas(x: number, y: number): [number, number] {
 
 /** 天辉 / 夜魇的标记色，与记分板一致。 */
 export const SIDE_COLOR: [string, string] = ['#4ade80', '#f87171'];
+
+/**
+ * 眼位描点的填充色：**按真假眼分**，不按阵营分。
+ *
+ * 「一眼看出这是个假眼还是真眼」比「这是谁插的」更常被问——真眼要在对方假眼旁边才生效、
+ * 假眼要躲着真眼插，这两种判断都只需要知道类型。插眼方改由描边色承载（见 `SIDE_COLOR`），
+ * 于是两个信息都不用丢。认不出的类型按假眼上色。
+ */
+export function wardKindColor(kind: string | null | undefined): string {
+	return kind === 'SENTRY' ? '#38bdf8' : '#4ade80';
+}
