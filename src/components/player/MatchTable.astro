@@ -1,0 +1,265 @@
+---
+import { impTone } from '../../lib/dotaLabels';
+import type { HeroRef, ItemRef } from '../../lib/gameRefs';
+import type { ReviewPlayer } from '../../lib/matchReview';
+import { barWidth, compact, maxAbs, maxValue, signedBarWidth, signedInt, teamTotals } from '../../lib/scoreboard';
+import Panel from './Panel.astro';
+
+/**
+ * 对抗明细：十个人的一局账单。
+ *
+ * 与 `MatchScoreboard.astro`（个人战绩页）**故意重复一份**，不是偷懒：那边是五张选手卡，
+ * 竖着排、手机上不用横滚，适合「看我这局打得怎么样」；这边是 11 列的横向对照表，
+ * 适合「谁在输出、谁在挨打、谁的钱花在哪」——两者的取舍不同，塞进一个组件只会两边都变形。
+ *
+ * 数字口径都在 `scoreboard.ts` 里，那边有自检（尤其是 GPM / XPM 为什么是「相加」）。
+ * 装备栏保留 6 主物品 + 3 背包 + 1 中立：空格子照画，因为「这里空着」本身就是信息。
+ */
+interface Props {
+	players: ReviewPlayer[];
+	heroes: Map<number, HeroRef>;
+	items: Map<number, ItemRef>;
+	/** 天辉是否获胜；null 表示上游还没给结果。 */
+	radiantWin: boolean | null;
+}
+
+const { players, heroes, items, radiantWin } = Astro.props;
+
+const teams = [
+	{ radiant: true, name: '天辉', accent: 'text-[#4ade80]', dot: 'bg-[#4ade80]' },
+	{ radiant: false, name: '夜魇', accent: 'text-[#f87171]', dot: 'bg-[#f87171]' },
+].map((team) => {
+	const rows = players.filter((player) => player.isRadiant === team.radiant);
+	return { ...team, rows, totals: teamTotals(rows), win: radiantWin === null ? null : radiantWin === team.radiant };
+});
+
+/** 条形图的定标：NW 按全场最高经济，IMP 按全场最大绝对值。 */
+const networthMax = maxValue(players.map((player) => player.networth));
+const impMax = maxAbs(players.map((player) => player.imp));
+
+/**
+ * 合计行的条形**只跟对面比**：两条合计条互相之间谁长谁短是有意义的，
+ * 而拿五个人的和去跟某个选手比没有任何意义（数值一定顶格）。
+ */
+const totalsNetworthMax = Math.max(teams[0]?.totals.networth ?? 0, teams[1]?.totals.networth ?? 0);
+const totalsImpMax = Math.max(1, Math.abs(teams[0]?.totals.imp ?? 0), Math.abs(teams[1]?.totals.imp ?? 0));
+
+/** 列数（英雄与玩家合成第一列），队伍分隔行用它铺满整行。 */
+const COLUMNS = 10;
+---
+
+<Panel title="对抗明细" hint={`共 ${players.length} 名选手 · 数据来自 STRATZ`}>
+	<p class="mb-2 text-xs text-faint sm:hidden">手机上可以横向滑动查看全部列</p>
+
+	<div class="overflow-x-auto">
+		{/* 数字列一律不折行：折行会把「12 / 2 / 8」摊成三行，表格高度翻倍且没法竖着比。 */}
+		<table class="w-full min-w-[980px] border-collapse whitespace-nowrap text-xs">
+			<thead>
+				<tr class="text-faint">
+					<th class="py-1 pr-2 text-left font-normal">英雄 / 玩家</th>
+					<th class="px-2 py-1 text-center font-normal">杀 / 死 / 助</th>
+					<th class="px-3 py-1 text-left font-normal">NW</th>
+					<th class="px-2 py-1 text-center font-normal">IMP</th>
+					<th class="px-2 py-1 text-center font-normal">LH / DN</th>
+					<th class="px-2 py-1 text-center font-normal">GPM / XPM</th>
+					<th class="px-2 py-1 text-right font-normal">伤</th>
+					<th class="px-2 py-1 text-right font-normal">塔</th>
+					<th class="px-2 py-1 text-right font-normal">奶</th>
+					<th class="py-1 pl-3 text-left font-normal">物品栏</th>
+				</tr>
+			</thead>
+
+			{teams.map((team) => (
+				<tbody class="border-t border-line">
+					<tr class="bg-surface-2/60">
+						<td colspan={COLUMNS} class="py-1 pl-1">
+							<span class="flex items-center gap-2">
+								<span class:list={['h-2 w-2 rounded-full', team.dot]} aria-hidden="true" />
+								<span class:list={['font-medium', team.accent]}>{team.name}</span>
+								{team.win !== null ? <span class="text-faint">{team.win ? '获胜' : '失败'}</span> : null}
+							</span>
+						</td>
+					</tr>
+
+					{team.rows.map((row) => (
+						<tr class="border-t border-line/40">
+							<td class="py-1 pr-2">
+								<span class="flex items-center gap-2">
+									{heroes.get(row.heroId)?.img ? (
+										<img
+											src={heroes.get(row.heroId)?.img}
+											alt=""
+											loading="lazy"
+											referrerpolicy="no-referrer"
+											class="h-7 w-[3.1rem] shrink-0 rounded-sm object-cover"
+										/>
+									) : (
+										<span class="h-7 w-[3.1rem] shrink-0 rounded-sm bg-surface-3" />
+									)}
+									{/* 英雄名与玩家名上下叠着放：合成一列才腾得出给物品栏的宽度。 */}
+									<span class="flex min-w-0 flex-col">
+										<span class="truncate text-cream">{heroes.get(row.heroId)?.name ?? `英雄 #${row.heroId}`}</span>
+										<span class="max-w-[9rem] truncate text-[11px] text-faint" title={row.name}>{row.name}</span>
+									</span>
+								</span>
+							</td>
+
+							<td class="px-2 text-center tabular-nums text-cream">
+								{row.kills}
+								<span class="text-faint"> / </span>
+								{row.deaths}
+								<span class="text-faint"> / </span>
+								{row.assists}
+							</td>
+
+							{/* NW 条：占全场最高经济的比例，一眼看出谁肥谁穷。 */}
+							<td class="px-3 py-1">
+								<span class="flex items-center gap-2">
+									<span class="w-14 text-right tabular-nums text-cream">{compact(row.networth)}</span>
+									<span class="h-2 w-12 overflow-hidden rounded-full bg-surface-3">
+										<span class="block h-full rounded-full bg-gold/80" style={`width: ${barWidth(row.networth, networthMax)}%`} />
+									</span>
+								</span>
+							</td>
+
+							{/* IMP 条：宽度按绝对值，正负靠颜色——负值直接当宽度会画出一个反向的条。 */}
+							<td class="px-2 py-1">
+								<span class="flex items-center gap-2">
+									<span
+										class:list={[
+											'w-8 text-right tabular-nums',
+											impTone(row.imp) === 'good' ? 'text-gold' : impTone(row.imp) === 'bad' ? 'text-muted' : 'text-faint',
+										]}
+									>
+										{row.imp === null ? '—' : signedInt(row.imp)}
+									</span>
+									<span class="h-2 w-8 overflow-hidden rounded-full bg-surface-3">
+										<span
+											class:list={[
+												'block h-full rounded-full',
+												impTone(row.imp) === 'good' ? 'bg-gold/80' : impTone(row.imp) === 'bad' ? 'bg-[#8a6ac2]' : 'bg-line',
+											]}
+											style={`width: ${signedBarWidth(row.imp ?? 0, impMax)}%`}
+										/>
+									</span>
+								</span>
+							</td>
+
+							<td class="px-2 text-center tabular-nums text-muted">
+								{row.lastHits}
+								<span class="text-faint"> / </span>
+								{row.denies}
+							</td>
+
+							<td class="px-2 text-center tabular-nums text-muted">
+								{row.gpm}
+								<span class="text-faint"> / </span>
+								{row.xpm}
+							</td>
+
+							<td class="px-2 text-right tabular-nums text-muted">{compact(row.heroDamage)}</td>
+							<td class="px-2 text-right tabular-nums text-muted">{compact(row.towerDamage)}</td>
+							<td class="px-2 text-right tabular-nums text-muted">{compact(row.heroHealing)}</td>
+
+							<td class="py-1 pl-3">
+								<span class="flex items-center gap-0.5">
+									{row.items.map((itemId) =>
+										itemId && items.get(itemId)?.img ? (
+											<img
+												src={items.get(itemId)?.img}
+												alt={items.get(itemId)?.name ?? ''}
+												title={items.get(itemId)?.name ?? ''}
+												loading="lazy"
+												referrerpolicy="no-referrer"
+												class="h-6 w-7 shrink-0 rounded-sm border border-line object-cover"
+											/>
+										) : (
+											<span class="h-6 w-7 shrink-0 rounded-sm border border-dashed border-line/60" title="空格子" />
+										),
+									)}
+									<span class="mx-1 h-5 w-px bg-line/60" aria-hidden="true" />
+									{row.backpack.map((itemId) =>
+										itemId && items.get(itemId)?.img ? (
+											<img
+												src={items.get(itemId)?.img}
+												alt={items.get(itemId)?.name ?? ''}
+												title={`背包：${items.get(itemId)?.name ?? ''}`}
+												loading="lazy"
+												referrerpolicy="no-referrer"
+												class="h-5 w-7 shrink-0 rounded-sm border border-line object-cover opacity-80"
+											/>
+										) : (
+											<span class="h-5 w-7 shrink-0 rounded-sm border border-dashed border-line/40" title="背包空格" />
+										),
+									)}
+									{row.neutral && items.get(row.neutral)?.img ? (
+										<img
+											src={items.get(row.neutral)?.img}
+											alt={items.get(row.neutral)?.name ?? ''}
+											title={`中立物品：${items.get(row.neutral)?.name ?? ''}`}
+											loading="lazy"
+											referrerpolicy="no-referrer"
+											class="h-5 w-5 shrink-0 rounded-full border border-gold/50 object-cover"
+										/>
+									) : (
+										<span class="h-5 w-5 shrink-0 rounded-full border border-dashed border-line/40" title="没有中立物品" />
+									)}
+								</span>
+							</td>
+						</tr>
+					))}
+
+					<tr class="border-t border-line bg-surface-2/40 text-cream">
+						<td class="py-1 pl-1 font-medium">{team.name}合计</td>
+						<td class="px-2 text-center tabular-nums">
+							{team.totals.kills}
+							<span class="text-faint"> / </span>
+							{team.totals.deaths}
+							<span class="text-faint"> / </span>
+							{team.totals.assists}
+						</td>
+						<td class="px-3">
+							<span class="flex items-center gap-2">
+								<span class="w-14 text-right tabular-nums">{compact(team.totals.networth)}</span>
+								<span class="h-2 w-12 overflow-hidden rounded-full bg-surface-3">
+									<span class="block h-full rounded-full bg-gold/80" style={`width: ${barWidth(team.totals.networth, totalsNetworthMax)}%`} />
+								</span>
+							</span>
+						</td>
+						<td class="px-2">
+							<span class="flex items-center gap-2">
+								<span class="w-8 text-right tabular-nums">{signedInt(team.totals.imp)}</span>
+								<span class="h-2 w-8 overflow-hidden rounded-full bg-surface-3">
+									<span
+										class="block h-full rounded-full bg-line"
+										style={`width: ${signedBarWidth(team.totals.imp, totalsImpMax)}%`}
+									/>
+								</span>
+							</span>
+						</td>
+						<td class="px-2 text-center tabular-nums">
+							{team.totals.lastHits}
+							<span class="text-faint"> / </span>
+							{team.totals.denies}
+						</td>
+						{/* GPM / XPM 相加 = 全队每分钟的钱与经验（见 scoreboard.ts 的口径说明）。 */}
+						<td class="px-2 text-center tabular-nums">
+							{team.totals.gpm}
+							<span class="text-faint"> / </span>
+							{team.totals.xpm}
+						</td>
+						<td class="px-2 text-right tabular-nums">{compact(team.totals.heroDamage)}</td>
+						<td class="px-2 text-right tabular-nums">{compact(team.totals.towerDamage)}</td>
+						<td class="px-2 text-right tabular-nums">{compact(team.totals.heroHealing)}</td>
+						<td class="pl-3 text-faint">合计</td>
+					</tr>
+				</tbody>
+			))}
+		</table>
+	</div>
+
+	<p class="mt-2 text-[11px] leading-relaxed text-faint">
+		伤 / 塔 / 奶 = 对英雄伤害 / 对建筑伤害 / 治疗量。合计行的 GPM 与 XPM 是五个人相加，
+		也就是「全队每分钟的金币与经验」；单看某一列的高低不能替代复盘。
+	</p>
+</Panel>

@@ -49,6 +49,23 @@ export interface ReviewPlayer {
 	assists: number;
 	networth: number;
 	level: number;
+	gpm: number;
+	xpm: number;
+	lastHits: number;
+	denies: number;
+	/** 对英雄伤害 / 对建筑伤害 / 治疗量，对抗明细表的三列。 */
+	heroDamage: number;
+	towerDamage: number;
+	heroHealing: number;
+	/** 个人表现分（可正可负）；上游缺值时是 null。 */
+	imp: number | null;
+	/**
+	 * 保留槽位的装备格：6 个主物品 + 3 个背包 + 1 个中立物品。
+	 * 留 null 而不是过滤掉——「这个格子是空的」本身就是信息（卖掉的中立物品、没打满的背包）。
+	 */
+	items: (number | null)[];
+	backpack: (number | null)[];
+	neutral: number | null;
 }
 
 /** 一分钟一行：曲线上的一个点。索引即分钟，0 是开局。 */
@@ -157,6 +174,24 @@ interface RawReviewPlayer {
 	assists?: number | null;
 	networth?: number | null;
 	level?: number | null;
+	goldPerMinute?: number | null;
+	experiencePerMinute?: number | null;
+	numLastHits?: number | null;
+	numDenies?: number | null;
+	heroDamage?: number | null;
+	towerDamage?: number | null;
+	heroHealing?: number | null;
+	imp?: number | null;
+	item0Id?: number | null;
+	item1Id?: number | null;
+	item2Id?: number | null;
+	item3Id?: number | null;
+	item4Id?: number | null;
+	item5Id?: number | null;
+	backpack0Id?: number | null;
+	backpack1Id?: number | null;
+	backpack2Id?: number | null;
+	neutral0Id?: number | null;
 	steamAccount?: { name?: string | null } | null;
 	/** 只有地图回放那份查询会带上它。 */
 	playbackData?: RawPositionEvents | null;
@@ -204,6 +239,24 @@ const REVIEW_DOCUMENT = `query MatchReview($id: Long!) {
       assists
       networth
       level
+      goldPerMinute
+      experiencePerMinute
+      numLastHits
+      numDenies
+      heroDamage
+      towerDamage
+      heroHealing
+      imp
+      item0Id
+      item1Id
+      item2Id
+      item3Id
+      item4Id
+      item5Id
+      backpack0Id
+      backpack1Id
+      backpack2Id
+      neutral0Id
       steamAccount { name }
     }
   }
@@ -251,6 +304,11 @@ function countMaskBits(mask: number | null | undefined): number {
 	return count;
 }
 
+/** 装备 id 只有正整数是有效格子；0、负数、null 都是「这个格子是空的」。 */
+function positiveOrNull(value: number | null | undefined): number | null {
+	return typeof value === 'number' && value > 0 ? value : null;
+}
+
 function toReview(raw: RawReviewMatch): MatchReview | null {
 	if (!raw.id) return null;
 
@@ -294,6 +352,18 @@ function toReview(raw: RawReviewMatch): MatchReview | null {
 			assists: player.assists ?? 0,
 			networth: player.networth ?? 0,
 			level: player.level ?? 0,
+			gpm: player.goldPerMinute ?? 0,
+			xpm: player.experiencePerMinute ?? 0,
+			lastHits: player.numLastHits ?? 0,
+			denies: player.numDenies ?? 0,
+			heroDamage: player.heroDamage ?? 0,
+			towerDamage: player.towerDamage ?? 0,
+			heroHealing: player.heroHealing ?? 0,
+			imp: typeof player.imp === 'number' ? player.imp : null,
+			// 空物品格上游直接不给字段；0 与负数也按空处理（STRATZ 用它们表示"没有"）。
+			items: [player.item0Id, player.item1Id, player.item2Id, player.item3Id, player.item4Id, player.item5Id].map(positiveOrNull),
+			backpack: [player.backpack0Id, player.backpack1Id, player.backpack2Id].map(positiveOrNull),
+			neutral: positiveOrNull(player.neutral0Id),
 		}))
 		.sort((a, b) => Number(b.isRadiant) - Number(a.isRadiant) || b.networth - a.networth);
 
@@ -414,10 +484,11 @@ interface RawPositionEvents {
  * 与「STRATZ 挂了」在页面上要分开说。
  */
 export async function loadMatchReview(matchId: number): Promise<MatchReview | null> {
-	// 键里的 v2：这次给解析后的对象补了 `wards`（以及选手的 `playerSlot`）。仓库里记过「加头像
-	// 没升版本」那次的教训（见 docs/data-sources.md）——内存缓存里那些旧形状的条目会缺字段，
-	// 页面只会安静地少一块，不报错。改形状就换键，别指望缓存自己长出新字段。
-	return cached(`review:v2:match:${matchId}`, REVIEW_TTL_MS, async () => {
+	// 键里带版本号：给解析后的对象加字段（v2 是 `wards` 与 `playerSlot`，v3 是对抗明细的
+	// 伤害/背包/中立物品）时必须换键。仓库里记过「加头像没升版本」那次的教训
+	// （见 docs/data-sources.md）——内存缓存里那些旧形状的条目会缺字段，页面只会安静地少一块，
+	// 不报错。别指望缓存自己长出新字段。
+	return cached(`review:v3:match:${matchId}`, REVIEW_TTL_MS, async () => {
 		const data = await gql<{ match: RawReviewMatch | null }>(REVIEW_DOCUMENT, { id: matchId });
 		return data.match ? toReview(data.match) : null;
 	});

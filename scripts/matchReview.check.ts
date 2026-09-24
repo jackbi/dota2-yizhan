@@ -13,6 +13,7 @@ import {
 import { laneOutcomeLabel } from '../src/lib/dotaLabels.ts';
 import { formatElapsed } from '../src/lib/format.ts';
 import { buildLeadChart, buildRateChart, formatLead, minuteTicks, niceMaxAbs, plotX, plotY } from '../src/lib/replayChart.ts';
+import { barWidth, compact, maxAbs, maxValue, signedBarWidth, signedInt, teamTotals, type ScoreRow } from '../src/lib/scoreboard.ts';
 import { ownerOfSlot, summarizeWards, type WardEventRaw, type WardOwner } from '../src/lib/wardStats.ts';
 
 /**
@@ -27,7 +28,8 @@ import { ownerOfSlot, summarizeWards, type WardEventRaw, type WardOwner } from '
  *    否则是一张空白图或者一条冲出画布的线；
  * 4. 标签兜底——上游给个没见过的枚举值时不能显示 undefined；
  * 5. 眼位归属——`fromPlayer` 是 Valve 槽位（夜魇从 128 起）而不是数组下标，按错就会把
- *    天辉的眼记到夜魇头上；「到期」与「被反」也必须分开，否则反眼数会虚高。
+ *    天辉的眼记到夜魇头上；「到期」与「被反」也必须分开，否则反眼数会虚高；
+ * 6. 对抗明细——合计的口径（GPM / XPM 是相加不是平均）与条形宽度（负数不能当宽度）。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/matchReview.check.ts`）。
  */
@@ -54,10 +56,13 @@ for (const tower of towers) {
 	const fort = MAP_BUILDINGS.find((building) => building.side === tower.side && building.kind === 'fort');
 	assert.ok(fort, '每方都要有一条基地记录');
 	if (tower.lane === null || tower.tier === null) continue;
+	// 另存一份：下面的 filter 回调里 TS 不保留外层的收窄结果（回调可能晚跑）。
+	const lane = tower.lane;
+	const tier = tower.tier;
 	const distance = Math.hypot(tower.x - fort.x, tower.y - fort.y);
 	// 同侧同路的塔按到基地的距离应当与层数反着走：一塔最远、三塔最近。
 	const siblings = towers.filter(
-		(other) => other.side === tower.side && other.lane === tower.lane && other.tier !== null && other.tier < tower.tier,
+		(other) => other.side === tower.side && other.lane === lane && other.tier !== null && other.tier < tier,
 	);
 	for (const farther of siblings) {
 		const otherDistance = Math.hypot(farther.x - fort.x, farther.y - fort.y);
@@ -226,5 +231,56 @@ assert.equal(rows.find((row) => row.name === 'A')?.taken, 1, '反眼也归属到
 assert.equal(rows.find((row) => row.name === 'B')?.lost, 1, '被反要记在被排者的账上');
 assert.equal(rows.find((row) => row.name === 'C')?.taken, 1, '夜魇的反眼同样归属到人');
 assert.equal(summarizeWards([], owners), null, '没有眼位事件时返回 null，页面据此不显示这一块');
+
+// ---------------------------------------------------------------- 对抗明细
+
+const scoreRow = (over: Partial<ScoreRow>): ScoreRow => ({
+	kills: 0,
+	deaths: 0,
+	assists: 0,
+	networth: 0,
+	gpm: 0,
+	xpm: 0,
+	lastHits: 0,
+	denies: 0,
+	heroDamage: 0,
+	towerDamage: 0,
+	heroHealing: 0,
+	imp: 0,
+	...over,
+});
+
+const radiantRows = [
+	scoreRow({ kills: 11, deaths: 1, assists: 9, networth: 39_400, gpm: 887, xpm: 894, lastHits: 674, denies: 22, heroDamage: 37_600, towerDamage: 18_100, imp: -10 }),
+	scoreRow({ kills: 9, deaths: 3, assists: 14, networth: 23_600, gpm: 612, xpm: 997, lastHits: 399, denies: 2, heroDamage: 30_000, towerDamage: 463, heroHealing: 320, imp: -17 }),
+	// IMP 缺值（未解析完整的行）：合计按 0 算，不能让整行变成 NaN。
+	scoreRow({ kills: 2, networth: 9_600, gpm: 267, heroDamage: 5_300, imp: null }),
+];
+
+const totals = teamTotals(radiantRows);
+assert.equal(totals.kills, 22, '击杀相加');
+assert.equal(totals.gpm, 1766, 'GPM 相加 = 全队每分钟的金币；算平均会得到「全队 588」这种比单核还低的假数字');
+assert.equal(totals.xpm, 1891, 'XPM 同理');
+assert.equal(totals.imp, -27, 'IMP 是加减分，缺值按 0 计');
+assert.equal(totals.heroDamage, 72_900, '伤害相加');
+assert.equal(teamTotals([]).networth, 0, '空队伍给 0，不要 NaN');
+assert.equal(teamTotals([]).imp, 0, '空队伍的 IMP 同样是 0');
+
+assert.equal(barWidth(50, 100), 50, '条形按比例');
+assert.equal(barWidth(120, 100), 100, '超出定标要裁到 100%，不能画到框外');
+assert.equal(barWidth(-30, 100), 0, '负值不能画成负宽度');
+assert.equal(barWidth(10, 0), 0, '定标为 0 时返回 0，避免除零');
+assert.equal(signedBarWidth(-80, 100), 80, '带符号量按绝对值取宽度');
+assert.equal(maxAbs([3, -17, null, 9]), 17, 'IMP 定标取最大绝对值，null 跳过');
+assert.equal(maxAbs([]), 0, '空集合为 0');
+assert.equal(maxValue([1200, 39_400, 0]), 39_400, 'NW 定标取最大值');
+
+assert.equal(compact(940), '940', '千以内写原值');
+assert.equal(compact(39_400), '39.4千', '成千的数字用「千」，与社区口径一致');
+assert.equal(compact(112_700), '112.7千', '十万级也保留一位小数，列宽稳定');
+assert.equal(compact(-1500), '-1.5千', '负值同样处理');
+assert.equal(signedInt(11), '+11', '正向 IMP 要带加号');
+assert.equal(signedInt(-10), '-10', '负向保留负号');
+assert.equal(signedInt(0), '0', '零不加符号');
 
 console.log('matchReview 全部断言通过');

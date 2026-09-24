@@ -1,10 +1,11 @@
 ---
 import MatchPlayback from '../../components/player/MatchPlayback.astro';
 import MatchReviewPanel from '../../components/player/MatchReview.astro';
+import MatchTable from '../../components/player/MatchTable.astro';
 import Layout from '../../layouts/Layout.astro';
 import { formatClock, formatDayWithWeekday, formatElapsed } from '../../lib/format';
-import { heroRefMap } from '../../lib/gameRefs';
-import type { HeroRef } from '../../lib/gameRefs';
+import { heroRefMap, itemRefMap } from '../../lib/gameRefs';
+import type { HeroRef, ItemRef } from '../../lib/gameRefs';
 import { StratzError, loadMatchReview, reviewConfigured, type MatchReview } from '../../lib/matchReview';
 
 /**
@@ -50,9 +51,10 @@ async function loadReview(id: number): Promise<ReviewLoad> {
  * 英雄名表与复盘数据并行取：前者是 24 小时缓存的一次英雄列表，后者是一次 STRATZ 查询，
  * 串起来等于白等一个来回。英雄表拿不到不该拖垮整页——退化成「英雄 #id」。
  */
-const [loaded, heroMap] = await Promise.all([
+const [loaded, heroMap, itemMap] = await Promise.all([
 	loadReview(matchId),
 	heroRefMap().catch(() => new Map<number, HeroRef>()),
+	itemRefMap().catch(() => new Map<number, ItemRef>()),
 ]);
 
 const review = loaded.ok ? loaded.review : null;
@@ -83,7 +85,8 @@ const title = `${radiantName} vs ${direName} · 对局复盘 · DOTA2 驿站`;
 		<meta name="robots" content="noindex" />
 	</Fragment>
 
-	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+	{/* 比站内其它页宽一档：这张明细表有 10 列，窄了就得横向滚动。 */}
+	<section class="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
 		<a href="/matches" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -138,6 +141,8 @@ const title = `${radiantName} vs ${direName} · 对局复盘 · DOTA2 驿站`;
 					</dl>
 
 					<div class="mt-6 space-y-6">
+						{/* 明细表放最前：读者最先想知道的就是「谁打得怎么样」，再往下才是「为什么」。 */}
+						<MatchTable players={review.players} heroes={heroMap} items={itemMap} radiantWin={review.radiantWin} />
 						<MatchReviewPanel review={review} heroes={heroMap} />
 						<MatchPlayback
 							matchId={review.matchId}
