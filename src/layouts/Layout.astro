@@ -2,7 +2,7 @@
 import '../styles/global.css';
 import AuthEntry from '../components/AuthEntry.astro';
 import { inlineJson } from '../lib/inlineJson';
-import { NAV } from '../data/site';
+import { ANALYTICS, NAV } from '../data/site';
 
 interface Props {
 	title?: string;
@@ -28,6 +28,25 @@ const { title = 'DOTA2 驿站', description = 'OB 大家庭 · 分屏直播 · �
  */
 const path = Astro.url.pathname;
 const isActive = (href: string): boolean => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
+
+/*
+ * 访问统计（Cloudflare Web Analytics）。
+ *
+ * 三个判断，每个都在拦一类会污染数据或泄露信息的情况：
+ *
+ * - **配了 token**：没配就一行脚本都不输出。默认值是空串，所以这个功能是「打开才有效」，
+ *   不会因为别人 fork 了这个仓库就替他打点；
+ * - **域名**：判断放在**浏览器里**而不是构建期。预渲染页面的 HTML 是构建期写死的，
+ *   构建期怎么比都是「对」——`astro preview` 把产物喂给 localhost 时照样会打点。
+ *   所以这里只把一个域名常量交给内联脚本，由它在注入 beacon 之前比一次
+ *   `location.hostname`，本地预览、fork 出去自建域名都不会进这份统计；
+ * - **不在 `/party` 上**：房间码在 URL 的 `#` 片段里（见 src/scripts/partyRoom.ts 的
+ *   codeFromHash），邀请链接本身就是「凭码进房」的凭证，不该出现在任何第三方的报表里。
+ *   开黑页的回访数据用别的方式看（`/` 与 `/live` 的对比已经够判断活跃度）。
+ */
+const analyticsToken = ANALYTICS.cfBeaconToken.trim();
+const analyticsHost = Astro.site?.host ?? '';
+const analyticsEnabled = analyticsToken.length > 0 && analyticsHost.length > 0 && !path.startsWith('/party');
 
 /*
  * SEO 这一层要的三样东西都在这里拼，理由分别是：
@@ -130,6 +149,16 @@ const structuredJson = inlineJson(structuredData);
 		<meta name="twitter:description" content={description} />
 		<meta name="twitter:image" content={ogImage} />
 		<script type="application/ld+json" set:html={structuredJson} />
+		{
+			analyticsEnabled ? (
+				<script
+					is:inline
+					set:html={`if (location.hostname === ${inlineJson(analyticsHost)}) { const s = document.createElement('script'); s.defer = true; s.src = 'https://static.cloudflareinsights.com/beacon.min.js'; s.dataset.cfBeacon = ${inlineJson(
+						JSON.stringify({ token: analyticsToken }),
+					)}; document.head.append(s); }`}
+				/>
+			) : null
+		}
 		{/*
 			字体是自托管的：`@font-face` 在 global.css 里（由 scripts/fonts.mjs 生成，
 			分片文件和 unicode-range 都取自 Google Fonts）。原先这里引 fonts.googleapis.com，

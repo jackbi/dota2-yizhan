@@ -21,6 +21,24 @@ export const PLATFORM_META: Record<Platform, { label: string; color: string; sho
 };
 
 /**
+ * 访问统计。
+ *
+ * 这份数据要回答的**只有一个问题**：值不值得做 PWA（装到桌面、离线壳）。判据写在
+ * `docs/analytics.md` 里，结论没出来之前不写任何 Service Worker——客户端缓存与
+ * 「每 30 分钟重建、内容必须新鲜」的方向是相反的。
+ *
+ * 选 Cloudflare Web Analytics 的理由：无 Cookie、不采指纹（不需要隐私弹窗）、与站点同属
+ * 一个厂商（国内可达性与站点本身一致）、只要一个 `defer` 脚本不影响渲染。代价是它不直接给
+ * 「回访占比」，用「访问次数 ÷ 独立访客」当代理指标（见文档）。
+ *
+ * `cfBeaconToken` 是公开值（它本来就要出现在 HTML 里），在 Cloudflare 面板
+ * **Web Analytics → 添加站点** 里拿。**留空 = 完全不打点**，页面不会多出任何第三方请求。
+ */
+export const ANALYTICS = {
+	cfBeaconToken: '',
+} as const;
+
+/**
  * 直播间地址。OB 名单与房间号见 `src/data/ob.ts`——那里只收录核实过的房间，
  * 开播状态由 `src/lib/liveApi.ts` 在构建期抓取。
  */

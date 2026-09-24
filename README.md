@@ -139,6 +139,7 @@ README 只留「是什么 / 怎么跑 / 怎么部署」，实现细节与踩过�
 | 开黑房间：协议、身份来源、连不上时的表现与取舍 | [docs/party.md](./docs/party.md) |
 | 阵容分析：顺序表来源、候选怎么算、模型负责什么 | [docs/draft.md](./docs/draft.md) |
 | 对局复盘：两条数据通道、录像覆盖率、地图坐标从哪来、眼位口径 | [docs/replay.md](./docs/replay.md) |
+| 访问统计：为什么只统计这一件事、看哪几个数、什么条件下才做 PWA | [docs/analytics.md](./docs/analytics.md) |
 | SEO：sitemap、canonical、结构化数据与搜索引擎提交 | [docs/seo.md](./docs/seo.md) |
 | MCP：工具清单、数据来源、引擎打包与发布 | [docs/mcp.md](./docs/mcp.md) |
 | logo / 字体 / 主题色板 | [docs/branding.md](./docs/branding.md) |
