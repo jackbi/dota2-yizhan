@@ -357,8 +357,30 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 赛程与赛果取自 Liquipedia 的 [`Liquipedia:Matches`](https://liquipedia.net/dota2/Liquipedia:Matches)
 （原来的超凡电竞接口已不再响应）。使用它需要遵守
 [Liquipedia API 条款](https://liquipedia.net/api-terms-of-use)：带能识别调用方的 User-Agent、
-控制请求频率、署名并回链。代码里只在一页上取一次数据（30 分钟缓存），
-页面上也保留了到 Liquipedia 的链接——改动这块时请一并保留。
+控制请求频率、署名并回链。页面上保留了到 Liquipedia 的链接——改动这块时请一并保留。
+
+**两种页面模板，内层结构一样**（解析在 `src/lib/liquipediaParse.ts`，纯函数，可离线自检）：
+
+| 页面 | 切块标记 | 内容 |
+| --- | --- | --- |
+| `Liquipedia:Matches`（主赛程页） | `<div class="match-info">` | 未来赛程 + 近期赛果，**滚动窗口** |
+| 赛事页与阶段子页 | `brkts-match-info-popup`（bracket 模板的隐藏弹层） | 整届对阵，已完赛的带比分 |
+
+主赛程页只是窗口内的切片，所以赛事页要再补一遍：按主表里出现过的页面路径抓，每页 6 小时缓存
+（`.cache/liquipedia/events.json`），一轮最多 8 页、页间留 1.2 秒。实测同一时刻 PGL Wallachia 9
+在主表里只有 1 场，赛事页上有 37 场。
+
+两个踩过的坑：
+
+- **队标 span 的 class 不是固定的**。只有亮色队标的队伍会渲染成
+  `class="team-template-image-icon team-template-lightmode"`；正则要求 class 恰好等于前者时，
+  这类队伍解析成空，而「一方未定就跳过整场」会把对手一起丢掉——实测主表 100 场丢 56 场，
+  其中 29 场是这个原因（Xtreme Gaming vs Team Nemesis 就在里头）。
+  `scripts/liquipedia.check.ts` 守这件事，改解析先跑它。
+- **同一届赛事的各个阶段是两个页面**：`PGL/Wallachia/9` 是季后赛，`.../9/Group_Stage` 是小组赛。
+  不归并就会被拆成两个站内赛事，读者点进去看到的是「即将开始」加一场孤零零的对阵。归并只认明确的
+  阶段名（`group_stage` / `playoffs` / …），`BLAST/SLAM/9/Southeast_Asia` 这种区域子赛有自己
+  独立的赛程，保持单独一个赛事。
 
 ## 对阵页的阵容：按小局取
 
@@ -395,3 +417,16 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 
 命中不了就不展示，绝不靠队名近似去猜一场比赛。页面下方保留到 STRATZ / OpenDota 对应小局的
 外链，改动这块时请一并保留。
+
+## 英雄胜率的口径
+
+英雄页与 BP 页的近一周数据来自 STRATZ 的 `heroStats.stats(bracketBasicIds: [DIVINE_IMMORTAL])`
+（见 `src/lib/stratzApi.ts`），口径是**超凡入圣及以上**。
+
+**别把它写成「近 7 天」**：不传 `week` 时 STRATZ 给的是**上一个完整自然周**——实测不传与
+`week = 现在 - 7 天` 的返回逐行完全一致（都是 695,231 场 / 50.18%），而 `week = 现在` 只有 226 场
+（当周还没走完）。数据最坏情况下离现在有 7~14 天，所以页面上用的是 `HERO_META_WINDOW_LABEL`。
+
+和另外两个源对不上属于口径差异，不是算错：STRATZ 自家趋势页走的是 `winWeek` 字段（同一段位下与
+`stats` 逐英雄平均差 1.81 个百分点、最大 8 个），OpenDota 的 `/heroes/public`（实际接口
+`/api/heroStats`）统计的是**全部公开对局**，含未校准与低分段。
