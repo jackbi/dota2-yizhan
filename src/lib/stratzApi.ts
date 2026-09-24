@@ -56,6 +56,19 @@ export const HERO_META_BRACKET = 'DIVINE_IMMORTAL';
 export const HERO_META_BRACKET_LABEL = '超凡入圣及以上';
 /** 英雄数据的统计窗口（天）。banDay 会多给几天，按天索引裁到窗口内。 */
 export const HERO_META_WINDOW_DAYS = 7;
+/*
+ * 窗口的「人话」说法，页面上直接用它，别再写成「近 N 天」。
+ *
+ * `heroStats.stats` 不传 `week` 时给的不是滚动 7 天，而是**上一个完整自然周**：实测不传与
+ * `week = 现在 - 7 天` 的返回逐行完全一致（都是 695,231 场 / 50.18%），而 `week = 现在`
+ * 只有 226 场（当前这周还没走完）。数据最坏情况下离现在有 7~14 天，写「近 7 天」是错的
+ * ——这一条是读者拿 STRATZ 与 OpenDota 对照时问出来的。
+ *
+ * 顺带记下另外两个源为什么天然对不上，免得下次又当成 bug 查一遍：STRATZ 自己的趋势页用的是
+ * `winWeek` 字段（同一段位下与 `stats` 逐英雄平均差 1.8 个百分点、最大 8 个），OpenDota 的
+ * `/heroes/public` 统计的是全部公开对局（含未校准与低分段），人群本身就不一样。
+ */
+export const HERO_META_WINDOW_LABEL = '上一完整自然周';
 
 // ---------------------------------------------------------------- 请求
 

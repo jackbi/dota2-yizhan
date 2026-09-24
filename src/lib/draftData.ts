@@ -7,6 +7,7 @@ import { fetchPatchUpdates } from './patchesApi';
 import {
 	HERO_META_BRACKET_LABEL,
 	HERO_META_WINDOW_DAYS,
+	HERO_META_WINDOW_LABEL,
 	MATCHUP_MIN_GAMES,
 	fetchHeroMatchups,
 	fetchHeroMeta,
@@ -77,6 +78,8 @@ export interface DraftData {
 	/** 号位胜率的口径说明，直接展示在页面上。 */
 	bracketLabel: string;
 	windowDays: number;
+	/** 窗口的人话说法（`上一完整自然周`）。页面上别自己拼「近 N 天」，见 `stratzApi.ts`。 */
+	windowLabel: string;
 	/** 这批胜率对应的游戏版本。 */
 	patch: DraftPatch;
 	minPositionMatches: number;
@@ -104,7 +107,7 @@ export interface DraftPatch {
 	/**
 	 * 统计窗口里是否包含了一次版本更新。
 	 *
-	 * 近 7 天的样本里如果刚发过新版本，胜率就是新旧两个版本混在一起算的，这时候拿它当
+	 * 这一周的样本里如果刚发过新版本，胜率就是新旧两个版本混在一起算的，这时候拿它当
 	 * "当前版本的英雄强度"会看偏，所以页面上和提示词里都要把这条说出来。
 	 */
 	straddles: boolean;
@@ -209,6 +212,7 @@ export function loadDraftData(): Promise<DraftData> {
 			updatedAt: new Date().toISOString(),
 			bracketLabel: HERO_META_BRACKET_LABEL,
 			windowDays: HERO_META_WINDOW_DAYS,
+			windowLabel: HERO_META_WINDOW_LABEL,
 			patch,
 			minPositionMatches: MIN_POSITION_MATCHES,
 			heroes,

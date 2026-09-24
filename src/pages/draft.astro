@@ -68,7 +68,7 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 				<h1 class="mt-2 font-display text-3xl sm:text-4xl">BP 陪练台</h1>
 				<p class="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
 					看比赛时把双方的 ban/pick 点进来，轮到你这边时看建议。顺序按 7.40 起的队长模式：24 手、每队 7 禁 5 选，
-					后选方握着最后一手禁用和最后一手挑选。号位胜率取 {data.bracketLabel}近 {data.windowDays} 天的统计。
+					后选方握着最后一手禁用和最后一手挑选。号位胜率取 {data.bracketLabel}、{data.windowLabel}的统计。
 				</p>
 			</div>
 			<div class="flex flex-wrap items-center gap-2 text-xs">
@@ -310,7 +310,7 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 		</section>
 
 		<p class="mt-6 text-xs leading-relaxed text-faint">
-			数据口径：号位胜率来自 STRATZ 的 {data.bracketLabel}统计（近 {data.windowDays} 天，单个号位少于 {data.minPositionMatches} 场不计），
+			数据口径：号位胜率来自 STRATZ 的 {data.bracketLabel}统计（{data.windowLabel}，单个号位少于 {data.minPositionMatches} 场不计），
 			对应版本 {data.patch.version || '未知'}{data.patch.date ? `（${data.patch.date} 发布）` : ''}{data.patch.straddles ? '，这批样本跨了一次版本更新，胜率混着旧版本的场次' : ''}；
 			职业出场与被禁来自 OpenDota 的职业样本，总量只有 {data.proSample.picks} 出场 / {data.proSample.bans} 被禁，只能当热度看。
 			对位（谁好打谁）来自 STRATZ 的高分局统计，只按场次筛（≥ {data.matchupMinGames} 场，接近五五开的也留着），

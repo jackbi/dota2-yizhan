@@ -3,7 +3,7 @@ import Layout from '../layouts/Layout.astro';
 import { ATTRIBUTES, ATTRIBUTE_ICON } from '../lib/heroApi';
 import { fetchHeroListCached } from '../lib/heroList';
 import { formatIso } from '../lib/format';
-import { HERO_META_WINDOW_DAYS, fetchHeroMeta, stratzConfigured } from '../lib/stratzApi';
+import { HERO_META_WINDOW_LABEL, fetchHeroMeta, stratzConfigured } from '../lib/stratzApi';
 
 /** 属性图标统一放在 heroApi 里，本页与阵容分析页共用同一份。 */
 const ATTR_ICON = ATTRIBUTE_ICON;
@@ -79,13 +79,13 @@ const heroOf = (id: number) => heroNames.get(id) ?? { name: `英雄 #${id}`, img
 
 		{
 			meta && BOARDS[0].rows.length > 0 ? (
-				<section class="mb-8 rounded-2xl border border-line bg-surface/60 p-5" aria-label="近一周英雄强度">
+				<section class="mb-8 rounded-2xl border border-line bg-surface/60 p-5" aria-label="英雄强度榜">
 					<div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
 						<h2 class="font-display text-lg">
-							近 {meta.windowDays} 天强势英雄
+							{HERO_META_WINDOW_LABEL}强势英雄
 						</h2>
 						<p class="text-xs text-faint">
-							{meta.bracketLabel} · {MIN_RANK_MATCHES.toLocaleString('zh-CN')} 场以上 · 更新于 {formatIso(meta.updatedAt)} · 数据来自 STRATZ
+							{meta.bracketLabel} · {meta.windowDays} 天窗口 · {MIN_RANK_MATCHES.toLocaleString('zh-CN')} 场以上 · 更新于 {formatIso(meta.updatedAt)} · 数据来自 STRATZ
 						</p>
 					</div>
 					<div class="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">
@@ -228,7 +228,7 @@ const heroOf = (id: number) => heroNames.get(id) ?? { name: `英雄 #${id}`, img
 									) : (
 										<span
 											class:list={['shrink-0 tabular-nums', rate >= 0.5 ? 'text-gold' : 'text-muted']}
-											title={`近 ${meta?.windowDays ?? HERO_META_WINDOW_DAYS} 天胜率（${stat.wins}/${stat.matches} 场）`}
+											title={`${HERO_META_WINDOW_LABEL}胜率（${stat.wins}/${stat.matches} 场）`}
 										>
 											{(rate * 100).toFixed(1)}%
 										</span>
