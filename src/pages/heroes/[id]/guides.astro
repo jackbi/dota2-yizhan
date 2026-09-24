@@ -586,6 +586,26 @@ const stratzUrl = `https://stratz.com/heroes/${heroId}/guides${active ? `?positi
 							.join('')}</span>`
 			}`;
 
+		/*
+		 * 往站内自己的复盘页引一步：攻略回答「他怎么加的点」，`/replay/<id>` 回答「这局是怎么走的」——
+		 * 十人对抗明细、经济与经验差曲线、建筑倒塌时间轴、眼位与地图回放都在那边。
+		 *
+		 * 不在这里再铺一遍：那要给每个展开的攻略多打一次 STRATZ（额度是这条路的硬约束，
+		 * 见 `stratzGuides.ts`），而 11 列的明细表塞进这个面板只会两边都变形。
+		 *
+		 * 链接只长在展开后的面板里，而面板是这里用 JS 拼的——服务端 HTML 里没有它。
+		 * 攻略页本身可被收录，复盘页是 `noindex` 的，把入口写进服务端 HTML 等于给爬虫开一条
+		 * 「每抓一次打一次上游」的路（见 `docs/seo.md`）；放在面板里正好绕开这件事。
+		 */
+		const replayLink = (matchId: string): string => `
+			<a href="/replay/${esc(matchId)}" class="mt-3 flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-3 py-2.5 transition hover:border-dota/60 hover:bg-surface-3/60">
+				<span class="min-w-0">
+					<span class="block text-sm text-cream">这场比赛的对局复盘</span>
+					<span class="block text-xs text-faint">十人对抗明细、经济与经验差曲线、建筑倒塌时间轴、眼位与地图回放</span>
+				</span>
+				<span class="shrink-0 text-xs text-dota-light">打开 →</span>
+			</a>`;
+
 		const render = (detail: DetailView, heroId: string, matchId: string, accountId: string): string => {
 			const win = detail.radiantWin === null ? null : detail.radiantWin === detail.isRadiant;
 			const result = win === null ? '' : win ? '胜利' : '失败';
@@ -622,6 +642,8 @@ const stratzUrl = `https://stratz.com/heroes/${heroId}/guides${active ? `?positi
 						<a href="${esc(stratzUrl)}" target="_blank" rel="noopener" class="text-xs text-dota-light transition hover:text-cream">在 STRATZ 上看这场 ↗</a>
 					</div>
 					<p class="mt-1 text-xs text-faint">${facts.map((fact) => esc(fact)).join(' · ')}</p>
+
+					${replayLink(matchId)}
 
 					${section('出装与加点', hint, chart(detail) + cursorUi(detail))}
 
