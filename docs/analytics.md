@@ -20,7 +20,17 @@ Cloudflare Web Analytics：无 Cookie、不采指纹（不需要隐私弹窗）�
 （国内可达性与站点本身一致）、只有一个 `defer` 脚本、不阻塞渲染。
 
 **先查再配**：这个账号的主域（`hiwenbin.com`）**已经开了自动注入**，面板里能直接看到
-`dota2.hiwenbin.com/...` 的页面浏览量——实测这套自动注入对「Worker + 自定义域名」的部署是生效的。
+`dota2.hiwenbin.com/...` 的页面浏览量。实测（从线上抓 `/`、`/heroes/`、`/party` 三个页面的
+源码）这套自动注入**对 Worker 渲染的 SSR 页同样生效**，不只是静态产物：
+
+```html
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/v31edd6df..."></script>
+```
+
+顺带记一条容易误判的事：**注入只发生在文档请求上**。用 `Accept: */*` 的裸 `fetch` 去抓首页，
+拿回来的 HTML 里没有 beacon——别拿它当"自动注入没生效"的证据，带上
+`Accept: text/html` 与 `sec-fetch-dest: document` 再抓一次才是真的。
+
 所以 `ANALYTICS.cfBeaconToken` **保持留空**：
 
 - **两套 beacon 会各记一次**，页面浏览量与访问量会翻倍，等于把这份数据毁了；
