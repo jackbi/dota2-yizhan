@@ -135,6 +135,26 @@ export function positionLabel(position: string | null | undefined, full = false)
 	return table[position] ?? position;
 }
 
+/**
+ * 三路结果（复盘面板用）。
+ *
+ * STRATZ 的 `LaneOutcomeEnums` 一共五档：平手、天辉小胜/碾压、夜魇小胜/碾压。
+ * 「碾压」与「小胜」的区别在数据里就是对线期的经济差有多大，照原样分两档翻译，
+ * 不要合成一个「优势」——那样等于把上游最有信息量的一档抹平。
+ */
+const LANE_OUTCOME_LABEL: Record<string, string> = {
+	TIE: '均势',
+	RADIANT_VICTORY: '天辉小胜',
+	RADIANT_STOMP: '天辉碾压',
+	DIRE_VICTORY: '夜魇小胜',
+	DIRE_STOMP: '夜魇碾压',
+};
+
+export function laneOutcomeLabel(outcome: string | null | undefined): string {
+	if (!outcome) return '未记录';
+	return LANE_OUTCOME_LABEL[outcome] ?? outcome;
+}
+
 /** 段位徽章。rank 是 Byte：十位是奖章，个位是星数；0 或缺失表示未定级。 */
 const MEDAL_LABEL = ['未定级', '先锋', '卫士', '中军', '统帅', '传奇', '万古', '超凡', '冠绝'];
 

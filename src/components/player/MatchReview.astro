@@ -1,0 +1,285 @@
+---
+import { BARRACKS_PER_SIDE, TOWERS_PER_SIDE } from '../../lib/dotaMap';
+import { laneOutcomeLabel } from '../../lib/dotaLabels';
+import { formatElapsed } from '../../lib/format';
+import type { HeroRef } from '../../lib/gameRefs';
+import type { MatchReview } from '../../lib/matchReview';
+import { buildLeadChart, buildRateChart, formatLead } from '../../lib/replayChart';
+import Panel from './Panel.astro';
+
+/**
+ * 复盘面板：一局打完，先回答「这局是怎么走成这样的」。
+ *
+ * 三件事按重要性排：曲线（什么时候开始崩）→ 三路与建筑（崩在哪）→ 建筑倒塌时间轴（一个个节点）。
+ * 数据全部来自 STRATZ 的 `MatchType` 标量字段，一次约 2KB 的查询就够，所以它跟着页面一起
+ * 服务端渲染，读者禁用 JS、或搜索引擎来抓，看到的都是同一份内容。
+ *
+ * 画图不引图表库（整站没有图表依赖，见 `MatchTrend.astro` 的同款理由），
+ * 几何换算在 `replayChart.ts`，那边有独立自检。
+ */
+interface Props {
+	review: MatchReview;
+	/** 英雄 id → 中文名；时间轴上的「补刀者」用它换名字。 */
+	heroes: Map<number, HeroRef>;
+}
+
+const { review, heroes } = Astro.props;
+
+const lead = buildLeadChart(review.minutes);
+const rate = buildRateChart(review.minutes);
+
+const sideName = (side: number): string => (side === 0 ? '天辉' : '夜魇');
+const heroName = (heroId: number | null): string => {
+	if (heroId === null) return '未记录';
+	return heroes.get(heroId)?.name ?? `英雄 #${heroId}`;
+};
+
+/** 结束时谁领先，用于给曲线配一句结论。 */
+const leadText = (value: number, unit: string): string => {
+	if (Math.abs(value) < 100) return `基本持平（${value > 0 ? '天辉' : '夜魇'}微弱领先）`;
+	return `${value > 0 ? '天辉' : '夜魇'}领先 ${formatLead(Math.abs(value)).replace('+', '')} ${unit}`;
+};
+
+/** 推塔对比只数塔（npcId 16–35），不含兵营与基地——那两类另有建筑面板。 */
+const towers = review.falls.filter((fall) => fall.npcId >= 16 && fall.npcId <= 35);
+const towersLost = { radiant: towers.filter((fall) => fall.side === 0).length, dire: towers.filter((fall) => fall.side === 1).length };
+
+const lanes = [
+	{ name: '上路', value: review.lanes.top },
+	{ name: '中路', value: review.lanes.mid },
+	{ name: '下路', value: review.lanes.bottom },
+];
+---
+
+<Panel title="复盘" hint={`${review.minutes.length} 分钟 · 数据来自 STRATZ`}>
+	{
+		lead ? (
+			<div>
+				<div class="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+					<span class="flex items-center gap-1.5 text-muted">
+						<svg width="18" height="6" viewBox="0 0 18 6" aria-hidden="true">
+							<line x1="0" y1="3" x2="18" y2="3" stroke="#d9a05e" stroke-width="2" />
+						</svg>
+						经济差
+					</span>
+					<span class="flex items-center gap-1.5 text-muted">
+						<svg width="18" height="6" viewBox="0 0 18 6" aria-hidden="true">
+							<line x1="0" y1="3" x2="18" y2="3" stroke="#7fb3c8" stroke-width="1.5" stroke-dasharray="4 3" />
+						</svg>
+						经验差
+					</span>
+					<span class="text-faint">零线以上为天辉领先</span>
+				</div>
+
+				<svg
+					viewBox={`0 0 ${lead.box.width} ${lead.box.height}`}
+					class="mt-1 w-full"
+					role="img"
+					aria-label={`天辉与夜魇的经济差与经验差曲线，结束时${leadText(lead.finalNetworth, '经济')}`}
+				>
+					<defs>
+						<clipPath id="review-lead-up">
+							<rect x="0" y="0" width={lead.box.width} height={lead.zeroY} />
+						</clipPath>
+						<clipPath id="review-lead-down">
+							<rect x="0" y={lead.zeroY} width={lead.box.width} height={lead.box.height - lead.zeroY} />
+						</clipPath>
+					</defs>
+
+					{lead.levels.map((level) => (
+						<g>
+							<line
+								x1={lead.box.padX}
+								x2={lead.box.width - lead.box.padX}
+								y1={level.y}
+								y2={level.y}
+								stroke="rgba(244,235,227,0.10)"
+								stroke-width="1"
+							/>
+							<text x={lead.box.padX - 6} y={level.y + 3.5} text-anchor="end" fill="#95847a" font-size="10">
+								{level.text}
+							</text>
+						</g>
+					))}
+
+					<path d={lead.networthPositive} fill="rgba(74,222,128,0.16)" clip-path="url(#review-lead-up)" />
+					<path d={lead.networthNegative} fill="rgba(248,113,113,0.16)" clip-path="url(#review-lead-down)" />
+					<line
+						x1={lead.box.padX}
+						x2={lead.box.width - lead.box.padX}
+						y1={lead.zeroY}
+						y2={lead.zeroY}
+						stroke="rgba(244,235,227,0.35)"
+						stroke-width="1"
+					/>
+					<path d={lead.experience} fill="none" stroke="#7fb3c8" stroke-width="1.5" stroke-dasharray="4 3" />
+					<path d={lead.networth} fill="none" stroke="#d9a05e" stroke-width="2" />
+
+					{lead.ticks.map((tick) => (
+						<text x={tick.x} y={lead.box.height - 2} text-anchor="middle" fill="#95847a" font-size="10">
+							{tick.label}
+						</text>
+					))}
+				</svg>
+
+				<p class="mt-1 text-xs text-muted">
+					结束时 {leadText(lead.finalNetworth, '经济')}
+					{review.minutes.length > 0 && (
+						<span class="text-faint">
+							· 经验差 {formatLead(review.minutes[review.minutes.length - 1]?.experienceLead ?? 0)}
+						</span>
+					)}
+				</p>
+			</div>
+		) : (
+			<p class="text-xs text-faint">这一局没有逐分钟的经济与经验数据。</p>
+		)
+	}
+
+	{
+		rate ? (
+			<div class="mt-5">
+				<p class="text-xs text-muted">
+					STRATZ 胜率模型（天辉视角）：开局 {(rate.start * 100).toFixed(0)}% → 结束{' '}
+					<span class="text-cream">{(rate.end * 100).toFixed(0)}%</span>
+				</p>
+				<svg
+					viewBox={`0 0 ${rate.box.width} ${rate.box.height}`}
+					class="mt-1 w-full"
+					role="img"
+					aria-label={`天辉胜率随时间从 ${(rate.start * 100).toFixed(0)}% 变化到 ${(rate.end * 100).toFixed(0)}%`}
+				>
+					{rate.levels.map((level) => (
+						<g>
+							<line
+								x1={rate.box.padX}
+								x2={rate.box.width - rate.box.padX}
+								y1={level.y}
+								y2={level.y}
+								stroke={level.text === '50%' ? 'rgba(244,235,227,0.28)' : 'rgba(244,235,227,0.10)'}
+								stroke-width="1"
+							/>
+							<text x={rate.box.padX - 6} y={level.y + 3.5} text-anchor="end" fill="#95847a" font-size="10">
+								{level.text}
+							</text>
+						</g>
+					))}
+					<path d={rate.line} fill="none" stroke="#4ade80" stroke-width="2" />
+				</svg>
+			</div>
+		) : null
+	}
+
+	<div class="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+		{
+			lanes.map((lane) => (
+				<div class="rounded-lg border border-line bg-surface-2/50 px-3 py-2">
+					<p class="text-[11px] text-faint">{lane.name}</p>
+					<p class="mt-0.5 text-sm text-cream">{laneOutcomeLabel(lane.value)}</p>
+				</div>
+			))
+		}
+		<div class="rounded-lg border border-line bg-surface-2/50 px-3 py-2">
+			<p class="text-[11px] text-faint">一血</p>
+			<p class="mt-0.5 text-sm text-cream">
+				{review.firstBloodTime !== null ? formatElapsed(review.firstBloodTime) : '未记录'}
+			</p>
+			<p class="text-[11px] text-faint">第一条人命</p>
+		</div>
+	</div>
+
+	<div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+		<div class="rounded-lg border border-line bg-surface-2/50 px-3 py-2">
+			<p class="text-[11px] text-faint">剩余建筑</p>
+			<p class="mt-0.5 text-sm text-[#4ade80]">
+				天辉 {review.towersAlive.radiant}/{TOWERS_PER_SIDE} 塔 · {review.barracksAlive.radiant}/{BARRACKS_PER_SIDE} 兵营
+			</p>
+			<p class="text-sm text-[#f87171]">
+				夜魇 {review.towersAlive.dire}/{TOWERS_PER_SIDE} 塔 · {review.barracksAlive.dire}/{BARRACKS_PER_SIDE} 兵营
+			</p>
+		</div>
+		<div class="rounded-lg border border-line bg-surface-2/50 px-3 py-2">
+			<p class="text-[11px] text-faint">被推掉的塔</p>
+			<p class="mt-0.5 text-sm text-cream tabular-nums">
+				天辉 {towersLost.radiant} 座 · 夜魇 {towersLost.dire} 座
+			</p>
+			<p class="text-[11px] text-faint">两侧各 9 座外塔 + 2 座基地塔</p>
+		</div>
+	</div>
+
+	{
+		review.falls.length > 0 ? (
+			<div class="mt-5">
+				<p class="text-xs text-faint">建筑倒塌时间轴</p>
+				<ol class="mt-2 max-h-72 space-y-1 overflow-y-auto pr-1">
+					{review.falls.map((fall) => (
+						<li class="flex items-baseline gap-2 rounded-md px-2 py-1 text-xs odd:bg-surface-2/40">
+							<span class="w-12 shrink-0 tabular-nums text-faint">{formatElapsed(fall.time)}</span>
+							<span class:list={['shrink-0', fall.side === 0 ? 'text-[#4ade80]' : 'text-[#f87171]']}>
+								{fall.label}
+							</span>
+							<span class="truncate text-faint">补刀 {heroName(fall.attackerHeroId)}</span>
+						</li>
+					))}
+				</ol>
+			</div>
+		) : null
+	}
+
+	{
+		review.wards ? (
+			<div class="mt-5 border-t border-line pt-4">
+				<p class="text-xs text-faint">视野</p>
+				<div class="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+					{[0, 1].map((side) => (
+						<div class="rounded-lg border border-line bg-surface-2/40 px-3 py-2">
+							<p class:list={['text-xs', side === 0 ? 'text-[#4ade80]' : 'text-[#f87171]']}>
+								{side === 0 ? '天辉' : '夜魇'}
+							</p>
+							<p class="mt-0.5 text-xs text-muted">
+								插眼 {review.wards?.sides[side].placed ?? 0}（假眼 {review.wards?.sides[side].observer ?? 0} · 真眼{' '}
+								{review.wards?.sides[side].sentry ?? 0}）
+							</p>
+							<p class="text-xs text-muted">
+								反眼 {review.wards?.sides[side].taken ?? 0} · 被反 {review.wards?.sides[side].lost ?? 0} · 到期{' '}
+								{review.wards?.sides[side].expired ?? 0}
+							</p>
+						</div>
+					))}
+				</div>
+
+				<table class="mt-3 w-full text-xs">
+					<thead>
+						<tr class="text-faint">
+							<th class="py-1 text-left font-normal">选手</th>
+							<th class="text-center font-normal">假眼</th>
+							<th class="text-center font-normal">真眼</th>
+							<th class="text-center font-normal">反眼</th>
+						</tr>
+					</thead>
+					<tbody>
+						{review.wards.rows.map((row) => (
+							<tr class="odd:bg-surface-2/40">
+								<td class="max-w-0 truncate py-1 pl-1">
+									<span class:list={[row.isRadiant ? 'text-cream' : 'text-muted']}>{heroName(row.heroId)}</span>
+									<span class="ml-1 text-faint">{row.name}</span>
+								</td>
+								<td class="text-center tabular-nums text-cream">{row.observer}</td>
+								<td class="text-center tabular-nums text-cream">{row.sentry}</td>
+								<td class="text-center tabular-nums text-cream">{row.taken}</td>
+							</tr>
+						))}
+					</tbody>
+				</table>
+
+				<p class="mt-2 text-[11px] leading-relaxed text-faint">
+					假眼 6 分钟、真眼 7 分钟自然到期，所以「到期」单列——把它算进「被反」会凭空抬高反眼数。
+					归属按 Valve 的选手槽位对，不靠位置猜。
+					{review.wards.unknown > 0
+						? `另有 ${review.wards.unknown} 条事件对不上选手槽位（多为开局前插下的眼），未计入。`
+						: ''}
+				</p>
+			</div>
+		) : null
+	}
+</Panel>

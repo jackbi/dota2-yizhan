@@ -135,14 +135,20 @@ const summary: { label: string; value: string; tone?: 'win' | 'loss' | 'muted' }
 
 				<div class="mt-4 flex flex-wrap items-baseline justify-between gap-2 border-t border-line pt-3">
 					<span class="text-xs text-faint">对局 {match.matchId}</span>
-					<a
-						href={`https://stratz.com/matches/${match.matchId}`}
-						target="_blank"
-						rel="noopener noreferrer"
-						class="text-xs text-faint transition hover:text-gold"
-					>
-						在 STRATZ 查看这场比赛 ↗
-					</a>
+					<span class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+						{/* 复盘是公开的 SSR 路由，这里只链接过去——个人页不做第二份渲染。 */}
+						<a href={`/replay/${match.matchId}`} class="text-xs text-muted transition hover:text-gold">
+							复盘与地图回放
+						</a>
+						<a
+							href={`https://stratz.com/matches/${match.matchId}`}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="text-xs text-faint transition hover:text-gold"
+						>
+							在 STRATZ 查看这场比赛 ↗
+						</a>
+					</span>
 				</div>
 			</Panel>
 

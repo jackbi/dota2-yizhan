@@ -1,0 +1,203 @@
+---
+import type { HeroRef } from '../../lib/gameRefs';
+import { inlineJson } from '../../lib/inlineJson';
+import type { ReviewPlayer } from '../../lib/matchReview';
+import type { WardSummary } from '../../lib/wardStats';
+import Panel from './Panel.astro';
+
+/**
+ * 地图回放：把十名英雄的逐秒位置、眼位、肉山、建筑倒塌画在同一张小地图上，配一条可拖的时间轴。
+ *
+ * 三条取舍：
+ *
+ * - **坐标数据按需拉**。轨迹是 10 个英雄 × 1400–1600 个点（实测 2.1 万个点），内联进 HTML 会让
+ *   每个只想看记分板的人一起下载。所以底图与图例先渲染，点了「载入英雄轨迹」再取
+ *   `/api/replay/<id>`（见 `src/pages/api/replay/[id].ts`）。
+ * - **底图是示意图**，不是游戏内贴图：几何与理由写在 `dotaMap.ts`。没有任何外部图片依赖，
+ *   也就没有「地图版本换了要换图」的尾巴。
+ * - **没有录像就直说**。STRATZ 只为下载过录像的对局提供 `playbackData`，而且录像有保留期，
+ *   所以 `recorded` 为 false 时不摆一个注定失败的按钮，而是说明原因。
+ */
+interface Props {
+	matchId: number;
+	durationSeconds: number;
+	/** 十名选手（含 KDA），图例与地图上的标号共用一份。 */
+	players: ReviewPlayer[];
+	/** 英雄 id → 中文名。 */
+	heroes: Map<number, HeroRef>;
+	/** 上游标记「这场下载过录像」；false 时不给按钮。 */
+	recorded: boolean;
+	/** 视野统计；有它才在地图上说明「眼位画的是什么」，也为图例补上每人插眼数。 */
+	wards: WardSummary | null;
+}
+
+const { matchId, durationSeconds, players, heroes, recorded, wards } = Astro.props;
+
+/**
+ * 十个人的配色：天辉偏绿、夜魇偏红，**同一份表喂给图例与画布**，
+ * 所以两边一定是同一个颜色（各算一次迟早会飘）。
+ */
+const RADIANT_COLORS = ['#4ade80', '#34d399', '#a3e635', '#22d3ee', '#86efac'];
+const DIRE_COLORS = ['#f87171', '#fb923c', '#f472b6', '#e879f9', '#fca5a5'];
+
+function heroName(heroId: number): string {
+	return heroes.get(heroId)?.name ?? `英雄 #${heroId}`;
+}
+
+/** 按队内顺序取色：`players` 已在数据层按「天辉在前、经济从高到低」排好，顺序是稳定的。 */
+let radiantSeen = 0;
+let direSeen = 0;
+const metaPlayers = players.map((player) => {
+	const palette = player.isRadiant ? RADIANT_COLORS : DIRE_COLORS;
+	const index = player.isRadiant ? radiantSeen++ : direSeen++;
+	return {
+		heroId: player.heroId,
+		name: heroName(player.heroId),
+		accountName: player.name,
+		isRadiant: player.isRadiant,
+		kills: player.kills,
+		deaths: player.deaths,
+		assists: player.assists,
+		observer: wards?.rows.find((row) => row.heroId === player.heroId)?.observer ?? 0,
+		sentry: wards?.rows.find((row) => row.heroId === player.heroId)?.sentry ?? 0,
+		taken: wards?.rows.find((row) => row.heroId === player.heroId)?.taken ?? 0,
+		color: palette[index % palette.length] ?? palette[0] ?? '#f4ebe3',
+	};
+});
+
+const meta = inlineJson({ matchId, duration: durationSeconds, players: metaPlayers });
+---
+
+<Panel title="地图回放" hint={recorded ? '英雄逐秒位置 · 眼位 · 肉山 · 建筑' : '这场没有录像数据'}>
+	<div
+		id="replay-root"
+		data-api={`/api/replay/${matchId}`}
+		class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_15rem]"
+	>
+		<div class="relative">
+			<canvas
+				id="replay-canvas"
+				width="1024"
+				height="1024"
+				class="aspect-square w-full rounded-xl border border-line bg-ink"
+				aria-label="对局小地图：英雄位置、眼位、肉山与建筑"></canvas>
+			<div
+				id="replay-gate"
+				class="absolute inset-0 flex flex-col items-center justify-center gap-3 rounded-xl bg-ink/70 px-6 text-center"
+			>
+				{
+					recorded ? (
+						<>
+							<p class="text-sm text-muted">
+								十名英雄的逐秒位置约 2 万个点，点了才从服务端拉——不看回放的人不用为它付流量。
+							</p>
+							<button
+								id="replay-load"
+								type="button"
+								class="rounded-lg border border-dota/60 bg-dota/15 px-4 py-2 text-sm text-dota-light transition hover:bg-dota/25"
+							>
+								载入英雄轨迹
+							</button>
+							<p id="replay-hint" class="text-xs text-faint"></p>
+						</>
+					) : (
+						<p class="max-w-md text-sm text-muted">
+							STRATZ 只为「下载并解析过录像」的对局提供逐秒数据，而且录像有保留期。这一局没有，
+							上面的复盘面板不受影响。
+						</p>
+					)
+				}
+			</div>
+		</div>
+
+		<aside class="min-w-0">
+			<ul id="replay-legend" class="space-y-1">
+				{
+					metaPlayers.map((player) => (
+						<li
+							class="flex items-center gap-2 rounded-md px-2 py-1 text-xs"
+							data-hero={player.heroId}
+							title={player.accountName}
+						>
+							<span class="h-2.5 w-2.5 shrink-0 rounded-full" style={`background: ${player.color}`} />
+							<span class="min-w-0 flex-1 truncate text-cream">{player.name}</span>
+							<span class="shrink-0 tabular-nums text-faint">
+								{player.kills}/{player.deaths}/{player.assists}
+							</span>
+							{/* 没有眼位数据时这一列整个不出现：一排「眼 0」只会让人以为统计坏了。 */}
+							{wards ? (
+								<span
+									class="w-14 shrink-0 text-right text-[10px] tabular-nums text-faint"
+									title="插下的眼位总数，括号里是排掉的敌方眼位"
+								>
+									眼 {player.observer + player.sentry}
+									{player.taken > 0 ? ` (${player.taken})` : ''}
+								</span>
+							) : null}
+						</li>
+					))
+				}
+			</ul>
+			{
+				wards ? (
+					<p class="mt-2 text-[11px] leading-relaxed text-faint">
+						<span class="text-[#4ade80]">天辉</span> 插眼 {wards.sides[0].placed} · 反眼 {wards.sides[0].taken} ｜{' '}
+						<span class="text-[#f87171]">夜魇</span> 插眼 {wards.sides[1].placed} · 反眼 {wards.sides[1].taken}
+					</p>
+				) : null
+			}
+			<p class="mt-2 text-[11px] leading-relaxed text-faint">
+				底图是按 Valve 真实坐标画的示意图：三路、河、两个肉山坑、每座塔与兵营的位置都对得上，
+				只是没有游戏内贴图。把鼠标放在某一行上可以单独高亮他。
+			</p>
+		</aside>
+	</div>
+
+	<div id="replay-controls" hidden class="mt-4 flex flex-wrap items-center gap-3">
+		<button
+			id="replay-toggle"
+			type="button"
+			class="w-16 rounded-lg border border-line bg-surface-2 px-3 py-1.5 text-sm text-cream transition hover:border-dota/60"
+			aria-label="播放或暂停回放"
+		>
+			播放
+		</button>
+		<input
+			id="replay-range"
+			type="range"
+			min="0"
+			max={Math.max(1, durationSeconds)}
+			step="1"
+			value="0"
+			class="min-w-40 flex-1 accent-[#c6522c]"
+			aria-label="回放时间轴，单位秒" />
+		<span id="replay-time" class="w-28 shrink-0 text-right text-xs tabular-nums text-muted">0:00 / 0:00</span>
+		<div id="replay-speeds" class="flex gap-1">
+			{
+				[1, 2, 4, 8].map((speed) => (
+					<button
+						type="button"
+						data-speed={speed}
+						aria-pressed={speed === 1 ? 'true' : 'false'}
+						class="rounded-md border border-line px-2 py-1 text-xs text-muted transition hover:text-cream aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+					>
+						{speed}×
+					</button>
+				))
+			}
+		</div>
+		<label class="flex items-center gap-1.5 text-xs text-muted">
+			<input id="replay-wards" type="checkbox" checked class="accent-[#c6522c]" />
+			眼位<span class="text-faint">（圆 = 假眼，菱形 = 真眼，按插眼方着色）</span>
+		</label>
+	</div>
+
+	<noscript>
+		<p class="mt-3 text-xs text-faint">地图回放需要 JavaScript：时间轴拖动与逐帧重绘都在浏览器里做。</p>
+	</noscript>
+</Panel>
+
+<script type="application/json" id="replay-meta" set:html={meta} is:inline />
+<script>
+	import '../../scripts/matchPlayback';
+</script>

@@ -1,0 +1,160 @@
+---
+import MatchPlayback from '../../components/player/MatchPlayback.astro';
+import MatchReviewPanel from '../../components/player/MatchReview.astro';
+import Layout from '../../layouts/Layout.astro';
+import { formatClock, formatDayWithWeekday, formatElapsed } from '../../lib/format';
+import { heroRefMap } from '../../lib/gameRefs';
+import type { HeroRef } from '../../lib/gameRefs';
+import { StratzError, loadMatchReview, reviewConfigured, type MatchReview } from '../../lib/matchReview';
+
+/**
+ * 对局复盘页（`/replay/<Valve 比赛 id>`）。
+ *
+ * 为什么是**按需 SSR 的独立路由**，而不是往 `/matches/[id]` 里塞：
+ *
+ * - `/matches/[id]` 是 `getStaticPaths` 预渲染的静态页，几百场对局要在构建期把复盘面板的数据
+ *   全抓一遍——构建时间与 `.cache/` 体积一起涨，而多数页从来没人看；这份数据是「谁打开谁付钱」，
+ *   正好由运行时那条路承载（与 `/me`、`/party` 的分工一致）。
+ * - 独立路由让入口更宽松：静态赛事页只需要给出一个链接（不花一分钱），
+ *   个人战绩页也能直接链过来，不必两处各渲染一遍面板。
+ *
+ * 数据分两档，理由写在 `matchReview.ts`：面板那份 2KB 跟着页面渲染（无 JS 也能看），
+ * 地图那份上百 KB 等读者点了才取。
+ */
+export const prerender = false;
+
+/** 只接受正整数：`/replay/abc` 之类直接回赛程列表，不去上游浪费一次查询。 */
+const matchId = Number(Astro.params.id);
+if (!Number.isSafeInteger(matchId) || matchId <= 0) return Astro.redirect('/matches');
+
+type ReviewLoad =
+	| { ok: true; review: MatchReview | null }
+	| { ok: false; reason: 'not-configured' | 'upstream-error'; message: string };
+
+async function loadReview(id: number): Promise<ReviewLoad> {
+	if (!reviewConfigured()) {
+		return { ok: false, reason: 'not-configured', message: '站点没有配置 STRATZ 数据源，对局复盘暂时不可用。' };
+	}
+	try {
+		return { ok: true, review: await loadMatchReview(id) };
+	} catch (error) {
+		return {
+			ok: false,
+			reason: 'upstream-error',
+			message: error instanceof StratzError ? `数据源暂时不可用：${error.message}` : '数据源暂时不可用，请稍后再试。',
+		};
+	}
+}
+
+/**
+ * 英雄名表与复盘数据并行取：前者是 24 小时缓存的一次英雄列表，后者是一次 STRATZ 查询，
+ * 串起来等于白等一个来回。英雄表拿不到不该拖垮整页——退化成「英雄 #id」。
+ */
+const [loaded, heroMap] = await Promise.all([
+	loadReview(matchId),
+	heroRefMap().catch(() => new Map<number, HeroRef>()),
+]);
+
+const review = loaded.ok ? loaded.review : null;
+const radiantName = review?.radiantName ?? '天辉';
+const direName = review?.direName ?? '夜魇';
+const winner = review?.radiantWin === null || review?.radiantWin === undefined ? null : review.radiantWin ? radiantName : direName;
+
+const summary = review
+	? [
+			{ label: '结果', value: winner ? `${winner}获胜` : '未记录' },
+			{ label: '时长', value: formatElapsed(review.durationSeconds) },
+			{ label: '开始时间', value: `${formatDayWithWeekday(review.startTime)} ${formatClock(review.startTime)}` },
+		]
+	: [];
+
+// 一页对局复盘对搜索引擎没有价值，而这条路由的 URL 空间是**无界**的（任何 Valve 比赛 id 都能
+// 渲染出一个页面），不 noindex 就等于给爬虫开了个无限抓取的入口，每次抓取还要打一次上游。
+// 这与装备页「薄页面不收录」是同一条判据（见 docs/seo.md）。
+const title = `${radiantName} vs ${direName} · 对局复盘 · DOTA2 驿站`;
+---
+
+<Layout
+	title={title}
+	description={`${radiantName} 对阵 ${direName} 的对局复盘：经济与经验差曲线、三路结果、建筑倒塌时间轴，以及英雄逐秒位置的地图回放。`}
+	breadcrumbs={[{ name: '赛事', href: '/tournaments' }, { name: `${radiantName} vs ${direName}` }]}
+>
+	<Fragment slot="head">
+		<meta name="robots" content="noindex" />
+	</Fragment>
+
+	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
+		<a href="/matches" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+			</svg>
+			返回赛程
+		</a>
+
+		<header class="mt-5">
+			<span class="inline-flex items-center rounded-md bg-dota/15 px-2 py-1 text-xs font-semibold text-dota-light">对局复盘</span>
+			<h1 class="mt-3 font-display text-3xl leading-tight sm:text-4xl">
+				{radiantName} <span class="text-faint">vs</span> {direName}
+			</h1>
+			<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+				<span class="tabular-nums">对局 {matchId}</span>
+				{winner ? <span class="text-cream">{winner}获胜</span> : null}
+				<a
+					href={`https://stratz.com/matches/${matchId}`}
+					target="_blank"
+					rel="noopener noreferrer"
+					class="transition hover:text-gold"
+				>
+					在 STRATZ 查看 ↗
+				</a>
+			</div>
+		</header>
+
+		{
+			!loaded.ok ? (
+				<div class="mt-8 rounded-2xl border border-line bg-surface p-5">
+					<p class="text-sm text-cream">{loaded.message}</p>
+					<p class="mt-2 text-xs text-faint">
+						对局复盘依赖 STRATZ 已解析的公开对局数据，取不到时不影响站内其它页面。
+					</p>
+				</div>
+			) : !review ? (
+				<div class="mt-8 rounded-2xl border border-line bg-surface p-5">
+					<p class="text-sm text-cream">这一局没有可复盘的数据。</p>
+					<p class="mt-2 text-xs leading-relaxed text-faint">
+						经济曲线、塔况与推塔时间轴来自 STRATZ 的对局解析结果，只有被它收录的比赛才有；
+						刚打完的对局也常要过一阵子才补齐。换个比赛 id 或等一会儿再看。
+					</p>
+				</div>
+			) : (
+				<>
+					<dl class="mt-6 grid grid-cols-3 gap-3">
+						{summary.map((item) => (
+							<div class="rounded-xl border border-line bg-surface px-4 py-3">
+								<dt class="text-xs text-faint">{item.label}</dt>
+								<dd class="mt-1 text-sm text-cream tabular-nums">{item.value}</dd>
+							</div>
+						))}
+					</dl>
+
+					<div class="mt-6 space-y-6">
+						<MatchReviewPanel review={review} heroes={heroMap} />
+						<MatchPlayback
+							matchId={review.matchId}
+							durationSeconds={review.durationSeconds}
+							players={review.players}
+							heroes={heroMap}
+							recorded={review.didRequestDownload}
+							wards={review.wards}
+						/>
+					</div>
+
+					<p class="mt-6 border-t border-line pt-4 text-xs leading-relaxed text-faint">
+						数据来自 STRATZ 已解析的公开对局。地图回放画的是**按真实坐标绘制的示意图**，
+						三路、河、肉山坑与每座建筑的位置都取自对局数据本身，不是游戏内地图贴图。
+					</p>
+				</>
+			)
+		}
+	</section>
+</Layout>

@@ -249,14 +249,23 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 							>
 								<div class="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
 									<p class="text-sm text-cream">{gameSummary(game)}</p>
-									<a
-										href={game.source === 'stratz' ? `https://stratz.com/matches/${game.matchId}` : `https://www.opendota.com/matches/${game.matchId}`}
-										target="_blank"
-										rel="noopener noreferrer"
-										class="text-xs text-faint transition hover:text-gold"
-									>
-										本局数据来自 {game.source === 'stratz' ? 'STRATZ' : 'OpenDota'} ↗
-									</a>
+									<span class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
+										{/*
+											复盘页是按需 SSR 的独立路由，这里只放一个链接——静态页不为它付构建成本。
+											链接用的是 Valve 的比赛 id（页面本来就有），所以点进去不必再解析一次赛程。
+										*/}
+										<a href={`/replay/${game.matchId}`} class="text-muted transition hover:text-gold">
+											复盘与回放
+										</a>
+										<a
+											href={game.source === 'stratz' ? `https://stratz.com/matches/${game.matchId}` : `https://www.opendota.com/matches/${game.matchId}`}
+											target="_blank"
+											rel="noopener noreferrer"
+											class="text-faint transition hover:text-gold"
+										>
+											本局数据来自 {game.source === 'stratz' ? 'STRATZ' : 'OpenDota'} ↗
+										</a>
+									</span>
 								</div>
 
 								<div class="px-4 pt-4 pb-4">

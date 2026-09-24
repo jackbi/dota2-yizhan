@@ -57,6 +57,20 @@ export function dayKey(unix: number): string {
 	return `${p.year}-${p.month}-${p.day}`;
 }
 
+/**
+ * 对局内的秒数 → `18:43`。超过一小时（加速模式之外几乎不会有）就带上小时位。
+ *
+ * 和经济/经验曲线的分钟轴、回放时间轴共用一份口径：负数按 0 处理，
+ * 上游偶尔会给出负的时间（开局前的选人/策略时间）。
+ */
+export function formatElapsed(seconds: number): string {
+	const total = Math.max(0, Math.floor(seconds));
+	const minutes = Math.floor(total / 60);
+	const rest = total % 60;
+	const tail = `${String(minutes % 60).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
+	return minutes >= 60 ? `${Math.floor(minutes / 60)}:${tail}` : `${minutes}:${String(rest).padStart(2, '0')}`;
+}
+
 /** 09.10（周一） */
 export function formatDayWithWeekday(unix: number): string {
 	const weekday = new Intl.DateTimeFormat('zh-CN', { timeZone: TIME_ZONE, weekday: 'short' }).format(unix * 1000);
