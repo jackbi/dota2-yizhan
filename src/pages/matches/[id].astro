@@ -4,6 +4,7 @@ import MatchRow from '../../components/MatchRow.astro';
 import type { EsportsMatch } from '../../data/types';
 import { formatClock, formatDayWithWeekday, formatMatchTime } from '../../lib/format';
 import { loadMatchDrafts } from '../../lib/matchDraft';
+import type { MatchDraftGame } from '../../lib/matchSeries';
 import { MATCH_STATUS_META } from '../../lib/statusMeta';
 import { getTournamentIndex, headToHead, relatedMatches } from '../../lib/tournamentIndex';
 import { dataSourceLabel } from '../../lib/tournamentsApi';
@@ -36,8 +37,11 @@ const { match, eventExists, related, h2h } = Astro.props;
  * 阵容只取本场。放在页面里而不是 `getStaticPaths`：dev 下动态路由只渲染被访问的
  * 那一页，写进 props 就等于每打开一场比赛都先把全部比赛的阵容拉一遍。
  * 构建时逐页执行，网络开销与之前一致。
+ *
+ * 取回来的是一个**系列的全部小局**——日历上的一条是 BO3/BO5，Valve 的每个比赛 id
+ * 只对应其中一局，只展示一局会让人把某一局的阵容当成整场的阵容。
  */
-const draft = (await loadMatchDrafts([match])).get(match.id) ?? null;
+const series = (await loadMatchDrafts([match])).get(match.id) ?? null;
 const now = Math.floor(Date.now() / 1000);
 const st = MATCH_STATUS_META[match.status];
 
@@ -50,15 +54,33 @@ function initial(name: string): string {
 	return name.trim().slice(0, 2).toUpperCase();
 }
 
-/** 按日历的主客队把选手拆到两侧，0 = 主队，1 = 客队。 */
-const draftSides = draft
-	? [0, 1].map((side) => ({
-			side,
-			name: side === 0 ? match.home.name : match.away.name,
-			players: draft.players.filter((player) => (player.home ? 0 : 1) === side),
-			picks: draft.picks.filter((hero) => hero.team === side),
-		}))
-	: [];
+/** 按日历的主客队把这一局的选手拆到两侧，0 = 主队，1 = 客队。 */
+function sidesOf(game: MatchDraftGame) {
+	return [0, 1].map((side) => ({
+		side,
+		name: side === 0 ? match.home.name : match.away.name,
+		players: game.players.filter((player) => (player.home ? 0 : 1) === side),
+		picks: game.picks.filter((hero) => hero.team === side),
+	}));
+}
+
+/** 秒 → 34:12。 */
+function clock(seconds: number): string {
+	const minutes = Math.floor(seconds / 60);
+	return `${minutes}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/**
+ * 每局的小标题：第几局 · 时长 · 谁赢了。时长与胜者都来自 Valve 的这局数据，缺哪项就少显示哪项。
+ *
+ * 局号取 `game.ordinal`——它按系列的真实位次给，缺了一局也不会让后面的局号往前顶。
+ */
+function gameSummary(game: MatchDraftGame): string {
+	const parts = [`第 ${game.ordinal} 局`];
+	if (game.duration > 0) parts.push(clock(game.duration));
+	if (game.winner) parts.push(`${game.winner === 'home' ? match.home.name : match.away.name} 胜`);
+	return parts.join(' · ');
+}
 
 const backHref = eventExists ? `/tournaments/${match.eventId}` : '/tournaments';
 const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
@@ -66,7 +88,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 
 <Layout
 	title={`${match.home.name} vs ${match.away.name} · ${match.eventName} · DOTA2 驿站`}
-	description={`${match.eventName}：${match.home.name} 对阵 ${match.away.name} 的比赛详情，含比分、开赛时间、赛制与两队交手记录。`}
+	description={`${match.eventName}：${match.home.name} 对阵 ${match.away.name} 的比赛详情，含比分、开赛时间、赛制、每局阵容与两队交手记录。`}
 	breadcrumbs={[{ name: '赛事', href: '/tournaments' }, { name: `${match.home.name} vs ${match.away.name}` }]}
 >
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
@@ -190,91 +212,129 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 		</section>
 
 		{
-			draft ? (
+			series ? (
 				<section class="mt-10">
 					<div class="flex flex-wrap items-baseline justify-between gap-2">
 						<h2 class="font-display text-xl">英雄阵容</h2>
-						<a
-							href={draft.source === 'stratz' ? `https://stratz.com/matches/${draft.matchId}` : `https://www.opendota.com/matches/${draft.matchId}`}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="text-xs text-faint transition hover:text-gold"
-						>
-							数据来自 {draft.source === 'stratz' ? 'STRATZ' : 'OpenDota'} ↗
-						</a>
+						{series.total > 1 ? <span class="text-xs text-faint">共 {series.total} 局</span> : null}
 					</div>
 
-					<div class="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
-						{draftSides.map((side) => (
-							<div class="rounded-2xl border border-line bg-surface p-4">
-								<p class="truncate text-sm font-semibold text-cream">{side.name}</p>
-								<ul class="mt-3 space-y-2">
-									{side.players.map((player) => (
-										<li class="flex items-center gap-3">
-											{player.heroImg ? (
-												<img
-													src={player.heroImg}
-													alt=""
-													loading="lazy"
-													referrerpolicy="no-referrer"
-													class="h-8 w-14 shrink-0 rounded object-cover"
-												/>
-											) : (
-												<span class="h-8 w-14 shrink-0 rounded bg-surface-2" />
-											)}
-											<span class="min-w-0 flex-1">
-												<span class="block truncate text-sm text-cream">{player.heroName}</span>
-												<span class="block truncate text-xs text-faint">{player.name}</span>
-											</span>
-											<span class="shrink-0 text-xs tabular-nums text-muted">
-												{player.kills}/{player.deaths}/{player.assists}
-											</span>
-										</li>
-									))}
-									{side.players.length === 0
-										? side.picks.map((hero) => (
-												<li class="flex items-center gap-3">
-													{hero.img ? (
-														<img
-															src={hero.img}
-															alt=""
-															loading="lazy"
-															referrerpolicy="no-referrer"
-															class="h-8 w-14 shrink-0 rounded object-cover"
-														/>
-													) : (
-														<span class="h-8 w-14 shrink-0 rounded bg-surface-2" />
-													)}
-													<span class="min-w-0 flex-1 truncate text-sm text-cream">{hero.name}</span>
-												</li>
-											))
-										: null}
-								</ul>
-							</div>
-						))}
-					</div>
-
-					{draft.bans.length > 0 ? (
-						<div class="mt-3 rounded-2xl border border-line bg-surface p-4">
-							<p class="text-xs text-faint">禁用英雄</p>
-							<div class="mt-3 flex flex-wrap gap-2">
-								{draft.bans.map((hero) => (
-									<span class="flex items-center gap-1.5 rounded-md border border-line bg-surface-2 px-2 py-1 text-[11px] text-muted">
-										{hero.img ? (
-											<img
-												src={hero.img}
-												alt=""
-												loading="lazy"
-												referrerpolicy="no-referrer"
-												class="h-4 w-7 rounded-sm object-cover opacity-70"
-											/>
-										) : null}
-										{hero.name}
-									</span>
+					{
+						series.games.length > 1 ? (
+							<div id="game-tablist" hidden class="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="切换小局">
+								{series.games.map((game, index) => (
+									<button
+										type="button"
+										id={`game-tab-${game.ordinal}`}
+										role="tab"
+										aria-controls={`game-panel-${game.ordinal}`}
+										aria-selected={index === 0 ? 'true' : 'false'}
+										tabindex={index === 0 ? 0 : -1}
+										class="rounded-lg border border-line px-3 py-1.5 text-sm text-muted transition hover:text-cream aria-selected:border-dota aria-selected:bg-dota/15 aria-selected:text-dota-light"
+									>
+										第 {game.ordinal} 局
+									</button>
 								))}
 							</div>
-						</div>
-					) : null}
+						) : null
+					}
+
+					{
+						series.games.map((game) => (
+							<div
+								id={`game-panel-${game.ordinal}`}
+								role="tabpanel"
+								aria-labelledby={`game-tab-${game.ordinal}`}
+								class="mt-4 rounded-2xl border border-line bg-surface"
+							>
+								<div class="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
+									<p class="text-sm text-cream">{gameSummary(game)}</p>
+									<a
+										href={game.source === 'stratz' ? `https://stratz.com/matches/${game.matchId}` : `https://www.opendota.com/matches/${game.matchId}`}
+										target="_blank"
+										rel="noopener noreferrer"
+										class="text-xs text-faint transition hover:text-gold"
+									>
+										本局数据来自 {game.source === 'stratz' ? 'STRATZ' : 'OpenDota'} ↗
+									</a>
+								</div>
+
+								<div class="px-4 pt-4 pb-4">
+									<div class="grid grid-cols-1 gap-3 lg:grid-cols-2">
+										{sidesOf(game).map((side) => (
+											<div class="rounded-xl border border-line bg-surface-2 p-4">
+												<p class="truncate text-sm font-semibold text-cream">{side.name}</p>
+												<ul class="mt-3 space-y-2">
+													{side.players.map((player) => (
+														<li class="flex items-center gap-3">
+															{player.heroImg ? (
+																<img
+																	src={player.heroImg}
+																	alt=""
+																	loading="lazy"
+																	referrerpolicy="no-referrer"
+																	class="h-8 w-14 shrink-0 rounded object-cover"
+																/>
+															) : (
+																<span class="h-8 w-14 shrink-0 rounded bg-surface" />
+															)}
+															<span class="min-w-0 flex-1">
+																<span class="block truncate text-sm text-cream">{player.heroName}</span>
+																<span class="block truncate text-xs text-faint">{player.name}</span>
+															</span>
+															<span class="shrink-0 text-xs tabular-nums text-muted">
+																{player.kills}/{player.deaths}/{player.assists}
+															</span>
+														</li>
+													))}
+													{side.players.length === 0
+														? side.picks.map((hero) => (
+																<li class="flex items-center gap-3">
+																	{hero.img ? (
+																		<img
+																			src={hero.img}
+																			alt=""
+																			loading="lazy"
+																			referrerpolicy="no-referrer"
+																			class="h-8 w-14 shrink-0 rounded object-cover"
+																		/>
+																	) : (
+																		<span class="h-8 w-14 shrink-0 rounded bg-surface" />
+																	)}
+																	<span class="min-w-0 flex-1 truncate text-sm text-cream">{hero.name}</span>
+																</li>
+															))
+														: null}
+												</ul>
+											</div>
+										))}
+									</div>
+
+									{game.bans.length > 0 ? (
+										<div class="mt-3 rounded-xl border border-line bg-surface-2 p-4">
+											<p class="text-xs text-faint">禁用英雄</p>
+											<div class="mt-3 flex flex-wrap gap-2">
+												{game.bans.map((hero) => (
+													<span class="flex items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-1 text-[11px] text-muted">
+														{hero.img ? (
+															<img
+																src={hero.img}
+																alt=""
+																loading="lazy"
+																referrerpolicy="no-referrer"
+																class="h-4 w-7 rounded-sm object-cover opacity-70"
+															/>
+														) : null}
+														{hero.name}
+													</span>
+												))}
+											</div>
+										</div>
+									) : null}
+								</div>
+							</div>
+						))
+					}
 				</section>
 			) : match.status === 'upcoming' ? null : (
 				<p class="mt-10 border-t border-line pt-6 text-xs text-faint">
@@ -310,3 +370,54 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 		}
 	</section>
 </Layout>
+
+<script>
+	/*
+	 * 小局切换。
+	 *
+	 * HTML 里每一局都是平铺的、内容不依赖 JS 才存在——所以 `#game-tablist` 默认是 `hidden`：
+	 * 脚本没跑（禁用 JS、脚本出错）时读者看到的是「每局一段」的完整内容，而不是一排点不动的
+	 * 按钮；脚本跑起来之后才收起非当前局、把标题行换成 tab。这样 SEO 与无脚本读者都不会少一局。
+	 */
+	(() => {
+		const tablist = document.getElementById('game-tablist');
+		if (!tablist) return;
+
+		const tabs = [...tablist.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+		const panels = tabs.map((tab) => document.getElementById(tab.getAttribute('aria-controls') ?? ''));
+		if (tabs.length < 2 || panels.some((panel) => panel === null)) return;
+
+		const select = (index: number, focus: boolean, syncHash: boolean) => {
+			tabs.forEach((tab, i) => {
+				const active = i === index;
+				tab.setAttribute('aria-selected', String(active));
+				tab.tabIndex = active ? 0 : -1;
+				if (panels[i]) panels[i].hidden = !active;
+			});
+			if (focus) tabs[index]?.focus();
+			// 不写进历史：读者按返回键应当是离开这一页，而不是退回上一局。
+			if (syncHash) history.replaceState(null, '', `#game-${index + 1}`);
+		};
+
+		tabs.forEach((tab, index) => {
+			tab.addEventListener('click', () => select(index, false, true));
+			tab.addEventListener('keydown', (event) => {
+				const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+				if (step !== 0) {
+					event.preventDefault();
+					select((index + step + tabs.length) % tabs.length, true, true);
+					return;
+				}
+				if (event.key !== 'Home' && event.key !== 'End') return;
+				event.preventDefault();
+				select(event.key === 'Home' ? 0 : tabs.length - 1, true, true);
+			});
+		});
+
+		// 初始：#game-N 优先（链接可以指到某一局），否则第一局；这一次不改地址栏。
+		const fromHash = Number(location.hash.match(/^#game-(\d+)$/)?.[1] ?? 1);
+		const initial = Number.isInteger(fromHash) && fromHash >= 1 && fromHash <= tabs.length ? fromHash - 1 : 0;
+		tablist.hidden = false;
+		select(initial, false, false);
+	})();
+</script>

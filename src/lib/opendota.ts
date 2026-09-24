@@ -90,15 +90,23 @@ async function cachedJson<T>(key: string, url: string, ttlSeconds: number): Prom
 	return hit ? hit.value : null;
 }
 
-/** 同 cachedJson，但只缓存裁剪后的结果（比赛详情原始响应有几百 KB）。 */
+/**
+ * 同 cachedJson，但只缓存裁剪后的结果（比赛详情原始响应有几百 KB）。
+ *
+ * TTL 可以按缓存内容给：比赛明细里 BP 是后补的，同一份数据"现在算新鲜、之后算过期"
+ * 取决于它完不完整，见 `matchDetailTtlSeconds`。
+ */
 async function cachedDerived<TRaw, TValue>(
 	key: string,
 	url: string,
-	ttlSeconds: number,
+	ttlSeconds: number | ((value: TValue) => number),
 	reduce: (raw: TRaw) => TValue,
 ): Promise<TValue | null> {
 	const hit = await readCache<TValue>(key);
-	if (hit && Date.now() - hit.at < ttlSeconds * 1000) return hit.value;
+	if (hit) {
+		const ttl = typeof ttlSeconds === 'function' ? ttlSeconds(hit.value) : ttlSeconds;
+		if (Date.now() - hit.at < ttl * 1000) return hit.value;
+	}
 	const raw = await fetchJson<TRaw>(url);
 	if (raw === null) return hit ? hit.value : null;
 	const value = reduce(raw);
@@ -403,6 +411,7 @@ interface OdMatchRaw {
 	match_id: number;
 	start_time: number;
 	radiant_win: boolean;
+	duration: number;
 	radiant_team_id: number | null;
 	dire_team_id: number | null;
 	radiant_name: string | null;
@@ -417,20 +426,51 @@ export interface OdMatchDetail {
 	startTime: number;
 	radiantTeamId: number | null;
 	direTeamId: number | null;
+	/**
+	 * 胜负与时长。这两个字段是后补的，早先写下的缓存条目里没有它们——取用方按 `null` / 0
+	 * 兜底，别当成"这场比赛没有数据"；`matchDetailTtlSeconds` 也会把这种老条目当成没补全，
+	 * 让它下一轮重建时重取一次。
+	 */
+	radiantWin?: boolean | null;
+	duration?: number;
 	picksBans: { heroId: number; isPick: boolean; team: number; order: number }[];
 	players: { heroId: number; name: string; isRadiant: boolean; kills: number; deaths: number; assists: number }[];
+}
+
+/**
+ * 没补全的明细只当 6 小时新鲜，而不是永久。
+ *
+ * "没补全"有两种：一是缺 BP——OpenDota 的 `picks_bans` 要等它把这场比赛解析完才有，
+ * 实测（2026-09-24 抽查）开赛 3.4 / 5.3 小时的两场都是 0 条，8.9 小时起的那几场都是 24 条；
+ * 二是缺后来才加进来的字段（`radiantWin` / `duration`）——解析结果落盘的是**裁剪后**的形状，
+ * 老缓存不会自己长出字段，`docs/data-sources.md` 里「加头像没升版本」记的就是这个坑。
+ *
+ * 两种都不该按"已结束的比赛不会变"缓存：原来这里是 `Number.MAX_SAFE_INTEGER`，等于把空
+ * 结果钉死，之后补上了也刷不出来。给 6 小时再看一眼，既能自愈，又保留了"抓不到就退回旧缓存"
+ * 的降级能力（比直接换缓存键稳：换键时首次抓取一旦失败，那一局会整个消失）。
+ *
+ * 代价是确实没有 BP 的对局（没被解析过的老比赛、非 CM 模式）每 6 小时重问一次。
+ * 这条路径只在 STRATZ 没有那场比赛时才会走到，一轮构建最多几场。
+ */
+const MATCH_INCOMPLETE_TTL_SECONDS = 6 * 3600;
+
+function matchDetailTtlSeconds(detail: OdMatchDetail): number {
+	const complete = detail.picksBans.length > 0 && detail.radiantWin !== undefined && detail.duration !== undefined;
+	return complete ? Number.MAX_SAFE_INTEGER : MATCH_INCOMPLETE_TTL_SECONDS;
 }
 
 export function fetchMatchDetail(matchId: number): Promise<OdMatchDetail | null> {
 	return cachedDerived<OdMatchRaw, OdMatchDetail>(
 		`match-${matchId}`,
 		`${API}/matches/${matchId}`,
-		Number.MAX_SAFE_INTEGER,
+		matchDetailTtlSeconds,
 		(raw) => ({
 			matchId: raw.match_id,
 			startTime: raw.start_time,
 			radiantTeamId: raw.radiant_team_id ?? null,
 			direTeamId: raw.dire_team_id ?? null,
+			radiantWin: raw.radiant_win ?? null,
+			duration: raw.duration ?? 0,
 			picksBans: (raw.picks_bans ?? []).map((p) => ({ heroId: p.hero_id, isPick: p.is_pick, team: p.team, order: p.order })),
 			players: (raw.players ?? []).map((p) => ({
 				heroId: p.hero_id,

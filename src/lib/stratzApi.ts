@@ -5,6 +5,7 @@ import { LANE_MIN_GAMES, LANE_POSITIONS, buildLaneSlice, type HeroLanes, type La
 import type { HeroMatchups } from './draftMatchup';
 import { createPace } from './pace';
 import { resolveStratzEndpoint } from './stratzEndpoint';
+import { byStartTime } from './matchSeries.ts';
 
 /**
  * STRATZ 数据层（api.stratz.com/graphql）。
@@ -127,10 +128,22 @@ async function writeCache<T>(key: string, value: T): Promise<void> {
 	await writeCacheFile(cachePath(CACHE_DIR, `${key}.json`), JSON.stringify({ at: Date.now(), value }));
 }
 
-/** 缓存优先；请求失败时退回过期缓存（离线构建靠它拿到上次的结果）。 */
-async function cached<T>(key: string, ttlSeconds: number, load: () => Promise<T | null>): Promise<T | null> {
+/**
+ * 缓存优先；请求失败时退回过期缓存（离线构建靠它拿到上次的结果）。
+ *
+ * TTL 可以按缓存内容给：比赛明细里 BP 是后补的，同一份数据"现在算新鲜、之后算过期"
+ * 取决于它完不完整，见 `matchTtlSeconds`。
+ */
+async function cached<T>(
+	key: string,
+	ttlSeconds: number | ((value: T) => number),
+	load: () => Promise<T | null>,
+): Promise<T | null> {
 	const hit = await readCache<T>(key);
-	if (hit && Date.now() - hit.at < ttlSeconds * 1000) return hit.value;
+	if (hit) {
+		const ttl = typeof ttlSeconds === 'function' ? ttlSeconds(hit.value) : ttlSeconds;
+		if (Date.now() - hit.at < ttl * 1000) return hit.value;
+	}
 	const fresh = await load();
 	if (fresh !== null) {
 		await writeCache(key, fresh);
@@ -250,12 +263,93 @@ function toMatch(raw: RawMatch): StratzMatch | null {
 	};
 }
 
+/**
+ * 没有 BP 的明细只当 6 小时新鲜，而不是 30 天。
+ *
+ * 实测两件事：一是比赛刚打完就抓，STRATZ 常常先给回十个选手、pickBans 还是空的；
+ * 二是这种空缺会在之后某次抓取里补上（本地缓存里一局 9 月 20 日抓的仍是空 BP，
+ * 9 月 24 日再问同一局已经有 14 个禁用）。所以"缺 BP"不能当成结论缓存一个月——
+ * 那样整局都会缺禁用英雄，而且等真的补上了也刷不出来。给 6 小时再看一眼。
+ *
+ * 代价是确实没有 BP 的对局（非 CM 模式、老比赛）每 6 小时会被重问一次；
+ * 构建一轮只访问赛事页上那几十场，可以接受。
+ */
+const MATCH_INCOMPLETE_TTL_SECONDS = 6 * 3600;
+
+function matchTtlSeconds(detail: StratzMatch): number {
+	return detail.pickBans.length > 0 ? MATCH_TTL_SECONDS : MATCH_INCOMPLETE_TTL_SECONDS;
+}
+
 /** 取一场比赛的 BP 与选手数据；取不到返回 null，由调用方回落到 OpenDota。 */
 export function fetchMatchDetail(matchId: number): Promise<StratzMatch | null> {
-	return cached<StratzMatch>(`match-${matchId}`, MATCH_TTL_SECONDS, async () => {
+	return cached<StratzMatch>(`match-${matchId}`, matchTtlSeconds, async () => {
 		const data = await query<{ match: RawMatch | null }>(MATCH_DOCUMENT, { id: matchId });
 		return data?.match ? toMatch(data.match) : null;
 	});
+}
+
+// ---------------------------------------------------------------- 系列小局
+
+/**
+ * 系列关系的 TTL。
+ *
+ * 它缓存的是"这个系列**现在**有哪些小局"——一个随时间增长的量，所以不能跟着
+ * `MATCH_TTL_SECONDS` 走 30 天：站点每 30 分钟重建一轮，只要在某轮抓到"第 1 局还在打"
+ * 的那个瞬间，之后打完的局就再也不会出现在页面上（缓存键是 Valve 比赛 id，页面每次
+ * 都落回同一个锚点）。一条查询而已，按重建频率刷新。
+ */
+const SERIES_TTL_SECONDS = 30 * 60;
+
+interface RawSeriesMatch {
+	id?: number | null;
+	startDateTime?: number | null;
+}
+
+const SERIES_DOCUMENT = `query MatchSeries($id: Long!) {
+	match(id: $id) {
+		series {
+			matches { id startDateTime }
+		}
+	}
+}`;
+
+/** 系列里的一局：只需要它是谁、什么时候开的——明细另取。 */
+export interface StratzSeriesGame {
+	id: number;
+	startTime: number;
+}
+
+/**
+ * 该场所属系列的全部小局（含它自己），按开始时间正序。
+ *
+ * 用 STRATZ 的 series 关系取，而不是靠"开赛时间接近"去猜同系列的其它小局：同一对队伍
+ * 在同一天可能打两轮（小组赛 + 淘汰赛），按时间猜会把两轮混成一个系列。
+ *
+ * 连开始时间一起取回来是有用的：中间某局取不到明细时，后面那几局的"第几局"仍然要按
+ * 系列的真实位次算，不能因为少了一局就往前顶。
+ *
+ * 不是系列赛、本场就是唯一一局、或 STRATZ 未配置/离线构建时返回空数组，
+ * 调用方据此回落到"候选列表里时间相近的几场"。
+ */
+export async function fetchSeriesGames(matchId: number): Promise<StratzSeriesGame[]> {
+	// 键带版本号：这份载荷一开始是 id 数组，后来改成 `{ id, startTime }`——**形状**变了不像
+	// "缺个字段"那样能在读的时候兜底，老缓存会被当成新形状用（每个元素取不出 id，整个系列就
+	// 白取了）。改动形状时必须换键，见 `docs/data-sources.md` 里「缓存存的是解析后的对象」。
+	const games = await cached<StratzSeriesGame[]>(`series-v2-${matchId}`, SERIES_TTL_SECONDS, async () => {
+		const data = await query<{ match: { series: { matches: RawSeriesMatch[] | null } | null } | null }>(
+			SERIES_DOCUMENT,
+			{ id: matchId },
+		);
+		// 请求失败（含未配置 token 与离线构建）：交给下次再试，不落缓存，但 `cached` 仍会
+		// 退回过期缓存——离线构建照样能拿到上一次的系列关系。
+		if (!data) return null;
+		// 查到了但没有系列（或只有它自己）：这也是结论，缓存下来免得每次重建都问一遍。
+		return (data.match?.series?.matches ?? [])
+			.filter((row): row is { id: number; startDateTime?: number | null } => typeof row.id === 'number' && row.id > 0)
+			.map((row) => ({ id: row.id, startTime: row.startDateTime ?? 0 }));
+	});
+
+	return games ? byStartTime(games) : [];
 }
 
 // ---------------------------------------------------------------- 队伍比赛
