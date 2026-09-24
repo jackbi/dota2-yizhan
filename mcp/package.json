@@ -1,6 +1,6 @@
 {
   "name": "dota2-yizhan",
-  "version": "0.4.5",
+  "version": "0.5.1",
   "description": "DOTA2 驿站 MCP：BP 陪练、阵容分析、英雄实测胜率与对位，数据来自 dota2.hiwenbin.com 构建期抓取的公开数据",
   "type": "module",
   "license": "Apache-2.0",
