@@ -80,9 +80,10 @@ for (const building of MAP_BUILDINGS) {
 	assert.ok(label?.includes(building.side === 0 ? '天辉' : '夜魇'), '建筑名要带上阵营，不然「上路一塔」不知道是谁的');
 }
 
-// 只在前述采样里出现过、却从没带过坐标的两座基地塔：给名字，不给坐标。
-assert.equal(buildingLabel(36), '天辉基地塔', '没坐标的基地塔也要能报出名字');
-assert.equal(buildingLabel(37), '夜魇基地塔', '夜魇同理');
+// 36 / 37 在推塔事件里出现过，但查不出是什么（从未出现在建筑事件里、同一场能出现 6 次），
+// 所以一律不给名字——编一个名字会印出 8 条「夜魇基地塔倒塌」这种一眼假的东西。
+assert.equal(buildingLabel(36), null, '认不出的建筑不编名字');
+assert.equal(buildingLabel(37), null, '同一个 37 能在一场里出现 6 次，更不该叫基地塔');
 assert.equal(buildingLabel(9999), null, '认不出的 npcId 交回调用方兜底，不能编一个名字');
 assert.equal(buildingLabel(16), '天辉上路一塔', '中英混排的标签示例');
 assert.equal(buildingLabel(28), '夜魇下路一塔', '夜魇下路要沿着右边那条路归位');

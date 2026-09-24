@@ -81,21 +81,22 @@ export const MAP_BUILDINGS: MapBuilding[] = [
 const BUILDING_BY_NPC = new Map(MAP_BUILDINGS.map((building) => [building.npcId, building]));
 
 /**
- * 只能给名字、给不出坐标的建筑。
+ * npcId → 中文名；认不出的返回 null，调用方退回「未识别建筑 #id」。
  *
- * 每方有**两座**基地塔，但 `buildingEvents` 里始终只出现过一座（25 / 35）——另一座在采样的
- * 4 场里从没被记录过坐标。它却真的会在推基地时倒塌（推塔事件里出现过 36 / 37），所以：
- * 文案照给，地图上不画，免得凭空捏一个坐标。
+ * **36 / 37 故意不给名字**：它们确实出现在推塔事件里，但查不出是什么。
+ *
+ * 一开始这里写过「天辉 / 夜魇基地塔」，理由是"每方两座基地塔、事件里只出现过一座"——错了。
+ * 实测三条反证：一是它们**从未出现在 `buildingEvents`**（其余建筑 16–51 都有坐标与血量事件，
+ * 说明 36/37 不在这套事件跟踪的建筑里）；二是 `towerStatusDire` 的 11 位掩码里**已经包含**
+ * 25 / 35 覆盖的那一对基地塔（9012488967 掉了 9 座外塔，掩码正好剩 2 位，而 35 一次没掉）；
+ * 三是同一个 37 在一场里出现 **6 次**（9012784253：35:06 / 36:02 / 46:30 / 51:55 / 58:17 /
+ * 62:27），照原来的名字会印出 8 条「夜魇基地塔倒塌」——玩家一眼就知道数据坏了。
+ *
+ * 查不出就别起名。真要看这几条事件，编号本身比一个编出来的名字诚实。
  */
-const LABEL_ONLY: Record<number, string> = {
-	36: '天辉基地塔',
-	37: '夜魇基地塔',
-};
-
-/** npcId → 中文名；认不出的返回 null，调用方退回「建筑 #id」。 */
 export function buildingLabel(npcId: number): string | null {
 	const building = BUILDING_BY_NPC.get(npcId);
-	if (!building) return LABEL_ONLY[npcId] ?? null;
+	if (!building) return null;
 	const side = building.side === 0 ? '天辉' : '夜魇';
 	if (building.kind === 'fort') return `${side}王座`;
 	if (building.kind === 'barracks') return `${side}${LANE_TEXT[building.lane ?? 'mid']}兵营`;

@@ -333,7 +333,7 @@ function toReview(raw: RawReviewMatch): MatchReview | null {
 		.map((fall) => ({
 			time: fall.time as number,
 			npcId: fall.npcId as number,
-			label: buildingLabel(fall.npcId as number) ?? `建筑 #${fall.npcId}`,
+			label: buildingLabel(fall.npcId as number) ?? `未识别建筑 #${fall.npcId}`,
 			side: (fall.isRadiant ? 0 : 1) as MapSide,
 			attackerHeroId: typeof fall.attacker === 'number' && fall.attacker > 0 ? fall.attacker : null,
 		}))
