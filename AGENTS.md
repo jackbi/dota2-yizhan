@@ -12,6 +12,12 @@ Manage the background server with `astro dev stop`, `astro dev status`, and `ast
 
 基于 Conventional Commits。提交前用 `git status` 确认范围、`git add <files>` 只加入本次相关文件，并 `git diff --cached` 自检。
 
+### 分支约定
+
+- **日常开发与修 bug 都在 `develop` 分支进行**，`main` 只保留可发布的状态——改动先提交到 `develop`，需要发布时再合并上去
+- 开会话时先 `git branch --show-current` 确认在 `develop` 上，别在 `main` 上直接改
+- 没有明确要求就不要推送远程（`git push`），更不要发布（`wrangler deploy`、站点定时重建）；本地提交是默认动作，推送与发布都要单独确认
+
 ### 提交粒度
 
 - 单次提交只做一类变更（feat / fix / docs …），不要混入无关的格式化、临时调试代码或未完成的实验性修改
