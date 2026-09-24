@@ -31,6 +31,7 @@ dota2 分屏 看直播         → /live
 | 薄页面不收录 | `src/lib/itemCatalog.ts` 的 `isThinItem`、`astro.config.mjs` 的 `sitemap-exclusions` | 121 个只有价格、一句描述都没有的条目（图纸、活动道具、部分中立物品）页面照旧生成——配方里点进去不能 404——但带 `noindex` 且不进 sitemap。**`@astrojs/sitemap` 不认页面的 noindex**（实测 520 个装备页一个没少），所以还得在配置里按 URL 过滤，判据共用一份 `isThinItem` |
 | 版本页 ↔ 装备页 互链 | `src/lib/patchItems.ts`、`patchNotes.renderItem` | 与英雄那条对称：版本页里每个被改到的装备名链到 `/items/<内部名>`，装备页有「版本改动记录」（最多列最近 12 个版本）。全站实测 4017 个指向装备页的链接、零死链 |
 | 404 页 | `src/pages/404.astro` | 原先没有，Cloudflare 拿默认页顶上，站内导航全丢。现在带 `noindex`（404 不该被收录）与六个板块入口；workerd 本地实测 `/no-such-page/`、`/heroes/nope/` 都是 404 + 这一页 |
+| 对局复盘不收录 | `src/pages/replay/[id].astro` | 这条路由的 URL 空间是**无界**的（任何 Valve 比赛 id 都能渲染一页），对搜索引擎没有价值，而每次抓取都要打一次上游，所以带 `noindex`；它本来也是 `prerender = false`，不进 sitemap。入口在赛事对阵页与个人战绩页，读者照常点得进去 |
 
 **一个容易改错的地方**：线上 `robots.txt` 前半截是 Cloudflare 的 Content Signals 说明块——那是
 Cloudflare 托管的策略文本，它**拼在你自己的 robots.txt 前面**一起返回。要改就改
