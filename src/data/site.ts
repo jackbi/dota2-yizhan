@@ -28,11 +28,15 @@ export const PLATFORM_META: Record<Platform, { label: string; color: string; sho
  * 「每 30 分钟重建、内容必须新鲜」的方向是相反的。
  *
  * 选 Cloudflare Web Analytics 的理由：无 Cookie、不采指纹（不需要隐私弹窗）、与站点同属
- * 一个厂商（国内可达性与站点本身一致）、只要一个 `defer` 脚本不影响渲染。代价是它不直接给
- * 「回访占比」，用「访问次数 ÷ 独立访客」当代理指标（见文档）。
+ * 一个厂商（国内可达性与站点本身一致）、只要一个 `defer` 脚本不影响渲染。代价是它不给
+ * 独立访客与新老访客，只能用「访问量的时间稳定性 + 页面浏览量 ÷ 访问量」来拼回访（见文档）。
  *
  * `cfBeaconToken` 是公开值（它本来就要出现在 HTML 里），在 Cloudflare 面板
- * **Web Analytics → 添加站点** 里拿。**留空 = 完全不打点**，页面不会多出任何第三方请求。
+ * **Web Analytics → 添加站点** 里拿。
+ *
+ * **默认留空，而且通常就该留空**：主域已经开了自动注入，面板里直接能看到本站数据——这时再配
+ * token 会变成两套 beacon 各记一次，页面浏览量与访问量翻倍。只有站点搬到自动注入不生效的地方
+ * 才需要它。留空时 Layout 一行脚本都不输出。
  */
 export const ANALYTICS = {
 	cfBeaconToken: '',
