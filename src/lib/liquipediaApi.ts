@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { EsportsMatch } from '../data/types';
 import { readCacheJson, writeCacheFile } from './buildCache';
-import { routeSlug } from './routeSlug';
+import { parseBracketMatches, parseMatches } from './liquipediaParse';
 
 /**
  * Liquipedia 赛事日历（MediaWiki `action=parse`）。
@@ -39,18 +39,6 @@ const CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'matches.jso
 const TTL_SECONDS = 30 * 60;
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
-/** 路径段规则见 `routeSlug`（赛事页与队伍页共用一套）。 */
-const slug = routeSlug;
-
-/** 赛事页路径 → 站内展示用的赛事名，例如 `BLAST/SLAM/9/Southeast_Asia` → `BLAST SLAM 9 Southeast Asia`。 */
-function eventNameFromPath(wikiPath: string): string {
-	return wikiPath
-		.split('/')
-		.map((segment) => segment.replace(/_/g, ' ').trim())
-		.filter(Boolean)
-		.join(' ');
-}
-
 interface CacheEntry {
 	at: number;
 	value: EsportsMatch[];
@@ -68,8 +56,9 @@ function writeCache(value: EsportsMatch[]): Promise<void> {
 	return writeCacheFile(CACHE_FILE, JSON.stringify({ at: Date.now(), value }));
 }
 
-async function fetchPage(): Promise<string | null> {
-	const url = `${API}?action=parse&format=json&page=${encodeURIComponent(PAGE)}`;
+/** 解析一个页面。`page` 只由站内自己拼出来的路径传入（赛事页补全见下），不是用户输入。 */
+async function fetchPage(page: string = PAGE): Promise<string | null> {
+	const url = `${API}?action=parse&format=json&page=${encodeURIComponent(page)}`;
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), 45_000);
 	try {
@@ -83,100 +72,6 @@ async function fetchPage(): Promise<string | null> {
 	} finally {
 		clearTimeout(timer);
 	}
-}
-
-// ---------------------------------------------------------------- 解析
-
-interface ParsedTeam {
-	name: string;
-	short: string;
-	logo?: string;
-}
-
-const TEAM_ANCHOR_RE = /team-template-image-icon">\s*<a[^>]*title="([^"]*)"/;
-const TEAM_SHORT_RE = /<span class="name"[^>]*>\s*<a[^>]*>([^<]*)<\/a>/;
-const TEAM_LOGO_RE = /<img[^>]*src="([^"]*)"/;
-
-/**
- * 从"主队或客队那一段"里取队伍信息。
- * 调用方已经用比分栏把一段比赛切成左右两半，所以这里取第一支队伍即可；
- * 找不到（对阵未定，Liquipedia 用 TBD 占位）时返回 null，整场跳过。
- */
-function parseTeam(part: string): ParsedTeam | null {
-	const start = part.indexOf('<div class="block-team');
-	if (start === -1) return null;
-	const segment = part.slice(start);
-	const name = segment.match(TEAM_ANCHOR_RE)?.[1]?.trim();
-	if (!name) return null;
-	const logo = segment.match(TEAM_LOGO_RE)?.[1];
-	return {
-		name,
-		short: segment.match(TEAM_SHORT_RE)?.[1]?.trim() ?? '',
-		logo: logo ? `https://liquipedia.net${logo}` : undefined,
-	};
-}
-
-/** 比分栏在未开赛时是 "vs"，已开赛是 `2 : 0` 这种带标签的结构，去掉标签再取数字。 */
-function parseScore(upperHtml: string | undefined): [number, number] | null {
-	if (!upperHtml) return null;
-	const text = upperHtml.replace(/<[^>]+>/g, ' ').trim();
-	if (!text || /vs/i.test(text)) return null;
-	const numbers = text.match(/\d+/g);
-	return numbers && numbers.length >= 2 ? [Number(numbers[0]), Number(numbers[1])] : null;
-}
-
-function parseMatches(html: string, nowSec: number): EsportsMatch[] {
-	const out: EsportsMatch[] = [];
-	const seen = new Set<string>();
-	// 每场比赛是一个 `<div class="match-info">`；切出来的一段自然以该场开头，
-	// 所以"第一处匹配"必定属于这一场，不会串到下一场。
-	for (const block of html.split('<div class="match-info">').slice(1)) {
-		const timerAttrs = block.match(/<span class="timer-object[^"]*"([^>]*)>/)?.[1];
-		const startTime = Number(timerAttrs?.match(/data-timestamp="(\d+)"/)?.[1] ?? 0);
-		if (!startTime) continue;
-
-		const [leftPart, rightPart] = block.split('class="match-info-header-scoreholder"');
-		const home = leftPart ? parseTeam(leftPart) : null;
-		const away = rightPart ? parseTeam(rightPart) : null;
-		// 一方未定的比赛没有对阵，跳过而不是编一个占位队名。
-		if (!home || !away) continue;
-
-		const finished = Boolean(timerAttrs?.includes('data-finished="finished"'));
-		const status = finished ? 'completed' : startTime > nowSec ? 'upcoming' : 'live';
-
-		const boText = block.match(/scoreholder-lower">\(?Bo(\d)\)?/)?.[1];
-		const upperHtml = block.match(
-			/scoreholder-upper">([\s\S]*?)<\/span>\s*<span class="match-info-header-scoreholder-lower"/,
-		)?.[1];
-		const score = status === 'upcoming' ? null : parseScore(upperHtml);
-		// 胜方由比分区上的高亮决定，比"比谁大"更可靠（也适用于还没显示比分的场景）。
-		const homeWon = /match-info-header-opponent-left[^"]*match-info-header-winner|match-info-header-winner[^"]*match-info-header-opponent-left/.test(
-			leftPart ?? '',
-		);
-		const awayWon = Boolean(rightPart && rightPart.split('match-info-tournament')[0]?.includes('match-info-header-winner'));
-
-		const eventPath = block.match(/league-icon-small-image[^>]*>\s*<a href="([^"]+)"/)?.[1]?.replace(/^\/dota2\//, '').split('#')[0];
-		if (!eventPath) continue;
-
-		const id = `lp-${startTime}-${slug(home.name)}-${slug(away.name)}`;
-		if (seen.has(id)) continue;
-		seen.add(id);
-
-		out.push({
-			id,
-			eventId: slug(eventPath),
-			eventName: eventNameFromPath(eventPath) || eventPath,
-			startTime,
-			status,
-			bo: boText ? Number(boText) : undefined,
-			home: { id: `lp-team-${slug(home.name)}`, name: home.name, logo: home.logo, score: score?.[0] },
-			away: { id: `lp-team-${slug(away.name)}`, name: away.name, logo: away.logo, score: score?.[1] },
-			winner: homeWon ? 'home' : awayWon ? 'away' : undefined,
-			source: 'liquipedia',
-			sourceUrl: `https://liquipedia.net/dota2/${eventPath}`,
-		});
-	}
-	return out;
 }
 
 let matchesPromise: Promise<EsportsMatch[]> | null = null;
@@ -200,4 +95,103 @@ export function fetchLiquipediaMatches(): Promise<EsportsMatch[]> {
 		return matches;
 	})();
 	return matchesPromise;
+}
+
+/*
+ * ---- 赛事页补全 ------------------------------------------------------------------
+ *
+ * 主赛程页是**滚动窗口**，它只保证「未来赛程 + 近期赛果」；一届赛事打了一周之后，前面的对阵
+ * 就滚出去了。读者点进赛事页看到的于是只是其中一角——「PGL Wallachia 9 显示即将开始、
+ * 9013522151 不在列表里」就是这一类。
+ *
+ * 赛事页（含阶段子页）才是完整的，所以按主表里出现过的页面路径再补一遍。抓哪些页面完全由
+ * 已有数据决定，不做「遍历所有赛事」那种事——那是拿别人的重接口当爬虫。
+ */
+
+const EVENT_CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'events.json');
+/** 赛事页变得慢（对阵公布、比分陆续补上），而且它补的是已经滚出去的历史，缓存给到 6 小时。 */
+const EVENT_TTL_SECONDS = 6 * 3600;
+/** 一轮构建最多补几个页面：这是在别人家的重接口上花钱，宁可少抓几个。 */
+const MAX_EVENT_PAGES = 8;
+/** 两次赛事页请求之间的间隔，Liquipedia 的 API 条款要求低频调用。 */
+const EVENT_PAGE_GAP_MS = 1200;
+
+interface EventCacheEntry {
+	at: number;
+	matches: EsportsMatch[];
+}
+
+type EventCache = Record<string, EventCacheEntry>;
+
+async function readEventCache(): Promise<EventCache> {
+	const hit = await readCacheJson<EventCache>(EVENT_CACHE_FILE, (value) => typeof value === 'object' && value !== null);
+	return hit?.value ?? {};
+}
+
+function writeEventCache(cache: EventCache): Promise<void> {
+	return writeCacheFile(EVENT_CACHE_FILE, JSON.stringify(cache));
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+let eventMatchesPromise: Promise<EsportsMatch[]> | null = null;
+
+/**
+ * 给定主表里出现过的页面路径，取回这些页面的完整对阵。
+ *
+ * 拿不到页面一律**退回旧缓存**、连缓存都没有就跳过——补全失败不该让赛事页整块消失，
+ * 主表那份数据照常展示。
+ */
+export function fetchLiquipediaEventMatches(pagePaths: string[]): Promise<EsportsMatch[]> {
+	eventMatchesPromise ??= loadEventMatches(pagePaths);
+	return eventMatchesPromise;
+}
+
+async function loadEventMatches(pagePaths: string[]): Promise<EsportsMatch[]> {
+	const wanted = [...new Set(pagePaths.map((pagePath) => pagePath.trim()).filter(Boolean))].slice(0, MAX_EVENT_PAGES);
+	if (wanted.length === 0) return [];
+
+	const cache = await readEventCache();
+	const nowSec = Math.floor(Date.now() / 1000);
+	// 只留这一轮要用的键：赛事结束后它的页面自然从缓存里消失，不会越攒越多。
+	const next: EventCache = {};
+	const out: EsportsMatch[] = [];
+	let fetched = 0;
+
+	for (const pagePath of wanted) {
+		const cached = cache[pagePath];
+		const carry = (): void => {
+			if (!cached) return;
+			next[pagePath] = cached;
+			out.push(...cached.matches);
+		};
+
+		if (cached && Date.now() - cached.at < EVENT_TTL_SECONDS * 1000) {
+			carry();
+			continue;
+		}
+		if (OFFLINE) {
+			carry();
+			continue;
+		}
+		// 第二次请求起才等：大多数轮次整页命中缓存，不该平白多等。
+		if (fetched > 0) await sleep(EVENT_PAGE_GAP_MS);
+		fetched += 1;
+
+		const html = await fetchPage(pagePath);
+		if (!html) {
+			carry();
+			continue;
+		}
+		const matches = parseBracketMatches(html, pagePath, nowSec);
+		if (matches.length === 0) {
+			carry();
+			continue;
+		}
+		next[pagePath] = { at: Date.now(), matches };
+		out.push(...matches);
+	}
+
+	await writeEventCache(next);
+	return out;
 }

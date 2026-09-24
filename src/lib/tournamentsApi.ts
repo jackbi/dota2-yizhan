@@ -2,7 +2,7 @@ import path from 'node:path';
 import { seedEvents } from '../data/tournaments';
 import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
-import { LIQUIPEDIA_LABEL, fetchLiquipediaMatches } from './liquipediaApi';
+import { LIQUIPEDIA_LABEL, fetchLiquipediaEventMatches, fetchLiquipediaMatches } from './liquipediaApi';
 import { routeSlug } from './routeSlug';
 import type {
 	DataSource,
@@ -206,6 +206,15 @@ function dedupeMatches(matches: EsportsMatch[]): EsportsMatch[] {
 	return out;
 }
 
+/**
+ * 从 `sourceUrl` 取回 Liquipedia 的页面路径（去掉主机与锚点），给赛事页补全用。
+ * 只认站内自己拼出来的 liquipedia 链接，不是用户输入。
+ */
+function liquipediaPagePath(match: EsportsMatch): string {
+	if (match.source !== 'liquipedia' || !match.sourceUrl) return '';
+	return match.sourceUrl.match(/^https:\/\/liquipedia\.net\/dota2\/(.+)$/)?.[1] ?? '';
+}
+
 function eventStatus(matches: EsportsMatch[]): MatchStatus {
 	if (matches.some((m) => m.status === 'live')) return 'live';
 	if (matches.some((m) => m.status === 'upcoming')) return 'upcoming';
@@ -367,6 +376,23 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 		calendarMatches = calendarOk ? calendarRes.value : [];
 		calendarFromPrimary = calendarMatches.length > 0;
 		opendotaLive = liveOk ? liveRes.value : [];
+
+		/*
+		 * 补全整届赛事。主表是滚动窗口，一届赛事打了一周之后前面的对阵就滚出去了，
+		 * 赛事页（含小组赛这类阶段子页）才是完整的。
+		 *
+		 * 主表那份排在前面：它的状态与比分随每轮重建更新，赛事页补的是主表没有的历史。
+		 * 补全失败不影响主表那份——顶多是赛事页少几场旧对阵。
+		 */
+		if (calendarMatches.length > 0) {
+			const pages = calendarMatches.map(liquipediaPagePath).filter(Boolean);
+			try {
+				const complete = await fetchLiquipediaEventMatches(pages);
+				calendarMatches = dedupeMatches([...calendarMatches, ...complete]);
+			} catch {
+				// 上游抖动：照旧用主表那份。
+			}
+		}
 
 		if (calendarMatches.length === 0) {
 			// 主源不可用：赛果先留着，既能刷新缓存日历，也是没有缓存时的兜底日历。
