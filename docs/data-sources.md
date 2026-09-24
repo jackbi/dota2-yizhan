@@ -159,6 +159,12 @@ Builder Policy + new approval process for API access」）结束了自助 API �
   真再看到 403，先在浏览器 Network 里确认请求头里到底有没有 Referer，别顺手去升
   `hupu-thread-v2-` 缓存键（那次改动没动到 `sanitizeHupuHtml()`，升了也没用）。
 - **Reddit 缩略图**：`i.redd.it` 和 `i*.hdslb.com` 一样会被重置，`/news/reddit/[id]` 的图因此经常不出。
+- **Valve CDN 的英雄图**：`cdn.cloudflare.steamstatic.com` 在国内网络动不动就
+  `ERR_CONNECTION_RESET`，一整排英雄图一起裂。曾经只有"官方列表取不到就退回 OpenDota"
+  这一条兜底，而那份兜底的图正指着它——离线构建或官网接口抖一下，对阵页就全是英文名 + 裂图
+  （2026-09-24 实测：本机离线构建的对阵页整整 15 页带这个域名，线上没有）。现在的兜底是
+  「先读带缓存的官方列表（中文名 + `img.dota2.com.cn`），最后才退到 OpenDota，且图换到
+  `cdn.dota2.com.cn`」——同一条路径两边都有，实测都是 200。
 
 **两种全屏是并列的**，都在右侧工具栏里，共用一套沉浸样式：
 

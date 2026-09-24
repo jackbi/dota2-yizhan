@@ -1,7 +1,7 @@
 import path from 'node:path';
 import type { TeamRef } from '../data/types';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
-import { fetchHeroList } from './heroApi';
+import { fetchHeroListCached } from './heroList';
 import { createPace } from './pace';
 
 /**
@@ -143,13 +143,21 @@ let heroMapPromise: Promise<Map<number, HeroInfo>> | null = null;
 
 /**
  * 英雄 id 与站内英雄页完全一致，所以优先取中文名与国语站点图；
- * 国语接口不可用时退回 OpenDota 的英文名与 Valve CDN 图。
+ * 国语接口不可用时退回 OpenDota 的英文名与国语 CDN 图。
+ *
+ * 中文名与"图能不能显示"是同一件事的两面：兜底那份的图原本指着
+ * `cdn.cloudflare.steamstatic.com`，而国内网络对它动不动就是 `ERR_CONNECTION_RESET`——
+ * 对阵页上十张英雄图一起裂。实测 `cdn.dota2.com.cn` 有完全相同的路径（`/apps/dota2/images/
+ * dota_react/heroes/<slug>.png`），所以兜底也换到国语 CDN。
+ *
+ * 另外这里走的是**带磁盘缓存**的 `fetchHeroListCached()`：官网接口抖一下或离线构建时，
+ * 它就是"上一次那份中文列表"，而不是直接掉到英文兜底（离线构建对阵页全是英文名 + 裂图的来路）。
  */
 export async function getHeroMap(): Promise<Map<number, HeroInfo>> {
 	heroMapPromise ??= (async () => {
 		const map = new Map<number, HeroInfo>();
 		try {
-			for (const hero of await fetchHeroList()) map.set(hero.id, { name: hero.name, img: hero.img });
+			for (const hero of await fetchHeroListCached()) map.set(hero.id, { name: hero.name, img: hero.img });
 		} catch {
 			// 下面用 OpenDota 兜底。
 		}
@@ -160,7 +168,7 @@ export async function getHeroMap(): Promise<Map<number, HeroInfo>> {
 				const slug = hero.name.replace(/^npc_dota_hero_/, '');
 				map.set(hero.id, {
 					name: hero.localized_name || slug,
-					img: `https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${slug}.png`,
+					img: `https://cdn.dota2.com.cn/apps/dota2/images/dota_react/heroes/${slug}.png`,
 				});
 			}
 		}
