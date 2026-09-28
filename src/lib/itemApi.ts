@@ -69,7 +69,12 @@ export function cleanItemText(input: string): string {
 }
 
 async function getJson(url: string): Promise<any> {
-	const res = await fetch(url, { headers: { Accept: 'application/json' } });
+	/*
+	 * 带超时：这是 `src/lib` 里唯一一个裸 fetch（其它取数都带 signal）。它是构建期与浏览器里都会
+	 * 跑的取数口，上游挂起时没有超时就等于把那一轮构建或那颗按钮挂在那里——`itemCatalog` 那边
+	 * 同一个接口用的是 30 秒，这里保持一致。
+	 */
+	const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(30_000) });
 	if (!res.ok) throw new Error(`HTTP ${res.status}`);
 	return res.json();
 }
