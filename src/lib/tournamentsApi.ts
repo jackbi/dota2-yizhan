@@ -127,7 +127,12 @@ async function loadOpenDotaLive(): Promise<EsportsMatch[]> {
 			id: `od-live-${item.match_id}`,
 			eventId: `od-league-${item.league_id ?? 0}`,
 			eventName: item.league_id ? `职业联赛 #${item.league_id}` : '职业对局',
-			startTime: item.activate_time ?? Math.floor(Date.now() / 1000),
+			/*
+			 * `activate_time` 是 0 时说明还没定开赛时间，用当前时刻兜底——`??` 挡不住 0
+			 * （它只挡 null / undefined），照原样传下去卡片上会印出 1970 年。
+			 * 进行中的比赛本来就是"现在在打"，取当前时刻语义也对。
+			 */
+			startTime: item.activate_time || Math.floor(Date.now() / 1000),
 			status: 'live',
 			home: { id: teamPath(item.team_name_radiant), name: item.team_name_radiant, score: item.radiant_score },
 			away: { id: teamPath(item.team_name_dire), name: item.team_name_dire, score: item.dire_score },

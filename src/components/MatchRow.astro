@@ -24,6 +24,13 @@ const hasScore =
 	typeof match.home.score === 'number' &&
 	typeof match.away.score === 'number';
 
+/*
+ * 时间必须真有：上游把开赛时间给成 0 时（OpenDota 的进行中比赛会这样），
+ * `new Date(0).toISOString()` 是合法的「1970-01-01」——卡片上会多出一个看着像真日期、
+ * 其实毫无意义的值。`draft.astro` 对同一个字段早就有这道守卫。
+ */
+const hasTime = Number.isFinite(match.startTime) && match.startTime > 0;
+
 function initial(name: string): string {
 	return name.trim().slice(0, 2).toUpperCase();
 }
@@ -38,7 +45,11 @@ function initial(name: string): string {
 			{st.dot && <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-current"></span>}
 			{st.label}
 		</span>
-		<time datetime={new Date(match.startTime * 1000).toISOString()} class="text-muted">{formatMatchTime(match.startTime, now)}</time>
+		{hasTime ? (
+			<time datetime={new Date(match.startTime * 1000).toISOString()} class="text-muted">{formatMatchTime(match.startTime, now)}</time>
+		) : (
+			<span class="text-faint">时间待定</span>
+		)}
 		{match.bo ? <span class="rounded border border-line px-1.5 py-0.5 text-faint">BO{match.bo}</span> : null}
 		{showEvent ? <span class="truncate text-faint">{match.eventName}</span> : null}
 	</div>
