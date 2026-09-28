@@ -308,12 +308,24 @@ function toInventory(rows: RawInventory[] | null | undefined): GuideInventory[] 
  * 玩家数据里猜更直接。选手不在这一场里（参数被改过）时返回 null。
  */
 export function loadGuideDetail(matchId: number, steamAccountId: number, heroId: number): Promise<GuideDetailView | null> {
-	return cached(`stratz-guide-detail:${matchId}:${steamAccountId}`, DETAIL_TTL_MS, async () => {
+	/*
+	 * 键里必须带 heroId：这份详情里的技能名、图标、天赋树全是按 heroId 取的，而 (matchId, accountId)
+	 * 这一对本身推不出是哪个英雄——heroId 来自 URL。少了它，同一场比赛同一个选手换一个 heroId 再请求
+	 * 就会命中上一份缓存，把别的英雄的加点与天赋显示出来。
+	 */
+	return cached(`stratz-guide-detail:${matchId}:${steamAccountId}:${heroId}`, DETAIL_TTL_MS, async () => {
 		const [data, hero, items] = await Promise.all([stratzGql<{ match: RawGuideMatch | null }>(GUIDE_DETAIL_DOCUMENT, { id: matchId }), safeHero(heroId), safeItems()]);
 		const match = data?.match;
 		if (!match) return null;
 		const player = (match.players ?? []).find((entry) => entry.steamAccountId === steamAccountId);
 		if (!player) return null;
+		/*
+		 * 光换缓存键还不够：`/api/hero/guide` 在攻略索引取不到时是**放行**的（上游抖动不该把详情
+		 * 一起挡掉），那条路上 heroId 没有任何校验。这里拿比赛数据自己核一遍——这位选手这场玩的
+		 * 不是这个英雄就返回 null，别让页面拿另一个英雄的技能表拼出一份看着正常的攻略。
+		 * 上游没给 heroId 时不做判断（不能凭缺失的信息下结论）。
+		 */
+		if (player.heroId != null && player.heroId !== heroId) return null;
 
 		/*
 		 * 官方 datafeed 里天赋是独立一份（`talents`），id 与 STRATZ 的 abilityId 一致。

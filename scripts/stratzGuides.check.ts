@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { branchLit, pickedCount, talentBadge, upgradeGlyph } from '../src/lib/guideIcons.ts';
 import {
 	firstPurchaseTime,
@@ -424,6 +425,23 @@ const ok = (label: string): void => {
 	assert.notEqual(scepter, upgradeGlyph('scepter', false, 'h-8 w-8'), '出没出的宝石颜色不同');
 	assert.notEqual(shard, upgradeGlyph('shard', false, 'h-8 w-8'), '出没出的翼色不同');
 	ok('蓝杖/魔晶：形状与点亮状态');
+}
+
+/*
+ * 缓存键与英雄归属。
+ *
+ * 这两条都只能从代码上看出来，页面上不会报错——只会安静地显示**另一个英雄**的加点与天赋：
+ *
+ * - 详情里的技能名、图标、天赋树全按 `heroId` 取，而 (matchId, accountId) 这一对推不出是哪个英雄
+ *   （`heroId` 来自 URL），键里少了它，换个 heroId 再请求就会命中上一份缓存；
+ * - `/api/hero/guide` 在攻略索引取不到时是放行的（上游抖动不该把详情一起挡掉），那条路上
+ *   `heroId` 没有任何校验，所以要拿比赛数据自己核一遍「这位选手这场玩的是不是这个英雄」。
+ */
+{
+	const source = readFileSync(new URL('../src/lib/stratzGuides.ts', import.meta.url), 'utf8');
+	assert.match(source, /stratz-guide-detail:\$\{matchId\}:\$\{steamAccountId\}:\$\{heroId\}/, '攻略详情的缓存键必须带 heroId');
+	assert.match(source, /player\.heroId !== heroId/, '要核对这位选手这场玩的是不是这个英雄');
+	ok('攻略详情：缓存键带 heroId，且核对英雄归属');
 }
 
 console.log(`stratzGuides 全部断言通过（${cases} 组）`);
