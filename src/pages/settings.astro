@@ -110,9 +110,11 @@ import { AI_PROVIDERS } from '../lib/aiProviders';
 		</section>
 
 		<p class="mt-6 text-xs leading-relaxed text-faint">
-			配置存的是「用哪家、哪把 key、哪个模型」，请求体本身仍是 OpenAI 兼容的
-			<code>chat/completions</code>。少数服务商专有的参数（比如 DeepSeek 那个必须关掉的思考开关）
-			会按地址自动处理，更细的分家适配还没做——填了别的地址如果报参数错误，多半是这个原因。
+			配置存的是「用哪家、哪把 key、哪个模型」，请求体是 OpenAI 兼容的
+			<code>chat/completions</code>。服务商专有的参数按地址自动处理：DeepSeek 那个必须关掉的
+			思考开关只发给它，OpenAI 与 Grok 的输出上限走 <code>max_completion_tokens</code>；
+			万一还是被 400 拒掉，会依次去掉 <code>response_format</code> 与 <code>temperature</code> 再试。
+			预设里没有的服务商按最保守的一套发（只发两边都认的基础字段）。
 			不配也能用：阵容分析的候选、胜率、复盘数字全部由本站数据算出，配置只影响那段文字解释。
 		</p>
 	</div>

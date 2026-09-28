@@ -139,6 +139,11 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 				<input id="draft-ai-side" type="checkbox" class="h-3.5 w-3.5 accent-[#c6522c]" />
 				对面交给 AI
 			</label>
+			<!--
+				开关旁边就写清它为什么是灰的。原因只在下面设置区里存一份等于没说——那个距离
+				有一百多行，而且用户的第一反应是盯着这个点不动的开关。
+			-->
+			<span id="draft-ai-hint" class="text-xs text-faint" data-bp-only role="status" aria-live="polite"></span>
 
 			<div class="ml-auto flex items-center gap-2" data-bp-only>
 				<button id="draft-undo" type="button" class="filter-chip">撤销</button>

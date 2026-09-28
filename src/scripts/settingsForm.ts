@@ -49,6 +49,14 @@ const modelOptions = element<HTMLDataListElement>('settings-model-options');
 const providerChips = [...document.querySelectorAll<HTMLButtonElement>('[data-provider]')];
 
 let config: AiConfig = loadAiConfig();
+/**
+ * 上一次「拉取模型列表」的结果，以及它是给哪个地址拉的。
+ *
+ * 记下地址是为了让它能被重画：保存、测试连接、清 key 都会重画那一块，如果每次都回落到内置的
+ * 一两个建议值，用户拉完列表再点保存就白拉了，换第二个模型还得再打一次 `/models`。
+ */
+let fetchedModels: string[] = [];
+let fetchedFor = '';
 
 function setStatus(text: string): void {
 	if (statusEl) statusEl.textContent = text;
@@ -87,11 +95,16 @@ function renderProviders(): void {
 	for (const chip of providerChips) chip.setAttribute('aria-pressed', String(chip.dataset.provider === id));
 	const provider = AI_PROVIDERS.find((item) => item.id === id);
 	if (providerHint) providerHint.textContent = provider?.hint ?? '';
-	fillModelOptions(provider?.models ?? []);
+	// 拉过的那份比内置建议准，优先用它；换了地址就作废（那份列表属于上一家）。
+	const cached = fetchedFor && fetchedFor === normalizeBaseUrl(baseUrlInput?.value ?? '') ? fetchedModels : [];
+	fillModelOptions(cached.length > 0 ? cached : provider?.models ?? []);
 	if (modelsState) {
-		modelsState.textContent = provider?.models?.length
-			? '可以手填；点「拉取模型列表」会向这家要一份准的。'
-			: '这家没内置建议模型名：手填，或者点「拉取模型列表」从它那儿拿。';
+		if (cached.length > 0) modelsState.textContent = `拿到 ${cached.length} 个模型，点输入框就能选`;
+		else {
+			modelsState.textContent = provider?.models?.length
+				? '可以手填；点「拉取模型列表」会向这家要一份准的。'
+				: '这家没内置建议模型名：手填，或者点「拉取模型列表」从它那儿拿。';
+		}
 	}
 }
 
@@ -211,6 +224,14 @@ for (const chip of providerChips) {
 	});
 }
 
+/*
+ * 手打地址也要重认服务商。不监听的话，输入框里换了域名，那排按钮和提示还停在上一家——
+ * 而 Ollama 与 Cloudflare 的注意事项只写在提示里，那两家恰恰是最需要看见提示的。
+ */
+baseUrlInput?.addEventListener('input', () => {
+	renderProviders();
+});
+
 /** 向服务商要一份模型列表，塞进下拉候选。拿不到也不影响手填。 */
 async function fetchModels(): Promise<void> {
 	const read = readForm({ requireModel: false });
@@ -240,6 +261,8 @@ async function fetchModels(): Promise<void> {
 			if (modelsState) modelsState.textContent = '这家没返回可用的模型名，手填吧';
 			return;
 		}
+		fetchedModels = ids;
+		fetchedFor = target.baseUrl;
 		fillModelOptions(ids);
 		if (modelsState) modelsState.textContent = `拿到 ${ids.length} 个模型，点输入框就能选`;
 	} catch {

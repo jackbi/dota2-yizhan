@@ -96,7 +96,15 @@ assert.match(script, /let why = localMoveReason\(top, turn\.action\)/, '模型�
 assert.match(script, /async function askModelForOpponentMove[\s\S]*?if \(!reply\.ok\) return null;/, '模型调用失败要返回 null，由调用方退回数据决策');
 assert.match(script, /isConfigured\(ai\) \? 'AI' : '本地'/, '没配模型时台头必须写"本地"，不能还写 AI');
 assert.match(script, /isConfigured\(ai\) \? '让 AI 解释这几手' : '配置模型后可以解释'/, '"让 AI 解释"那个按钮在没配模型时要改成说得通的入口文案');
+assert.match(
+	script,
+	/isConfigured\(ai\) \? '让 AI 走这一手' : '让对面走这一手'/,
+	'手动出招那个按钮在没配模型时不能还写"让 AI 走"',
+);
 assert.match(script, /aiSideInput\.disabled = !configured/, '没配模型时要禁用"对面交给 AI"，否则开关看着是开的却没有 AI');
+// 光禁用不够：原因要写在开关旁边。文档说"禁用并在旁边写明原因"，这里就是那个"旁边"。
+assert.ok(page.includes('id="draft-ai-hint"'), '开关旁边要有写原因的位置');
+assert.match(script, /aiHint\.textContent = configured \? '' : '未配置模型，对面由本地数据出招'/, '要把原因写进开关旁边那一句');
 assert.match(script, /aiSidePref/, '开关要区分"用户的选择"与"被配置逼出来的值"，否则配好模型回来还是关的');
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
 assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');

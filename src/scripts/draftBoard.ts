@@ -248,6 +248,8 @@ if (data) {
 	const theirTeamInput = element<HTMLInputElement>('draft-their-team');
 	const matchSelect = element<HTMLSelectElement>('draft-match');
 	const aiSideInput = element<HTMLInputElement>('draft-ai-side');
+	/** 紧挨着那个开关的一句说明：它为什么是灰的。 */
+	const aiHint = element<HTMLSpanElement>('draft-ai-hint');
 	const aiMoveBox = element<HTMLDivElement>('draft-ai-move');
 	const aiWho = element<HTMLSpanElement>('draft-ai-who');
 	const aiStatus = element<HTMLSpanElement>('draft-ai-status');
@@ -1423,6 +1425,8 @@ if (data) {
 				if (aiSideInput) aiSideInput.checked = false;
 			}
 			if (aiSideInput) aiSideInput.disabled = !configured;
+			// 原因写在开关旁边（设置区那份隔着一百多行，用户第一反应是盯着这个灰掉的开关）。
+			if (aiHint) aiHint.textContent = configured ? '' : '未配置模型，对面由本地数据出招';
 			syncAiState();
 		}
 
