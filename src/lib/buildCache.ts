@@ -102,6 +102,32 @@ export async function writeCacheFile(file: string, data: string): Promise<void> 
 }
 
 /**
+ * 二进制缓存的原子写（图片那份走这里）。
+ *
+ * 理由与上面完全相同：**半截文件不能被当成命中**。图片更麻烦一点——它的命中判定是
+ * `fs.access` 加刷 mtime，一个被 kill 掉的构建留下的半张 JPG 不但会被当成已有缓存，
+ * 还会被拷进 `dist/`，变成一张永远修不好的破图。先写临时文件再 `rename` 就不会有中间态。
+ *
+ * 与文本那份的差别：**这里把错误抛出去**。图片那边要按「取失败」计数并重试，吞掉错误会让
+ * 统计说谎；文本缓存的写入失败是真的不影响构建。
+ */
+export async function writeCacheBytes(file: string, data: Uint8Array): Promise<void> {
+	const temp = `${file}.${process.pid}.${writeSeq++}.tmp`;
+	try {
+		await fs.mkdir(path.dirname(file), { recursive: true });
+		await fs.writeFile(temp, data);
+		await fs.rename(temp, file);
+	} catch (error) {
+		try {
+			await fs.rm(temp, { force: true });
+		} catch {
+			// 清不掉也没人读它。
+		}
+		throw error;
+	}
+}
+
+/**
  * 年龄是否还在 TTL 内。
  *
  * 年龄来自文件 `mtime`，有两个要知道的性质：`mtimeMs` 的精度比 `Date.now()` 高，刚写完的文件

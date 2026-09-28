@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isFresh, readCacheJson, readCacheText, writeCacheFile } from '../src/lib/buildCache.ts';
+import { isFresh, readCacheJson, readCacheText, writeCacheBytes, writeCacheFile } from '../src/lib/buildCache.ts';
 
 /**
  * `src/lib/buildCache.ts` 的自检。
@@ -88,6 +88,31 @@ try {
 		assert.ok(isFresh(59_999, 60));
 		assert.ok(!isFresh(60_000, 60));
 		assert.ok(!isFresh(0, 0));
+		cases += 1;
+	}
+
+	/*
+	 * 6. 二进制那份（图片走它）：写得进去、读得回来、不留临时文件，而且**写不进去要抛**。
+	 *
+	 * 图片的命中判定是 `fs.access`，所以半张 JPG 一旦落到最终路径上就会被当成已有缓存、
+	 * 还会被拷进 dist 变成永久破图；而写失败必须让调用方知道，它要按"取失败"计数。
+	 */
+	{
+		const file = path.join(dir, 'image.bin');
+		await writeCacheBytes(file, new Uint8Array([1, 2, 3]));
+		assert.deepEqual([...(await fs.readFile(file))], [1, 2, 3], '字节要原样写进去');
+		const nested = path.join(dir, 'images', 'deep', 'x.jpg');
+		await writeCacheBytes(nested, new Uint8Array([9]));
+		assert.deepEqual([...(await fs.readFile(nested))], [9], '嵌套目录也要能写');
+
+		const leftovers = (await fs.readdir(dir)).filter((name) => name.endsWith('.tmp'));
+		assert.deepEqual(leftovers, [], `二进制写留下了临时文件：${leftovers.join('、')}`);
+
+		// 把文件当目录用：必然失败，且要抛出来（不是像文本那份那样吞掉）。
+		await assert.rejects(
+			() => writeCacheBytes(path.join(file, 'inner.bin'), new Uint8Array([1])),
+			'二进制缓存写失败必须抛给调用方，图片那边要按失败计数',
+		);
 		cases += 1;
 	}
 } finally {

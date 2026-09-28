@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { writeCacheBytes } from './buildCache';
 import { mapLimit } from './concurrency';
 import { PROXY_MODE } from './fetchText';
 
@@ -184,8 +185,9 @@ export async function localizeImages(
 				return;
 			}
 			try {
-				await fs.mkdir(cacheDir, { recursive: true });
-				await fs.writeFile(file, bytes);
+				// 先写临时文件再 rename：半张 JPG 一旦落到 file 上，下一轮的 fs.access 会当它是命中，
+				// 还会被拷进 dist，变成一张永远修不好的破图（见 buildCache.writeCacheBytes）。
+				await writeCacheBytes(file, bytes);
 				downloaded += 1;
 			} catch {
 				failed += 1;
