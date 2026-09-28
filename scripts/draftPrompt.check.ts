@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { advise } from '../src/lib/draftScore.ts';
 import {
@@ -48,6 +49,8 @@ const data: DraftData = {
 	updatedAt: '2026-09-17T00:00:00.000Z',
 	bracketLabel: '超凡入圣及以上',
 	windowDays: 7,
+	// 口径文案用的是这个标签（「上一完整自然周」），页面上不许写成「近 7 天」。
+	windowLabel: '上一完整自然周',
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	matchupMinGames: 200,
@@ -237,6 +240,35 @@ assert.equal('response_format' in withoutJson, false, 'jsonMode 为假时不应�
 assert.deepEqual(withoutJson.thinking, { type: 'disabled' }, '去掉 JSON 模式也要保持关闭思考');
 
 // ---------------------------------------------------------------- 回复解析
+
+/**
+ * 口径文案不许写成「近 N 天」。
+ *
+ * STRATZ 不传 `week` 时给的是**上一个完整自然周**，最坏离现在 7~14 天，所以
+ * `docs/data-sources.md` 专门加粗禁过这种写法，页面上用的是「上一完整自然周」这个标签
+ * （`HERO_META_WINDOW_LABEL`，`draftData` 里叫 `windowLabel`）。这里直接对着源码查：
+ * 写成「近 ${windowDays} 天」时看着完全正常，只有懂口径的人才知道它错。
+ *
+ * **不要**把 `draftFoe` / `draftNarrative` 一起扫进来：那里的 `windowDays` 是真的滚动窗口
+ * （对手近期状态取 90 天），写成「近 N 天」是对的。
+ */
+for (const file of ['draftScore.ts', 'draftPrompt.ts', 'draftVerdict.ts']) {
+	const source = readFileSync(new URL(`../src/lib/${file}`, import.meta.url), 'utf8');
+	// 注释里可以（也应该）写「这样写是错的」，所以只查非注释行。
+	const code = source
+		.split('\n')
+		.filter((line) => {
+			const trimmed = line.trim();
+			return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+		})
+		.join('\n');
+	assert.ok(!/近 \$\{[^}]*windowDays[^}]*\} 天/.test(code), `${file} 的统计窗口不能写成「近 N 天」`);
+	assert.ok(!/近 \d+ 天/.test(code), `${file} 里不该出现「近 N 天」这种写法`);
+}
+for (const page of ['heroes.astro', 'heroes/[id].astro']) {
+	const source = readFileSync(new URL(`../src/pages/${page}`, import.meta.url), 'utf8');
+	assert.ok(!/近 ?\{[^}]*windowDays[^}]*\} ?天/.test(source), `${page} 的统计窗口不能写成「近 N 天」`);
+}
 
 const allowed = started.candidates.map((candidate) => candidate.heroId);
 const good = parseAdviceReply(

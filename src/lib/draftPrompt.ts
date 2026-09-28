@@ -144,7 +144,8 @@ function renderFoe(input: PromptInput, role: PromptRole): string {
  * 版本这一句要怎么写。
  *
  * 带上版本号，是为了让"这批胜率属于什么时候"没有歧义；更关键的是**跨版本要说明白**：
- * 统计窗口是近 7 天，如果新版本就在这几天里发的，胜率是新旧两个版本混算的，
+ * 统计窗口是「上一完整自然周」（见 `docs/data-sources.md`：STRATZ 不传 week 时给的就是它，
+ * 最坏离现在 7~14 天）。如果新版本正好落在那个窗口里，胜率是新旧两个版本混算的，
  * 拿它当"当前版本强度"会看偏。宁可让建议显得保守，也不要让它把混算的数字当成结论。
  */
 function renderPatch(data: DraftData): string {
@@ -152,7 +153,7 @@ function renderPatch(data: DraftData): string {
 	if (!version) return '';
 	const base = `版本 ${version}${date ? `（${date} 发布）` : ''}。`;
 	if (!straddles) return base;
-	return `${base}注意：近 ${data.windowDays} 天的样本里跨了这次版本更新，胜率混着旧版本的场次，别把版本改动本身当成选它的理由。`;
+	return `${base}注意：${data.windowLabel}的样本里跨了这次版本更新，胜率混着旧版本的场次，别把版本改动本身当成选它的理由。`;
 }
 
 /**
@@ -223,7 +224,7 @@ export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): 
 		`当前：第 ${advice.step} 手，${turn}`,
 		`我方还剩 ${advice.remaining.ours.bans} 禁 ${advice.remaining.ours.picks} 选；对方还剩 ${advice.remaining.theirs.bans} 禁 ${advice.remaining.theirs.picks} 选。`,
 		`最后一手禁用归${advice.tail.ban === 'ours' ? '我方' : '对面'}，最后一手挑选归${advice.tail.pick === 'ours' ? '我方' : '对面'}。`,
-		`版本与口径：${renderPatch(input.data)}${input.data.bracketLabel}，近 ${input.data.windowDays} 天，少于 ${input.data.minPositionMatches} 场的号位不算数。`,
+		`版本与口径：${renderPatch(input.data)}${input.data.bracketLabel}，统计窗口是${input.data.windowLabel}，少于 ${input.data.minPositionMatches} 场的号位不算数。`,
 		'',
 		'我方阵容现状：',
 		renderLineup(input),

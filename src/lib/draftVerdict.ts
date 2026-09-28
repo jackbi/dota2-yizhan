@@ -216,8 +216,9 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 	theirs.counter = -matchupAverage;
 
 	/*
-	 * 分路对位：按号位一一对应，我们的 1 号位 vs 他们的 1 号位，以此类推。
-	 * 线上搭档按常规分路取（1↔5、3↔4），中路没有固定搭档——那只是挑一个人的约定，
+	 * 分路对位：取「这个人打这个号位时**线上真的遇到过**的人」与对面阵容的交集，**不按号位同位配对**
+	 * ——Dota 的分路本来就不是同位对位（我们的优势路核心打的是对面三、四号位），而且号位分配在并列时
+	 * 是任意顺序的。线上搭档按常规分路取（1↔5、3↔4），中路没有固定搭档——那只是挑一个人的约定，
 	 * 数字本身仍是实测的线上净胜。
 	 */
 	const lanes = input.lanes ?? null;
@@ -327,9 +328,9 @@ export function buildVerdict(input: VerdictInput): DraftVerdict | null {
 		'结构分、能力维度、时间曲线来自官方角色等级与人工名单，是启发式，只做横向对比，不进胜率。',
 		`对位只收了样本 ≥${input.data.matchupMinGames} 场的那些对偶（共 ${input.data.matchupPairs} 对，见 \`draftMatchup\`），接近五五开的也在里面——正因为不按偏差筛，平均值才不偏向极端；两个方向是同一份记录的正反面，故按镜像展示。`,
 		'对位偏差按五个号位摊开：一个英雄的克制关系不完全等于整队的胜率优势，摊开之后它与号位胜率的量级可比。',
-		`号位胜率口径：${input.data.bracketLabel}近 ${input.data.windowDays} 天，少于 ${input.data.minPositionMatches} 场的号位不算数${input.data.patch.version ? `；版本 ${input.data.patch.version}` : ''}。`,
+		`号位胜率口径：${input.data.bracketLabel}，统计窗口是${input.data.windowLabel}，少于 ${input.data.minPositionMatches} 场的号位不算数${input.data.patch.version ? `；版本 ${input.data.patch.version}` : ''}。`,
 	];
-	if (input.data.patch.straddles) notes.push(`近 ${input.data.windowDays} 天的样本跨了一次版本更新，胜率是新旧版本混算的。`);
+	if (input.data.patch.straddles) notes.push(`${input.data.windowLabel}的样本跨了一次版本更新，胜率是新旧版本混算的。`);
 	if (ours.counterPairs === 0 && theirs.counterPairs === 0) notes.push('这局没有任何可用对位数据，对位偏差按 0 处理。');
 	if (laneEdges.length > 0) {
 		notes.push(

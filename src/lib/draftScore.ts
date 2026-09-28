@@ -701,7 +701,12 @@ export function advise(input: AdviseInput): Advice | null {
 		report.slots.filter((slot) => slot.settled && slot.hero).map((slot) => ({ id: slot.hero!.id, position: slot.position }));
 	const ourSlots = slotsOf(ourBase);
 	const theirSlots = slotsOf(theirBase);
-	const enemySummon = theirHeroes.some((hero) => hero.summon);
+	/*
+	 * 对面是不是幻象/召唤体系。**把触发者名字留下来**：光说"对面是召唤体系"读者没法核对，
+	 * 而这一条会改动清场目标（1 → 2），属于"凭什么"的一部分（docs/draft.md 里就是这么要求的）。
+	 */
+	const enemySummonNames = theirHeroes.filter((hero) => hero.summon).map((hero) => hero.name);
+	const enemySummon = enemySummonNames.length > 0;
 	/** 前后期基准取同池中位：不拿绝对值硬比（不同版本、不同分段都在变）。 */
 	const timeline = timelineContext(pool);
 	const ourProfile = structureProfile(ourHeroes, timeline);
@@ -722,8 +727,10 @@ export function advise(input: AdviseInput): Advice | null {
 			const matches = entry.matches[position - 1];
 			const reasons = [
 				rate === null
-					? `${position} 号位近 ${data.windowDays} 天没有足够样本，只能按中性估`
-					: `${position} 号位近 ${data.windowDays} 天胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
+					// 口径用 `windowLabel`（「上一完整自然周」）而不是「近 N 天」：STRATZ 不传 week 时
+					// 给的是上一个完整自然周，最坏离现在 7~14 天，写成"近 7 天"是错的（见 docs/data-sources.md）。
+					? `${position} 号位在${data.windowLabel}没有足够样本，只能按中性估`
+					: `${position} 号位在${data.windowLabel}的胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 				`现在拿：五号位估值 ${pct(ourBase.total / 5)} → ${pct(oursAfter.total / 5)}`,
 			];
 			// 对面近期真拿过的英雄单独点一句：这一手是抢对面的熟手，还是与我们无关。
@@ -845,7 +852,9 @@ export function advise(input: AdviseInput): Advice | null {
 	structureParts.push(`近战 ${ourProfile.melee}/${STRUCTURE_CAPS[1].cap}`);
 	structureParts.push(`前期不弱 ${ourProfile.phaseEarly}/${PHASE_TARGET}`);
 	structureParts.push(`后期不弱 ${ourProfile.phaseLate}/${PHASE_TARGET}`);
-	const compositionText = `阵容结构：${structureParts.join('、')}${enemySummon ? '（对面是幻象/召唤体系，清场要求提高）' : ''}`;
+	const summonWho = enemySummonNames.slice(0, 3).join('、');
+	const summonNote = enemySummon ? `（对面是幻象/召唤体系：${summonWho}${enemySummonNames.length > 3 ? ' 等' : ''}，清场要求提高）` : '';
+	const compositionText = `阵容结构：${structureParts.join('、')}${summonNote}`;
 
 	return {
 		action: state.action,

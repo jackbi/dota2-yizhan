@@ -85,7 +85,7 @@ const heroOf = (id: number) => heroNames.get(id) ?? { name: `英雄 #${id}`, img
 							{HERO_META_WINDOW_LABEL}强势英雄
 						</h2>
 						<p class="text-xs text-faint">
-							{meta.bracketLabel} · {meta.windowDays} 天窗口 · {MIN_RANK_MATCHES.toLocaleString('zh-CN')} 场以上 · 更新于 {formatIso(meta.updatedAt)} · 数据来自 STRATZ
+							{meta.bracketLabel} · {HERO_META_WINDOW_LABEL} · {MIN_RANK_MATCHES.toLocaleString('zh-CN')} 场以上 · 更新于 {formatIso(meta.updatedAt)} · 数据来自 STRATZ
 						</p>
 					</div>
 					<div class="grid grid-cols-1 gap-x-8 gap-y-5 md:grid-cols-2">

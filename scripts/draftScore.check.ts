@@ -73,6 +73,8 @@ const data: DraftData = {
 	updatedAt: '2026-09-17T00:00:00.000Z',
 	bracketLabel: '超凡入圣及以上',
 	windowDays: 7,
+	// 口径文案用的是这个标签（「上一完整自然周」），页面上不许写成「近 7 天」。
+	windowLabel: '上一完整自然周',
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	matchupMinGames: 200,

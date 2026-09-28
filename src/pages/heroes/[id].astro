@@ -2,7 +2,7 @@
 import Layout from '../../layouts/Layout.astro';
 import { formatIso } from '../../lib/format';
 import { fetchHeroListCached } from '../../lib/heroList';
-import { fetchHeroMeta, stratzConfigured } from '../../lib/stratzApi';
+import { HERO_META_WINDOW_LABEL, fetchHeroMeta, stratzConfigured } from '../../lib/stratzApi';
 import { heroPatchIndex } from '../../lib/patchHeroes';
 
 export async function getStaticPaths() {
@@ -96,11 +96,16 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 			) : null
 		}
 
+		{/*
+			下面的窗口一律写 `HERO_META_WINDOW_LABEL`（「上一完整自然周」），不写"近 N 天"：
+			STRATZ 不传 week 时给的就是上一个完整自然周，最坏离现在 7~14 天。这是
+			docs/data-sources.md 里明确禁过的一种写法，heroes.astro 用的也是这个标签。
+		*/}
 		{
 			meta && stat ? (
-				<section class="mb-6 rounded-2xl border border-line bg-surface p-5" aria-label="近一周数据">
+				<section class="mb-6 rounded-2xl border border-line bg-surface p-5" aria-label={`${HERO_META_WINDOW_LABEL}数据`}>
 					<div class="flex flex-wrap items-baseline justify-between gap-2">
-						<h2 class="font-display text-lg">近 {meta.windowDays} 天数据</h2>
+						<h2 class="font-display text-lg">{HERO_META_WINDOW_LABEL}数据</h2>
 						<p class="text-xs text-faint">{meta.bracketLabel} · 更新于 {formatIso(meta.updatedAt)} · 数据来自 STRATZ</p>
 					</div>
 					<dl class="mt-4 grid grid-cols-3 gap-3">
