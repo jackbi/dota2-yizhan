@@ -37,12 +37,30 @@ type StoredRoom = {
 	passwordHash: string;
 	state: L.RoomState;
 	chat: L.ChatMessage[];
+	/**
+	 * 已经断开、还在宽限期里的人：clientId → 断开的时刻。
+	 *
+	 * 挂在 `StoredRoom` 上而不是只放内存：宽限期内 DO 可能被回收，靠这行才认得出「他还没回来」。
+	 * 这是服务端自己的记账，客户端看到的快照里没有它（名册上那个人还在，位置也没动）。
+	 * 不变量：这里的每个 id 都还在 `state.members` 里。
+	 */
+	pending?: Record<string, number>;
 };
 
-type Attachment = { clientId: string | null };
+/** 每条连接自己的东西。限流计数放这儿：它天然属于连接，DO 被回收再唤醒也还在。 */
+type Attachment = { clientId: string | null; rateAt?: number; rateCount?: number };
 
 /** 空房间保留多久：房主刷新、临时断网回来还得是同一个房间。 */
 const EMPTY_ROOM_TTL_MS = 10 * 60_000;
+/**
+ * 断开之后宽限多久才真正把人从名册里摘掉。
+ *
+ * 刷新页面是「旧连接先断、新连接后到」，切网络（换 Wi-Fi、手机信号抖一下）也会先断后连。
+ * 不留这点时间的话，名册、队伍位置、roll 结果会被当场清掉，房主刷新还会把房间交出去——
+ * 而 `clientId` 那套重连本来就是为了避免这些。20 秒比客户端 5 秒的重连节拍宽松得多，
+ * 又短到不会让真有事的空位一直占着。
+ */
+const MEMBER_GRACE_MS = 20_000;
 /** 单个连接 10 秒内的消息上限，超了就断开——公开的 WebSocket 端点要有最基础的闸门。 */
 const MESSAGE_BURST = 60;
 const MESSAGE_WINDOW_MS = 10_000;
@@ -71,7 +89,6 @@ export class PartyRoom {
 	private stored: StoredRoom | null = null;
 	/** 房间码。DO 不知道自己的名字，只能从进来的请求 URL 上取一次。 */
 	private code = '';
-	private readonly bursts = new Map<string, { at: number; count: number }>();
 
 	constructor(
 		private readonly ctx: DurableObjectState,
@@ -94,8 +111,9 @@ export class PartyRoom {
 	}
 
 	async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
-		const clientId = (ws.deserializeAttachment() as Attachment | null)?.clientId ?? '';
-		if (!this.allow(ws, clientId)) return;
+		const attachment = (ws.deserializeAttachment() as Attachment | null) ?? null;
+		const clientId = attachment?.clientId ?? '';
+		if (!this.allow(ws, attachment)) return;
 		const message = typeof raw === 'string' ? decodeClientMessage(raw) : null;
 		if (!message) {
 			this.send(ws, { t: 'error', code: 'bad-message' });
@@ -122,9 +140,17 @@ export class PartyRoom {
 		await this.leave(ws);
 	}
 
-	/** 空房间到期：删掉自己，并让大厅把卡片摘了。 */
+	/**
+	 * 到点了：先看看宽限期里的人该不该摘，再决定房间本身要不要删。
+	 *
+	 * DO 同一时刻只有一个 alarm，所以「宽限到期」和「空房间到期」这两件事必须在同一个 handler
+	 * 里处理，由 `scheduleAlarm()` 取最近的那个时间点。
+	 */
 	async alarm(): Promise<void> {
+		if (!this.stored) return;
+		await this.sweepPending();
 		if (this.stored && this.stored.state.members.length === 0) {
+			// 空房间到期：连聊天一起删，并让大厅把卡片摘了。
 			const code = this.stored.code;
 			this.stored = null;
 			await this.ctx.storage.deleteAll();
@@ -186,11 +212,22 @@ export class PartyRoom {
 		this.stored.state = L.upsertMember(before, member).state;
 		if (!roster) this.push(this.sys(`${name} 加入了房间`));
 
-		ws.serializeAttachment({ clientId: message.clientId } satisfies Attachment);
-		await this.ctx.storage.deleteAlarm();
+		/*
+		 * 回来的人从「待清理」里划掉：这就是宽限期的全部意义——同一个人（同一个 clientId）
+		 * 在 20 秒内重新连上，名册、队伍位置、roll 结果都还在原地。
+		 * 写 attachment 时把原有字段带上（限流计数在里面），别顺手抹掉。
+		 */
+		const attachment = (ws.deserializeAttachment() as Attachment | null) ?? { clientId: null };
+		ws.serializeAttachment({ ...attachment, clientId: message.clientId } satisfies Attachment);
+		if (this.stored.pending?.[message.clientId] !== undefined) {
+			const pending = { ...this.stored.pending };
+			delete pending[message.clientId];
+			this.stored.pending = pending;
+		}
 		// 房间空了以后别人进来：房主不在名册里，得有人接手（否则谁都不能分队）。
 		this.ensureHost();
 		await this.persist();
+		await this.scheduleAlarm();
 
 		const { state, chat } = this.stored;
 		this.send(ws, { t: 'joined', selfId: message.clientId, state, chat });
@@ -292,13 +329,57 @@ export class PartyRoom {
 			.some((other) => other !== ws && (other.deserializeAttachment() as Attachment | null)?.clientId === clientId);
 		if (stillConnected) return;
 
-		this.apply(L.removeMember(this.stored.state, clientId), `${member.name} 离开了房间`);
-		this.ensureHost();
+		/*
+		 * **不立刻摘人**，先记一个待清理的时刻。
+		 *
+		 * 刷新页面、切网络都是「旧连接先断、新连接后到」：当场把人删掉的话，名册、队伍位置、
+		 * roll 结果全没了，房主还会被 `ensureHost()` 换掉——`clientId` 那套重连就白做了。
+		 * 宽限期里的人仍然算在房里（所以房主照旧），到点没回来才由 `sweepPending()` 摘掉。
+		 */
+		this.stored.pending = { ...(this.stored.pending ?? {}), [clientId]: Date.now() };
 		await this.persist();
-		this.broadcast();
-		const empty = this.stored.state.members.length === 0;
-		if (empty) await this.ctx.storage.setAlarm(Date.now() + EMPTY_ROOM_TTL_MS);
-		await this.tellLobby(this.stored.code, this.stored.state.members.length);
+		await this.scheduleAlarm();
+	}
+
+	/** 宽限期到了还没回来的人，这时候才真的从名册里摘掉。 */
+	private async sweepPending(): Promise<void> {
+		if (!this.stored) return;
+		const pending = this.stored.pending ?? {};
+		const now = Date.now();
+		const expired = Object.keys(pending).filter((id) => now - (pending[id] ?? 0) >= MEMBER_GRACE_MS);
+		if (expired.length > 0) {
+			const next = { ...pending };
+			for (const id of expired) {
+				const member = L.memberById(this.stored.state, id);
+				delete next[id];
+				if (member) this.apply(L.removeMember(this.stored.state, id), `${member.name} 离开了房间`);
+			}
+			this.stored.pending = next;
+			// 走的可能是房主：这时候才轮到换人。
+			this.ensureHost();
+			await this.persist();
+			this.broadcast();
+			await this.tellLobby(this.stored.code, this.stored.state.members.length);
+		}
+		await this.scheduleAlarm();
+	}
+
+	/**
+	 * 排下一次唤醒：宽限到期与空房间到期取最近的那个（DO 只能挂一个 alarm）。
+	 *
+	 * 两件事都不会同时成立：待清理的人还在名册里，所以名册不是空的。
+	 */
+	private async scheduleAlarm(): Promise<void> {
+		if (!this.stored) return;
+		const pendingAt = Object.values(this.stored.pending ?? {});
+		const times: number[] = [];
+		if (pendingAt.length > 0) times.push(Math.min(...pendingAt) + MEMBER_GRACE_MS);
+		if (this.stored.state.members.length === 0) times.push(Date.now() + EMPTY_ROOM_TTL_MS);
+		if (times.length === 0) {
+			await this.ctx.storage.deleteAlarm();
+			return;
+		}
+		await this.ctx.storage.setAlarm(Math.min(...times));
 	}
 
 	/** 房主不在名册里就换人：房间空了以后别人进来、或房主退出，都得有人能分队。 */
@@ -314,25 +395,32 @@ export class PartyRoom {
 
 	// ------------------------------------------------------------ 杂项
 
-	/** 最基础的限速：超过就直接关连接。返回 false 表示这条消息不该再处理。 */
-	private allow(ws: WebSocket, clientId: string): boolean {
-		const key = clientId || 'anon';
+	/**
+	 * 最基础的限速：单连接 10 秒内超过 60 条就直接关连接。返回 false 表示这条消息不该再处理。
+	 *
+	 * 计数**按连接**存在 attachment 里，不用 clientId 当键，两个理由：
+	 *
+	 * - clientId 是客户端自己填的，换一个就能重新拿满额度，限流形同虚设；
+	 * - 还没 join 的连接没有 id，以前它们共用同一个 `'anon'` 桶——一个陌生 socket 连发 60 条
+	 *   ping 就能把这个桶打满，接下来每个人 join 的第一条消息都会被判超限、直接断开，
+	 *   房间等于对外不可加入。
+	 *
+	 * 放在 attachment 里还顺带两点：DO 被回收再唤醒时计数不会莫名清零；条目随连接一起消失，
+	 * 不需要额外清理（以前那个 Map 只写不删，每个换过 id 的人都留下一条永久记录）。
+	 */
+	private allow(ws: WebSocket, attachment: Attachment | null): boolean {
+		if (!attachment) return true;
 		const now = Date.now();
-		const burst = this.bursts.get(key);
-		if (!burst || now - burst.at > MESSAGE_WINDOW_MS) {
-			this.bursts.set(key, { at: now, count: 1 });
-			return true;
+		const fresh = !attachment.rateAt || now - attachment.rateAt > MESSAGE_WINDOW_MS;
+		const count = fresh ? 1 : (attachment.rateCount ?? 0) + 1;
+		ws.serializeAttachment({ ...attachment, rateAt: fresh ? now : attachment.rateAt, rateCount: count } satisfies Attachment);
+		if (count <= MESSAGE_BURST) return true;
+		try {
+			ws.close(4001, '消息太频繁');
+		} catch {
+			// 关不掉就算了，反正不会再处理它的消息。
 		}
-		burst.count += 1;
-		if (burst.count > MESSAGE_BURST) {
-			try {
-				ws.close(4001, '消息太频繁');
-			} catch {
-				// 关不掉就算了，反正不会再处理它的消息。
-			}
-			return false;
-		}
-		return true;
+		return false;
 	}
 
 	private persist(): Promise<void> {

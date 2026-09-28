@@ -137,6 +137,24 @@ assert.ok(tickerBody.includes('renderNet()'), '节拍要刷新网络状态');
 assert.match(worker, /ctx\.storage\.get<LobbyRoom\[\]>\('rooms'\)/, '大厅要能从 storage 读回房间列表（Hibernation 会回收内存）');
 assert.match(worker, /this\.ctx\.storage\.put\('rooms'/, '房间列表变化后要写回 storage');
 
+/*
+ * 规则 9：断线宽限期与「按连接」限流——两条都是协议里承诺过、但坏掉了不会报错的东西。
+ *
+ * - 断开时当场 `removeMember` 的话，刷新页面会把名册、队伍位置、roll 结果一起清掉，房主还会
+ *   被换掉，`clientId` 那套重连的承诺就落空了。
+ * - 限流按 `clientId`（找不到就 `'anon'`）记账时：换 id 就能绕过，而所有未进房的连接共用
+ *   一个桶，一个陌生 socket 连发 60 条就能让每个人的 join 都被判超限。
+ */
+assert.ok(worker.includes('const MEMBER_GRACE_MS = 20_000'), '断线要留宽限期');
+assert.ok(
+	worker.includes('this.stored.pending = { ...(this.stored.pending ?? {}), [clientId]: Date.now() }'),
+	'断开时只记待清理时刻，不立刻摘人',
+);
+assert.ok(worker.includes('private async sweepPending()'), '宽限期到了要有清理');
+assert.equal((worker.match(/L\.removeMember\(/g) ?? []).length, 1, '摘人只该发生在宽限期清理那一处');
+assert.ok(worker.includes('rateAt'), '限流计数要按连接存在 attachment 里');
+assert.ok(!worker.includes("clientId || 'anon'"), '限流不能再用共享的 anon 桶');
+
 // 规则 6：重新渲染前清拖拽状态。
 assert.match(functionBody('renderTeams'), /clearDrag\(\)/, 'renderTeams() 必须先 clearDrag()');
 assert.match(functionBody('renderRoom'), /clearDrag\(\)/, 'renderRoom() 没拿到快照的分支也要 clearDrag()');
