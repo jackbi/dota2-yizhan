@@ -308,12 +308,25 @@ export default defineConfig({
 		imagesInDev,
 		/*
 		 * 一千多个预渲染页面（英雄、装备、更新日志、赛事、战队…）靠它一次列全。
-		 * `prerender = false` 的那几条（/party、/me、/api）不会被收录——它们要么要登录、
-		 * 要么是接口，进 sitemap 只会浪费爬虫预算。
+		 *
+		 * 注意它**也会**把静态的 SSR 路由列进来（实测 `/party/` 与 6 条 `/me/*` 都在），
+		 * 所以"要登录、要屏蔽的那些不进 sitemap"不是自动成立的，得下面显式过滤。
 		 */
 		sitemap({
-			// 清单在 `astro:build:start` 里算好（见 `sitemapExclusions`）。URL 带不带尾斜杠都认。
-			filter: (page) => !THIN_ITEM_URLS.has(page.replace(/\/$/, '')),
+			/*
+			 * 两样东西不该进 sitemap（URL 带不带尾斜杠都认，先归一）：
+			 *
+			 * - 薄装备页：清单在 `astro:build:start` 里算好（见 `sitemapExclusions`）；
+			 * - `/me/*`：robots.txt 已经 `Disallow: /me`，而匿名访客访问它还会 302 到 `/login`。
+			 *   列进去等于主动提交一批"被你自己屏蔽、还会跳转"的地址，Search Console 会分别报
+			 *   「已提交的网址被 robots.txt 屏蔽」与「已提交的网址会重定向」。
+			 */
+			filter: (page) => {
+				const url = page.replace(/\/$/, '');
+				if (THIN_ITEM_URLS.has(url)) return false;
+				if (url === `${SITE_ORIGIN}/me` || url.startsWith(`${SITE_ORIGIN}/me/`)) return false;
+				return true;
+			},
 		}),
 	],
 
