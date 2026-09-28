@@ -197,7 +197,15 @@ function withFeed(post: RedditPost, id: RedditFeedId): RedditPost {
  */
 let lastFetchFailure = '';
 
-async function get(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<Response | null> {
+/**
+ * 取一份响应**正文**（失败返回 null）。
+ *
+ * 返回正文而不是 `Response`，是因为超时必须把下载也算进去：拿到 `Response` 只代表响应头到了，
+ * 真正的正文下载发生在 `text()` 里。以前这里把 `Response` 交回调用方、`finally` 里立刻
+ * `clearTimeout`，于是 20 秒的兜底只护住了响应头，正文可以无限期挂着——配上三次重试，
+ * 足够把一次构建拖到超时。所以正文在这个超时窗口内读完。
+ */
+async function getText(url: string, init: RequestInit = {}, timeoutMs = 20_000): Promise<string | null> {
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
@@ -208,12 +216,22 @@ async function get(url: string, init: RequestInit = {}, timeoutMs = 20_000): Pro
 			return null;
 		}
 		lastFetchFailure = '';
-		return response;
+		return await response.text();
 	} catch (error) {
 		lastFetchFailure = error instanceof Error ? error.name : 'fetch 失败';
 		return null;
 	} finally {
 		clearTimeout(timer);
+	}
+}
+
+/** 正文转 JSON。空正文、半截 JSON 都当「没有」——上游给的是错误页时别让它把整栏带崩。 */
+function parseJson(text: string | null): unknown {
+	if (!text) return null;
+	try {
+		return JSON.parse(text);
+	} catch {
+		return null;
 	}
 }
 
@@ -375,7 +393,7 @@ async function fetchViaOAuth(feed: RedditFeed): Promise<RedditPost[] | null> {
 
 	let accessToken = tokenCache && tokenCache.expiresAt > Date.now() ? tokenCache.value : '';
 	if (!accessToken) {
-		const tokenResponse = await get('https://www.reddit.com/api/v1/access_token', {
+		const tokenText = await getText('https://www.reddit.com/api/v1/access_token', {
 			method: 'POST',
 			headers: {
 				Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
@@ -384,8 +402,7 @@ async function fetchViaOAuth(feed: RedditFeed): Promise<RedditPost[] | null> {
 			},
 			body: 'grant_type=client_credentials',
 		});
-		if (!tokenResponse) return null;
-		const token = (await tokenResponse.json().catch(() => null)) as {
+		const token = parseJson(tokenText) as {
 			access_token?: string;
 			expires_in?: number;
 		} | null;
@@ -395,21 +412,19 @@ async function fetchViaOAuth(feed: RedditFeed): Promise<RedditPost[] | null> {
 		tokenCache = { value: accessToken, expiresAt: Date.now() + Math.max((token.expires_in ?? 3600) - 60, 60) * 1000 };
 	}
 
-	const listing = await get(`https://oauth.reddit.com/r/${feed.subreddit}/hot?limit=${MAX_POSTS}&raw_json=1`, {
+	const listingText = await getText(`https://oauth.reddit.com/r/${feed.subreddit}/hot?limit=${MAX_POSTS}&raw_json=1`, {
 		headers: { Authorization: `bearer ${accessToken}`, 'User-Agent': USER_AGENT },
 	});
-	if (!listing) return null;
-
-	const posts = parseListing(await listing.json().catch(() => null), feed);
+	const posts = parseListing(parseJson(listingText), feed);
 	return posts.length > 0 ? posts.slice(0, MAX_POSTS) : null;
 }
 
 async function fetchViaRss(feed: RedditFeed): Promise<RedditPost[] | null> {
-	const response = await get(`https://www.reddit.com/r/${feed.subreddit}/hot/.rss`, {
+	const xml = await getText(`https://www.reddit.com/r/${feed.subreddit}/hot/.rss`, {
 		headers: { 'User-Agent': USER_AGENT, Accept: 'application/atom+xml,application/xml,text/xml,*/*' },
 	});
-	if (!response) return null;
-	const posts = parseRss(await response.text(), feed);
+	if (!xml) return null;
+	const posts = parseRss(xml, feed);
 	return posts.length > 0 ? posts.slice(0, MAX_POSTS) : null;
 }
 
