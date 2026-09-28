@@ -1505,7 +1505,6 @@ async function copyText(text: string, button: HTMLButtonElement): Promise<void> 
 
 // ---------------------------------------------------------------- 启动
 
-function startTicker(): void {
 /**
  * 5 秒节拍只做两件事：刷新网络状态、必要时把断掉的连接捞回来。
  *
@@ -1517,7 +1516,6 @@ function startTicker(): void {
 		if (roomCode && (!roomSocket || roomSocket.readyState > WebSocket.OPEN)) openRoomSocket();
 		renderNet();
 	}, 5000);
-}
 }
 
 function restoreNickname(): void {

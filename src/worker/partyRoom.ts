@@ -404,7 +404,35 @@ export class PartyRoom {
 export class PartyLobby {
 	private rooms = new Map<string, LobbyRoom>();
 
-	constructor(private readonly ctx: DurableObjectState) {}
+	constructor(private readonly ctx: DurableObjectState) {
+		/*
+		 * 大厅和房间一样用 Hibernation（见文件头），所以这份列表**必须从 storage 读回来**。
+		 *
+		 * 只放在内存里的话，DO 一被回收就等于「所有房间都没了」：下一次任何房间上报时，
+		 * 订阅者收到的是一份只剩那一个房间的列表；而列表里的房间本身还在（房间 DO 自己落了盘），
+		 * 于是大厅显示得比实际少，且没人能从界面上看出这是被回收过。
+		 */
+		ctx.blockConcurrencyWhile(async () => {
+			const stored = (await ctx.storage.get<LobbyRoom[]>('rooms')) ?? [];
+			// 显式标注参数：这个文件没有 Workers 的类型定义（`ctx` 是 any），不写的话
+			// 回调参数会退化成隐式 any，白白多一条 tsc 报错。
+			this.rooms = new Map(stored.map((room: LobbyRoom) => [room.code, room] as const));
+		});
+	}
+
+	/**
+	 * 改动后立刻落盘。
+	 *
+	 * 上报频率等于「有人进房 / 退房 / 房间消失」，本来就低；这里宁可多写一次，也不要让回收
+	 * 把列表吃掉。写失败不抛给调用方——大厅没更新成功不该影响房间本身，下一次上报还会再来。
+	 */
+	private async persist(): Promise<void> {
+		try {
+			await this.ctx.storage.put('rooms', [...this.rooms.values()]);
+		} catch {
+			// 落盘失败只影响大厅列表的持久性，不影响本次广播。
+		}
+	}
 
 	async fetch(request: Request): Promise<Response> {
 		if (isWebSocket(request)) {
@@ -433,6 +461,7 @@ export class PartyLobby {
 					at: Date.now(),
 				});
 			}
+			await this.persist();
 			this.broadcast();
 			return json({ ok: true });
 		}

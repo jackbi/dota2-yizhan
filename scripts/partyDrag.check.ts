@@ -119,6 +119,24 @@ assert.ok(!/hostMutate|cmd\.send/.test(drop), 'drop 里不许直接改状态或�
 const worker = readFileSync(new URL('../src/worker/partyRoom.ts', import.meta.url), 'utf8');
 assert.match(worker, /message\.memberId !== clientId && !isHost/, '服务端必须拦住「非房主挪别人」');
 
+/*
+ * 规则 8：两处「静默失效」的复核——写错了页面照样看着正常，只是能力没了。
+ *
+ * - **`startTicker` 不能被定义两层**：曾经的外层函数只声明内层就返回，`boot()` 那句调用
+ *   是空操作，5 秒节拍（刷新网络状态、捞回半开连接）从来没跑过。
+ * - **大厅的房间列表必须落盘**：`PartyLobby` 与 `PartyRoom` 一样用 Hibernation，
+ *   只放内存的话 DO 一被回收列表就归零，订阅者随后收到一份「只剩一个房间」的列表。
+ */
+const tickerDefinitions = (script.match(/function startTicker/g) ?? []).length;
+assert.equal(tickerDefinitions, 1, `startTicker 只该定义一次，现在有 ${tickerDefinitions} 处（嵌套时外层调用是空操作）`);
+assert.match(script, /^\s*startTicker\(\);/m, 'boot() 里要真的调用 startTicker');
+const tickerBody = functionBody('startTicker');
+assert.ok(tickerBody.includes('setInterval('), '节拍要在 startTicker 里');
+assert.ok(tickerBody.includes('}, 5000);'), '节拍间隔要是 5 秒');
+assert.ok(tickerBody.includes('renderNet()'), '节拍要刷新网络状态');
+assert.match(worker, /ctx\.storage\.get<LobbyRoom\[\]>\('rooms'\)/, '大厅要能从 storage 读回房间列表（Hibernation 会回收内存）');
+assert.match(worker, /this\.ctx\.storage\.put\('rooms'/, '房间列表变化后要写回 storage');
+
 // 规则 6：重新渲染前清拖拽状态。
 assert.match(functionBody('renderTeams'), /clearDrag\(\)/, 'renderTeams() 必须先 clearDrag()');
 assert.match(functionBody('renderRoom'), /clearDrag\(\)/, 'renderRoom() 没拿到快照的分支也要 clearDrag()');
