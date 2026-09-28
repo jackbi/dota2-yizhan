@@ -17,7 +17,7 @@
 | --- | --- | --- |
 | `.cache/news/` | dota2.com.cn 官方新闻列表与正文 | 列表 30 分钟，正文永久 |
 | `.cache/patches/` | dota2.com 版本列表、每个版本的更新日志、英雄/物品/技能名字表 | 列表 30 分钟，其余 7 天 |
-| `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与帖子详情 | 列表 30 分钟，帖子 2 小时 – 7 天 |
+| `.cache/community/` | NGA 刀塔版块热帖与楼层、虎扑 DOTA2 区列表与帖子详情 | 列表 30 分钟，帖子 2 小时 |
 | `.cache/reddit/` | r/DotA2 与 r/compDota2 热帖 | 1 小时 |
 | `.cache/opendota/` | 队伍索引、职业比赛、阵容名单 | 6 小时 – 7 天 |
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
@@ -119,9 +119,12 @@ pnpm deploy                               # = DEPLOY_TARGET=cloudflare astro bui
 
 `wrangler.jsonc` 里两处容易写错：
 
-- `main` 必须写 `@astrojs/cloudflare/entrypoints/server` 这个包名，**不能写 `dist/server/entry.mjs`**：
-  Cloudflare 的 Vite 插件在配置阶段就要求 `main` 指向一个已存在的文件，写产物路径会以
-  `doesn't point to an existing file` 直接中止构建。真正的产物布局由适配器接管——构建完它会生成
+- `main` 写的是**我们自己的** `src/worker/index.ts`（不是适配器默认的
+  `@astrojs/cloudflare/entrypoints/server`，也**不能写 `dist/server/entry.mjs`**）。
+  自建入口是为了在 Astro 的 server handler 外面包一层，把 `/api/party/*` 接到开黑房间的
+  Durable Object 上；两处入口都是同一次 Vite 构建的产物，适配器那些 `virtual:*` 依赖照样解析得到。
+  写产物路径会以 `doesn't point to an existing file` 直接中止构建——Cloudflare 的 Vite 插件在
+  配置阶段就要求 `main` 指向一个已存在的源码文件，真正的产物布局由适配器接管：构建完它会生成
   `dist/server/wrangler.json`（`main: entry.mjs`、`assets.directory: ../client`），
   `.wrangler/deploy/config.json` 负责把 `wrangler deploy` 重定向过去。
 - `SITE_URL` 换成真实域名。它拼的是 Steam OpenID 的 `realm` / `return_to`，配错会在回调那一步失败。

@@ -37,7 +37,7 @@ NGA 的 `replies` 来自它的热榜接口，虎扑给的是**帖子总回复数
   JSON（主楼正文 HTML、亮数、推荐数、浏览数、创建时间、50 条亮评、第一页 20 条回复）。
   比抠渲染后的 DOM 稳得多——页面上的 class 名带哈希后缀（`post-content_bbs-post-content__cy7vN`），
   正则随时会失效；结构真变了还有一条兜底：从 `<div class="thread-content-detail">` 里救回主楼正文。
-  列表缓存 30 分钟、详情 2 小时（键带版本号 `hupu-thread-v2-`，解析规则一变就要换）。
+  列表缓存 30 分钟、详情 2 小时（键带版本号 `hupu-thread-v3-`，解析规则一变就要换）。
   列表改成时间序之后榜上换人更快，每轮要给新进来的帖子抓一次详情，一轮 20–40 次请求
   （改之前那批长贴稳定，是 21 次左右）。
 - **两个来源都有站内详情页**：虎扑走 `/community/hupu/[pid]`（`src/pages/community/hupu/[pid].astro`），
@@ -69,7 +69,7 @@ NGA 的 `replies` 来自它的热榜接口，虎扑给的是**帖子总回复数
 **只有 `.rss` 能通。** old.reddit.com 与 www.reddit.com 的 HTML、`.json` 一律 403（返回 Blocked），
 `.rss` 能拿到，但几分钟内连发几次就 429。所以：
 
-- **每个版块**一次构建只发一个请求，两次之间隔 3 秒（`FEED_GAP_MS`），结果落盘一小时
+- **每个版块**一次构建只发一个请求，两次之间隔 8 秒（`FEED_GAP_MS`），结果落盘一小时
   （`.cache/reddit/list-<版块>.json`）。单版块时代那份 `hot.json` 还能被捡起来兜一次，
   免得改名字那一轮正好撞上限流就把整栏空掉。
 - 429 / 403 / 断网退回过期缓存，没有缓存就整块不展示，绝不编数据；两个版块各写一条健康记录，
@@ -157,7 +157,7 @@ Builder Policy + new approval process for API access」）结束了自助 API �
   因此根本不带 Referer。实测同一个 `i11.hoopchina.com.cn` 地址：`curl` 不带 Referer 得
   `200 image/webp`，带站外 Referer 得 `403 text/plain`——拒的是 Referer，不是缺 `referrerpolicy`。
   真再看到 403，先在浏览器 Network 里确认请求头里到底有没有 Referer，别顺手去升
-  `hupu-thread-v2-` 缓存键（那次改动没动到 `sanitizeHupuHtml()`，升了也没用）。
+  `hupu-thread-v3-` 缓存键（那次改动没动到 `sanitizeHupuHtml()`，升了也没用）。
 - **Reddit 缩略图**：`i.redd.it` 和 `i*.hdslb.com` 一样会被重置，`/news/reddit/[id]` 的图因此经常不出。
 - **Valve CDN 的英雄图**：`cdn.cloudflare.steamstatic.com` 在国内网络动不动就
   `ERR_CONNECTION_RESET`，一整排英雄图一起裂。曾经只有"官方列表取不到就退回 OpenDota"
@@ -249,7 +249,8 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 
 ## 装备：一份数据，两处用
 
-装备来自 dota2.com.cn 的两个接口，**都是 JSONP**（响应是 `HeropediaDFReceive({...})`，没有 CORS 头）：
+装备来自 dota2.com.cn 的两个接口，**只有详情那个是 JSONP**（响应是 `HeropediaDFReceive({...})`，
+没有 CORS 头，所以浏览器里要注入 `<script>` 绕跨域）；分类那个是普通 JSON，直接 `fetch`：
 
 | 接口 | 内容 | 谁在用 |
 | --- | --- | --- |

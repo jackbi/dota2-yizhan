@@ -104,10 +104,10 @@ CORS，token 被消耗掉了」）；诊断代码连同端点
 | CORS | 不适用 | 必须 CDN 给 `Access-Control-Allow-Origin`，否则只能服务端转发字节 |
 | 自定义头 | 任意（UA / Referer / Origin） | 只剩 `Referer` 的「发 / 不发」一档（`referrerPolicy`） |
 | 协议 | RTMP / FLV / HLS 都能吃 | 只剩 MP4/WebM（原生）与 FLV/HLS（MSE，需 CORS） |
-| 虎牙 | TUP 二进制 + md5 anticode + HYSDK UA，全在进程内 | 无路可走，退回 `liveshare.huya.com/iframe/{id}` |
+| 虎牙 | TUP 二进制 + md5 anticode + HYSDK UA，全在进程内 | 有直链（`huyaStream.ts` 解析多线路，服务端带 HYSDK UA 取），解析不出来才退回 `liveshare.huya.com/iframe/{id}` |
 | 斗鱼 | `homeH5Enc` + QuickJS 跑平台 JS 签名；每 CDN 各一条地址 | 纯 MD5 签名链（不跑 JS）；`/api/live/stream-url` 每次点击解一条 |
 | 断流处理 | 单次取回多线路，重试同路 → 换线 → 判下播 | 每次重播/换清晰度都重新解析（见 [直播](./live.md) 的「分屏页的画面」） |
-| 弹幕 | `simple_live_core/lib/src/danmaku/*`（含抖音 protobuf） | 无 |
+| 弹幕 | `simple_live_core/lib/src/danmaku/*`（含抖音 protobuf） | 斗鱼有（`douyuDanmaku.ts`，编解码有自检），虎牙/哔哩哔哩还没有 |
 
 ## 6. 可以平移 / 不能平移
 

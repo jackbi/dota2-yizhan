@@ -41,7 +41,7 @@ MCP **不**去连 STRATZ 或 OpenDota。那个 token 绑调用方 IP、额度每
 
 | 路径 | 内容 |
 | --- | --- |
-| `/draft-data.json` | 127 个英雄的号位胜率、职业样本、2500 条上下的对位、版本口径 |
+| `/draft-data.json` | 127 个英雄的号位胜率、职业样本、约 4200 条对位（随版本与门槛变化）、版本口径 |
 | `/draft-lanes.json` | 线上对位（谁在线上打谁、和谁走一路） |
 | `/draft-teams.json` | 队名 → OpenDota 队伍 id |
 | `/api/draft/foe?id=` | 某支队近期的英雄偏好 |
