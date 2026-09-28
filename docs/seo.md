@@ -32,6 +32,8 @@ dota2 分屏 看直播         → /live
 | 版本页 ↔ 装备页 互链 | `src/lib/patchItems.ts`、`patchNotes.renderItem` | 与英雄那条对称：版本页里每个被改到的装备名链到 `/items/<内部名>`，装备页有「版本改动记录」（最多列最近 12 个版本）。全站实测 4017 个指向装备页的链接、零死链 |
 | 404 页 | `src/pages/404.astro` | 原先没有，Cloudflare 拿默认页顶上，站内导航全丢。现在带 `noindex`（404 不该被收录）与六个板块入口；workerd 本地实测 `/no-such-page/`、`/heroes/nope/` 都是 404 + 这一页 |
 | 对局复盘不收录 | `src/pages/replay/[id].astro` | 这条路由的 URL 空间是**无界**的（任何 Valve 比赛 id 都能渲染一页），对搜索引擎没有价值，而每次抓取都要打一次上游，所以带 `noindex`；它本来也是 `prerender = false`，不进 sitemap。入口在赛事对阵页与个人战绩页，读者照常点得进去。英雄攻略页那个入口只长在展开后的面板里（客户端拼出来的，不进服务端 HTML），所以没有多开一条抓取路径 |
+| URL 形态只留一种 | `src/pages/heroes/[id]/guides.astro`、`src/pages/party.astro` | 预渲染页由 Cloudflare 的静态资源规则收口（`/tournaments` 会 307 到 `/tournaments/`），天生只有一个地址；**SSR 路由两种写法都会 200**，而 canonical 是照 `Astro.url.pathname` 拼的，于是两个地址各指自己，Google 只能自己挑主版本，没被挑中的那半就报「重复网页，Google 选定了与用户不同的规范网页」（Search Console 上成片出现的就是这条）。攻略页 301 到**不带**斜杠那版（页内与英雄页的链接就是这形式），`/party` 301 到**带**斜杠那版（sitemap 登记的是这个形式，导航链接也跟着改了）。**新增 SSR 路由时要照这个收口** |
+| `/me/*` 不进 sitemap | `astro.config.mjs` 的 `sitemap` filter | `robots.txt` 已经 `Disallow: /me`，匿名访问还会 302 到 `/login`。实测 `@astrojs/sitemap` **会把静态的 SSR 路由一起列进来**（`/party/` 与 6 条 `/me/*` 都在），"`prerender = false` 的不进 sitemap"这句老话靠不住，只能在这里显式挡掉——否则 Search Console 会报「已提交的网址被 robots.txt 屏蔽」 |
 
 **一个容易改错的地方**：线上 `robots.txt` 前半截是 Cloudflare 的 Content Signals 说明块——那是
 Cloudflare 托管的策略文本，它**拼在你自己的 robots.txt 前面**一起返回。要改就改
