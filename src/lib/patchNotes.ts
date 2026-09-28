@@ -289,9 +289,12 @@ function renderHero(hero: PatchHeroEntry, names: PatchNames, icons: PatchIconMap
 	const icon = ref && ref.key ? icons.get(heroIconKey(ref.key)) : undefined;
 	/*
 	 * 英雄名链回英雄页——版本页 → 英雄页的出口（反向那条在英雄页的「版本改动记录」里）。
-	 * 名字表里查不到的不链：那种条目本来就落不到任何英雄页上（比如 datafeed 里的「熊灵」）。
+	 *
+	 * **`key` 为空的不链**：那是我们自己往名字表里补的占位条目（熊灵 1961），datafeed 里它占一个
+	 * 英雄位、但站内没有它的英雄页，链过去就是 404。判据与上面取图标那条一致，两处别各写一套——
+	 * 之前这里只看「名字表里有没有」，于是补进去的熊灵反而被链出去了。
 	 */
-	const nameHtml = ref
+	const nameHtml = ref && ref.key
 		? `<a class="text-dota-light transition hover:text-cream" href="/heroes/${hero.hero_id}">${escapeText(name)}</a>`
 		: escapeText(name);
 	const parts: string[] = [];

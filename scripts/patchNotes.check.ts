@@ -128,6 +128,10 @@ const html = renderPatchNotes(notes, names, icons);
 // --- 名字解析：id 要落到中文名上，图标只在拿得到时才渲染 ---
 assert.match(html, /敌法师/);
 assert.match(html, /法力损毁/);
+// 熊灵（1961）是我们往名字表里补的占位条目，datafeed 里有它、站内没有它的英雄页：
+// 链过去是 404。判据是 key 为空，与取图标那条一致。
+assert.ok(html.includes('href="/heroes/1"'), '真英雄要链回英雄页');
+assert.ok(!html.includes('/heroes/1961'), '占位条目不链英雄页（那是 404）');
 assert.match(html, /代达罗斯之殇/);
 assert.match(html, /魔龙枪/);
 assert.match(html, /狗头人/, '中立生物用 localized_name');
