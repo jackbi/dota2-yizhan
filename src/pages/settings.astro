@@ -13,7 +13,8 @@
  * 不落库、不记日志。所以这一页是纯静态页，不需要登录，服务端一行都不用改。
  */
 import Layout from '../layouts/Layout.astro';
-import { AI_MODEL_SUGGESTIONS, DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../lib/aiConfig';
+import { DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../lib/aiConfig';
+import { AI_PROVIDERS } from '../lib/aiProviders';
 ---
 
 <Layout
@@ -31,6 +32,22 @@ import { AI_MODEL_SUGGESTIONS, DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../
 
 		<section class="mt-6 rounded-2xl border border-line bg-surface/60 p-4" aria-label="模型配置">
 			<h2 class="font-display text-lg">模型</h2>
+			<!--
+				服务商是按「一键填好地址与建议模型」用的，不是绑定：地址输入框永远可以手改，
+				任何 OpenAI 兼容的服务（包括自建中转）都走「OpenAI 兼容（自定义）」那条。
+			-->
+			<p class="mt-4 text-xs text-muted">用哪一家</p>
+			<div class="mt-2 flex flex-wrap gap-2" role="group" aria-label="服务商">
+				{
+					AI_PROVIDERS.map((provider) => (
+						<button type="button" class="filter-chip" data-provider={provider.id} aria-pressed="false">
+							{provider.label}
+						</button>
+					))
+				}
+			</div>
+			<p id="settings-provider-hint" class="mt-2 text-xs leading-relaxed text-faint"></p>
+
 			<div class="mt-4 grid grid-cols-1 gap-4">
 				<label class="block text-xs text-muted">
 					API 地址
@@ -59,19 +76,27 @@ import { AI_MODEL_SUGGESTIONS, DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../
 				</label>
 				<label class="block text-xs text-muted">
 					模型名
-					<input
-						id="settings-model"
-						type="text"
-						autocomplete="off"
-						spellcheck="false"
-						list="settings-model-options"
-						placeholder={DEFAULT_AI_MODEL}
-						class="mt-1 w-full rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint"
-					/>
+					<span class="mt-1 flex gap-2">
+						<input
+							id="settings-model"
+							type="text"
+							autocomplete="off"
+							spellcheck="false"
+							list="settings-model-options"
+							placeholder={DEFAULT_AI_MODEL}
+							class="w-full rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint"
+						/>
+						<!--
+							拉列表比内置一份模型名靠谱：模型名变得比 API 快，拉一次就以这家为准。
+						-->
+						<button id="settings-models" type="button" class="filter-chip whitespace-nowrap">拉取模型列表</button>
+					</span>
 					<datalist id="settings-model-options">
-						{AI_MODEL_SUGGESTIONS.map((model) => <option value={model} />)}
+						<option value={DEFAULT_AI_MODEL} />
 					</datalist>
-					<span class="mt-1 block text-faint">可以手填，下拉只是省打字。</span>
+					<span id="settings-models-state" class="mt-1 block text-faint" role="status" aria-live="polite">
+						可以手填；点「拉取模型列表」会向这家要一份准的。
+					</span>
 				</label>
 			</div>
 
@@ -110,6 +135,15 @@ import { AI_MODEL_SUGGESTIONS, DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../
 	.filter-chip:hover {
 		color: var(--color-cream);
 		border-color: var(--color-gold-deep);
+	}
+	/* 选中的服务商。/draft 那边同一条规则用的是队标红，这里是中性高亮，别抢按不出错的视觉顺序。 */
+	.filter-chip[aria-pressed='true'] {
+		color: var(--color-cream);
+		border-color: var(--color-gold-deep);
+		background: var(--color-surface-3);
+	}
+	.filter-chip:disabled {
+		opacity: 0.4;
 	}
 </style>
 

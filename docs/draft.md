@@ -361,15 +361,55 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
 地址与模型名都可填，请求仍是 OpenAI 兼容的 `chat/completions`。默认地址保持
 `https://api.deepseek.com`，与老版本写死的端点、测试地址完全一致。
 
-**`thinking: { type: 'disabled' }` 只在 DeepSeek 域名下发。** 这条不是调优，是不关就没结果：
-`deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
-吃掉、`content` 是空的（`finish_reason: length`），把上限提到 4000 也一样空且耗时 21 秒；
-关掉之后 1.8 秒返回 288 个 token 的正常 JSON。但它同时是个非标准参数，发给严格校验的端点会被
-400 拒掉，所以按地址判断（`needsThinkingDisabled`）。`response_format` 被拒（400）时会去掉该
-参数重试一次，解析层本来就能处理带代码块围栏的回复。
+## 服务商预设
 
-**更细的分家适配还没做**：`max_tokens` 与 `response_format` 仍是 DeepSeek 那套口径，接别家时
-如果报参数错误，多半是这里。
+`lib/aiProviders.ts` 是一张**按地址决定请求长什么样**的表：设置页那排按钮只是它的界面，
+真正要紧的是两件事——地址，以及各家认哪些参数。
+
+### 表里的值是怎么来的（2026-09-28 实测，不是照抄文档）
+
+1. **地址是否存在**：带一个无效 key 打各家的 `<地址>/models`。401/400 说明路径存在，404 就是错的
+   （OpenRouter 与魔搭的 `/models` 是公开的，直接 200）。
+2. **浏览器能不能直连**：发 `OPTIONS` 预检，看回不回 `Access-Control-Allow-Origin`、放不放行
+   `authorization`。这一条是本站的硬门槛——请求从浏览器直接发出，服务商不放行就只能自建代理。
+3. **参数差异**：以 linshenkx/prompt-optimizer 的适配器为准，它把各家的上限字段与思考开关分了家。
+
+实测结论：
+
+| 情况 | 服务商 |
+| --- | --- |
+| 浏览器可直连 | OpenAI、DeepSeek、Google Gemini（走 `/v1beta/openai`）、OpenRouter、DashScope、智谱、硅基流动、MiniMax（国际站与国内站）、魔搭、Grok、小米 MiMo |
+| 要带专用头才行 | Anthropic：不放行那个头时预检直接 400 且没有 CORS 头；带上 `anthropic-dangerous-direct-browser-access: true` 之后正常。这个头由 `headersFor` 自动加，用户不用管 |
+| 要用户先做点别的 | Ollama（本地服务，要在它那边把 `OLLAMA_ORIGINS` 放开）、Cloudflare（地址里要填自己的账号 id，且它的 `/models` 不接受 GET，测连接会显示 405） |
+| 接不了 | Chrome 内置模型（Gemini Nano）：它没有 HTTP 端点，走的是浏览器里的 `LanguageModel`，与「填一个地址直接发请求」的结构接不上，想接得另写一条调用路径 |
+
+### 参数分家
+
+请求形状收在 `ChatShape` 三个开关里（`thinking` / `maxTokensField` / `temperature`），
+认不出来的地址（自建、中转）一律用**最保守**的那套：只发 OpenAI 兼容的基础字段，
+不夹带任何一家的专有参数——专有字段正是最容易被别家当未知参数拒掉的。
+
+- **DeepSeek 那家单独开 `thinking`**：这不是调优，是不关就没结果。`deepseek-flash` 默认开着思考，
+  实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens` 吃掉、`content` 是空的
+  （`finish_reason: length`），把上限提到 4000 也一样空且耗时 21 秒；关掉之后 1.8 秒返回
+  288 个 token 的正常 JSON。`aiProviders.check` 盯着「只有 DeepSeek 能收到这个字段」。
+- **OpenAI 与 Grok 的上限写在 `max_completion_tokens`**：它们的新模型已经废弃 `max_tokens`
+  （参考项目的参数表里标着 Deprecated）。
+- **被 400 拒掉时按顺序退让**：先去 `response_format`，再去 `temperature`，每步只去一个。
+  401/402/429 这类不是参数问题，不重试。退让逻辑集中在 `draftBoard` 的 `requestChat`，
+  三条调用路径（建议解释、对手出招、复盘）共用一份。
+
+### 模型名怎么来
+
+设置页的「拉取模型列表」直接问服务商要（`<地址>/models`），把结果填进下拉候选；
+预设表里只放了一两个建议值当兜底，模型名永远可以手填。这样比内置一份模型清单靠谱：
+模型名变得比 API 快，内置的清单过期了只会让人以为功能坏了。
+
+### 还没验的部分
+
+除 DeepSeek 外没有任何一家跑过**真实调用**（都需要真 key），所以「地址通、跨域通过、参数形状
+对得上」是有证据的，「这一家的输出质量如何」没有。预设表里与请求形状相关的值全部来自参考项目
+的适配器，不是本站实测。
 
 ## 文件分工
 
@@ -382,6 +422,7 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
 | `src/lib/draftScore.ts` | 候选打分与依据生成（纯函数） |
 | `src/lib/draftPrompt.ts` | 提示词与回复解析（不联网） |
 | `src/lib/aiConfig.ts` | 模型配置的形状、读写、迁移与三态判定（纯函数 + 存储适配） |
+| `src/lib/aiProviders.ts` | 服务商预设表：地址、跨域补充头、请求形状、模型名建议与 `/models` 返回的解析 |
 | `src/lib/draftNarrative.ts` | 没接模型时的解释模板（纯函数，只重组已有依据） |
 | `src/lib/draftFoe.ts` | 对面近期偏好的形状、聚合与文案（纯函数） |
 | `src/lib/draftVerdict.ts` | 双方阵容锁定后的对比与胜率（纯函数） |
@@ -400,6 +441,7 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
 | `scripts/draftPrompt.check.ts` | 提示词约束与解析容错的自检 |
 | `scripts/draftPage.check.ts` | 页面 id 与脚本对账、显隐手法检查 |
 | `scripts/aiConfig.check.ts` | 迁移、地址拼接、三态、按服务商决定参数的自检 |
+| `scripts/aiProviders.check.ts` | 预设表自洽、按地址认服务商、形状与请求头、默认模型不漂移的自检 |
 | `scripts/settingsPage.check.ts` | 设置页的 id 对账与「key 只存在本机」这类承诺文案的自检 |
 
 写完页面容易踩的两个坑，都写进了 `draftPage.check.ts`：
@@ -419,17 +461,19 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
 
 ## 验证到哪一步
 
-- `pnpm check`：31 个脚本全过，其中阵容分析相关的六个是顺序表、打分、提示词、页面结构，加上
-  本轮新增的 `aiConfig.check.ts`（迁移、地址拼接、三态、按服务商决定参数）与
-  `settingsPage.check.ts`（设置页 id 对账与承诺文案）。
+- `pnpm check`：33 个脚本全过。阵容分析相关的是顺序表、打分、提示词、解释模板、页面结构，
+  加上配置这摊子：`aiConfig.check.ts`（迁移、地址拼接、三态）、`aiProviders.check.ts`
+  （预设表自洽、按地址认服务商、请求形状与请求头）、`settingsPage.check.ts`（设置页 id 对账
+  与承诺文案）。
 - `pnpm build`：`/draft` 正常预渲染，内联数据 127 个英雄、约 28 KB，比赛下拉 24 项。
 - 浏览器里实测：英雄池 127 个格子、两列各 7 禁 5 选、点英雄会推进手号、撤销/跳过/清空正常、
   切换先选权后两列归属整体镜像、刷新后进度从 localStorage 恢复、候选卡片点了就是录一手。
 - 配置链路（打桩验证）：老数据（key 与模型名在 `d2s-draft-v1` 里）能搬进 `d2s-ai-v1`；
   清除过 key 之后刷新不会把旧 key 搬回来；地址 / key / 模型任一改动都会作废上次的测试结果。
 - **没验的部分**：真实模型调用没跑（需要真 key，会花钱），所以模型输出质量只靠提示词约束与
-  解析容错保证，实际效果要你自己拿一场比赛试试。除 DeepSeek 以外的服务商也没实测过——
-  地址与模型名能填，但参数口径还没分家。
+  解析容错保证，实际效果要你自己拿一场比赛试试。预设表里的地址与跨域结论是实测的（见
+  「服务商预设」），但除 DeepSeek 之外没有一家跑过真实调用：请求形状对不对、输出能不能用，
+  都还没有证据。
 
 ## 已知取舍
 

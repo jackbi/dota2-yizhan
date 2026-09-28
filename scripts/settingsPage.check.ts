@@ -31,10 +31,31 @@ for (const id of queriedIds) {
 }
 
 // 反方向：页面上的输入框与按钮必须真的被脚本接管，否则点了没反应。
-for (const id of ['settings-base-url', 'settings-key', 'settings-model', 'settings-save', 'settings-test', 'settings-clear']) {
+for (const id of [
+	'settings-base-url',
+	'settings-key',
+	'settings-model',
+	'settings-model-options',
+	'settings-models',
+	'settings-models-state',
+	'settings-provider-hint',
+	'settings-save',
+	'settings-test',
+	'settings-clear',
+]) {
 	assert.ok(pageIds.has(id), `设置页缺少 #${id}`);
 	assert.ok(queriedIds.has(id), `#${id} 在页面上，但脚本没有接管它`);
 }
+
+/**
+ * 服务商那排按钮。
+ *
+ * 三种情况都要拦住：页面没渲染出来（`AI_PROVIDERS.map` 被删）、脚本没挂钩子（点了没反应）、
+ * 或者两边用的属性名不一致（脚本找 `[data-provider]`，页面写 `data-providers`）。
+ */
+assert.ok(page.includes('AI_PROVIDERS.map'), '服务商按钮要由预设表渲染，别手写一份会过期的列表');
+assert.ok(page.includes('data-provider={provider.id}'), '每个服务商按钮要带 data-provider');
+assert.ok(script.includes("querySelectorAll<HTMLButtonElement>('[data-provider]')"), '脚本要接管服务商按钮');
 
 // ---------------------------------------------------------------- 显隐手法
 
@@ -58,6 +79,14 @@ assert.match(keyInput, /autocomplete="off"/, 'key 输入框要关掉浏览器自
 
 // 地址填成黑洞时，按钮不能永远停在「测试中…」。
 assert.match(script, /AbortSignal\.timeout\(TEST_TIMEOUT_MS\)/, '测试连接必须带超时');
+
+// 请求头要按服务商拼（Anthropic 那个跨域开关头就挂在里面）。**两处请求都要**：
+// 漏了测试连接那一处，就会出现「测试不过但实际能用」这种最费解的反馈。
+assert.equal(
+	(script.match(/headersFor\(target\.baseUrl, target\.apiKey\)/g) ?? []).length,
+	2,
+	'测试连接与拉模型列表都要带服务商的额外头',
+);
 
 assert.ok(page.includes("import '../scripts/settingsForm'"), '页面要加载客户端脚本');
 

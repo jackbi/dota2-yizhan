@@ -9,6 +9,7 @@ import {
 	saveAiConfig,
 	validateBaseUrl,
 } from '../lib/aiConfig.ts';
+import { AI_PROVIDERS, headersFor, initialProviderId, modelIdsOf } from '../lib/aiProviders.ts';
 
 /**
  * `/settings` 的表单：读写都走 `lib/aiConfig.ts`，这里只管校验、发请求与文案。
@@ -37,8 +38,15 @@ const modelInput = element<HTMLInputElement>('settings-model');
 const saveButton = element<HTMLButtonElement>('settings-save');
 const testButton = element<HTMLButtonElement>('settings-test');
 const clearButton = element<HTMLButtonElement>('settings-clear');
+const modelsButton = element<HTMLButtonElement>('settings-models');
 const statusEl = element<HTMLSpanElement>('settings-status');
 const detailEl = element<HTMLParagraphElement>('settings-detail');
+const providerHint = element<HTMLParagraphElement>('settings-provider-hint');
+const modelsState = element<HTMLSpanElement>('settings-models-state');
+const modelOptions = element<HTMLDataListElement>('settings-model-options');
+
+/** 服务商那排按钮。按 `data-provider` 挂钩子，不走 id 对账那一套。 */
+const providerChips = [...document.querySelectorAll<HTMLButtonElement>('[data-provider]')];
 
 let config: AiConfig = loadAiConfig();
 
@@ -46,14 +54,45 @@ function setStatus(text: string): void {
 	if (statusEl) statusEl.textContent = text;
 }
 
-/** 表单里当下这套值；校验不过就返回一句给用户看的话。 */
-function readForm(): { config: AiConfig } | { error: string } {
+/** 表单里当下这套值；校验不过就返回一句给用户看的话。拉模型列表时不要求先填模型名。 */
+function readForm(options: { requireModel?: boolean } = {}): { config: AiConfig } | { error: string } {
 	const baseUrl = normalizeBaseUrl(baseUrlInput?.value ?? '');
 	const baseError = validateBaseUrl(baseUrl);
 	if (baseError) return { error: baseError };
 	const model = (modelInput?.value ?? '').trim();
-	if (!model) return { error: '请填模型名' };
+	if (options.requireModel !== false && !model) return { error: '请填模型名' };
 	return { config: { ...config, baseUrl, model, apiKey: (keyInput?.value ?? '').trim() } };
+}
+
+/** 当前地址对应哪一家预设。地址手改之后按地址重认，不记「上次点过谁」。 */
+function currentProviderId(): string {
+	return initialProviderId(normalizeBaseUrl(baseUrlInput?.value ?? ''));
+}
+
+/** 把候选模型名写进 datalist。用 DOM 建节点而不是拼 HTML：这些字符串来自服务商的返回。 */
+function fillModelOptions(ids: readonly string[]): void {
+	if (!modelOptions) return;
+	modelOptions.replaceChildren(
+		...ids.map((id) => {
+			const option = document.createElement('option');
+			option.value = id;
+			return option;
+		}),
+	);
+}
+
+/** 把「用哪一家」那排按钮、提示与模型候选摆到与当前地址一致的位置。 */
+function renderProviders(): void {
+	const id = currentProviderId();
+	for (const chip of providerChips) chip.setAttribute('aria-pressed', String(chip.dataset.provider === id));
+	const provider = AI_PROVIDERS.find((item) => item.id === id);
+	if (providerHint) providerHint.textContent = provider?.hint ?? '';
+	fillModelOptions(provider?.models ?? []);
+	if (modelsState) {
+		modelsState.textContent = provider?.models?.length
+			? '可以手填；点「拉取模型列表」会向这家要一份准的。'
+			: '这家没内置建议模型名：手填，或者点「拉取模型列表」从它那儿拿。';
+	}
 }
 
 function renderDetail(): void {
@@ -71,6 +110,7 @@ function fillForm(): void {
 	if (baseUrlInput) baseUrlInput.value = config.baseUrl;
 	if (keyInput) keyInput.value = config.apiKey;
 	if (modelInput) modelInput.value = config.model;
+	renderProviders();
 	renderDetail();
 }
 
@@ -113,7 +153,9 @@ async function testConnection(): Promise<void> {
 	const checkedAt = Date.now();
 	try {
 		const response = await fetch(modelsEndpointOf(target), {
-			headers: { Authorization: `Bearer ${target.apiKey}` },
+			// 与拉模型列表走同一套头：Anthropic 那边少了它就会被跨域拦掉，
+			// 而实际对话请求是带上的——两处不一致会出现「测试不过但能用」这种最费解的反馈。
+			headers: headersFor(target.baseUrl, target.apiKey),
 			signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
 		});
 		const hint =
@@ -145,6 +187,70 @@ testButton?.addEventListener('click', () => {
 clearButton?.addEventListener('click', () => {
 	// 只清 key 与测试结果，地址与模型名留着——下一把 key 通常还是同一家。
 	persist(clearAiKey(config), '已清除 key');
+});
+
+/**
+ * 点一家服务商：把地址（与建议模型）填好。
+ *
+ * 它只改表单，不碰已保存的配置——想生效还是要按「保存」。好处是挨个点着看地址也安全。
+ */
+for (const chip of providerChips) {
+	chip.addEventListener('click', () => {
+		const provider = AI_PROVIDERS.find((item) => item.id === chip.dataset.provider);
+		if (!provider) return;
+		if (baseUrlInput) baseUrlInput.value = provider.baseUrl;
+		/*
+		 * 模型名只在「空着」或「还是别家的建议值」时才被覆盖：用户手打过的那一串比预设更可信，
+		 * 换个服务商就把它抹掉是最容易挨骂的一种"聪明"。
+		 */
+		const current = (modelInput?.value ?? '').trim();
+		const knownDefault = AI_PROVIDERS.some((item) => item.models?.includes(current));
+		if (modelInput && provider.models?.[0] && (!current || knownDefault)) modelInput.value = provider.models[0];
+		renderProviders();
+		setStatus('');
+	});
+}
+
+/** 向服务商要一份模型列表，塞进下拉候选。拿不到也不影响手填。 */
+async function fetchModels(): Promise<void> {
+	const read = readForm({ requireModel: false });
+	if ('error' in read) {
+		setStatus(read.error);
+		return;
+	}
+	const target = read.config;
+	if (!target.apiKey) {
+		setStatus('先填 key 再拉模型列表');
+		keyInput?.focus();
+		return;
+	}
+	if (modelsState) modelsState.textContent = '拉取中…';
+	if (modelsButton) modelsButton.disabled = true;
+	try {
+		const response = await fetch(modelsEndpointOf(target), {
+			headers: headersFor(target.baseUrl, target.apiKey),
+			signal: AbortSignal.timeout(TEST_TIMEOUT_MS),
+		});
+		if (!response.ok) {
+			if (modelsState) modelsState.textContent = `拿不到列表（HTTP ${response.status}），手填模型名也行`;
+			return;
+		}
+		const ids = modelIdsOf(await response.json().catch(() => null));
+		if (ids.length === 0) {
+			if (modelsState) modelsState.textContent = '这家没返回可用的模型名，手填吧';
+			return;
+		}
+		fillModelOptions(ids);
+		if (modelsState) modelsState.textContent = `拿到 ${ids.length} 个模型，点输入框就能选`;
+	} catch {
+		if (modelsState) modelsState.textContent = '拉取失败：网络、跨域或超时；手填模型名也行';
+	} finally {
+		if (modelsButton) modelsButton.disabled = false;
+	}
+}
+
+modelsButton?.addEventListener('click', () => {
+	void fetchModels();
 });
 
 fillForm();

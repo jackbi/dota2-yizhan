@@ -11,7 +11,6 @@ import {
 	isConfigured,
 	loadAiConfig,
 	modelsEndpointOf,
-	needsThinkingDisabled,
 	normalizeBaseUrl,
 	parseAiConfig,
 	saveAiConfig,
@@ -102,14 +101,6 @@ assert.equal(isConfigured({ ...emptyAiConfig(), apiKey: 'sk-x', model: ' ' }), f
 assert.equal(parseAiConfig({ apiKey: 'sk-x', model: '  ' }).model, DEFAULT_AI_MODEL, '存储里的空模型名补默认值');
 assert.match(aiStateLabel(parseAiConfig({})), /未配置/, '未配置时文案要说清楚');
 assert.match(aiStateLabel(parseAiConfig({ apiKey: 'sk-x', model: 'gpt-x' })), /gpt-x/, '已配置时带上模型名');
-
-// ---------------------------------------------------------------- 按服务商决定参数
-
-assert.equal(needsThinkingDisabled(DEFAULT_AI_BASE_URL), true, 'DeepSeek 必须关思考，否则回复只有思考没有正文');
-assert.equal(needsThinkingDisabled('https://api.deepseek.com/v1'), true, '带版本段也要认出来');
-assert.equal(needsThinkingDisabled('https://api.openai.com/v1'), false, '别家不该收到这个非标准参数');
-assert.equal(needsThinkingDisabled('http://localhost:11434/v1'), false, '本地模型同理');
-assert.equal(needsThinkingDisabled('not a url'), false, '地址坏掉时不要乱发参数');
 
 // ---------------------------------------------------------------- 读写与迁移
 

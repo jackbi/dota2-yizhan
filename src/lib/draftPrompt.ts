@@ -425,33 +425,48 @@ export interface ChatRequestOptions {
 	jsonMode?: boolean;
 	maxTokens?: number;
 	/**
-	 * 是否在请求里显式关掉思考。默认开。
+	 * 请求形状，按服务商给（见 `aiProviders.shapeFor`）。不传就是下面那套最保守的默认值。
 	 *
-	 * 由调用方按服务商决定（见 `aiConfig.needsThinkingDisabled`）：这个参数只有 DeepSeek 认，
-	 * 发给严格校验的端点会被 400 拒掉。
+	 * 「被 400 拒掉」那条退让路径在调用方（`draftBoard` 的 `requestChat`）：它是一步步去掉
+	 * `response_format` 与 `temperature`，而不是换一家的形状。
 	 */
-	disableThinking?: boolean;
+	shape?: ChatShape;
 }
 
 /**
- * 组装 `chat/completions` 请求体。形状是 OpenAI 兼容的那一套，DeepSeek 也在其中。
+ * 请求形状：各服务商认的字段不一样，把差异收成三个开关。
  *
- * **必须显式关掉思考**（`thinking: { type: 'disabled' }`）。这不是调优，是不关就没有结果：
+ * 默认那套是**最保守**的：只发 OpenAI 兼容的基础字段，不发任何一家专有的东西——专有字段
+ * 正是最容易被别家当未知参数拒掉的。具体谁用哪套见 `aiProviders` 的表（那里的值有实测依据）。
+ */
+export interface ChatShape {
+	/** 要不要发 DeepSeek 那套 `thinking: { type: 'disabled' }`。 */
+	thinking: boolean;
+	/** 输出上限写在哪个字段上。OpenAI 与 Grok 的新模型已经不认 `max_tokens`。 */
+	maxTokensField: 'max_tokens' | 'max_completion_tokens';
+	/** 发不发 `temperature`。部分推理模型只接受默认值，传了会被 400 拒掉。 */
+	temperature: boolean;
+}
+
+export const DEFAULT_CHAT_SHAPE: ChatShape = { thinking: false, maxTokensField: 'max_tokens', temperature: true };
+
+/**
+ * 组装 `chat/completions` 请求体。
+ *
+ * DeepSeek 那一家**必须显式关掉思考**（形状里的 `thinking`）。这不是调优，是不关就没有结果：
  * `deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
  * 吃光，`content` 是空的（`finish_reason: length`）；把上限提到 4000 也一样空，耗时 21 秒。
  * 关掉之后 1.8 秒返回 288 个 token 的正常 JSON。
- *
- * 这一条只在 DeepSeek 上发（`disableThinking` 为假时整个字段不出现），因为它同时也是个
- * 非标准参数：换一家就可能被当未知参数拒掉。
  */
 export function buildChatRequest(options: ChatRequestOptions): Record<string, unknown> {
+	const shape = options.shape ?? DEFAULT_CHAT_SHAPE;
 	return {
 		model: options.model,
 		messages: options.messages,
-		temperature: 0.3,
-		max_tokens: options.maxTokens ?? ADVICE_MAX_TOKENS,
+		...(shape.temperature ? { temperature: 0.3 } : {}),
+		[shape.maxTokensField]: options.maxTokens ?? ADVICE_MAX_TOKENS,
 		...(options.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
-		...(options.disableThinking === false ? {} : { thinking: { type: 'disabled' } }),
+		...(shape.thinking ? { thinking: { type: 'disabled' } } : {}),
 	};
 }
 

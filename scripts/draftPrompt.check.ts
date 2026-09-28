@@ -10,6 +10,7 @@ import {
 	parseAdviceReply,
 	parseVerdictReply,
 } from '../src/lib/draftPrompt.ts';
+import type { ChatShape } from '../src/lib/draftPrompt.ts';
 import { buildVerdict } from '../src/lib/draftVerdict.ts';
 
 /**
@@ -204,16 +205,34 @@ assert.match(opponentUser, /Team Spirit/, '对手模式下队名按它的视角�
 /**
  * 关掉思考这条是实测出来的，不是可选项：默认开着的时候模型把 token 上限全用在
  * `reasoning_tokens` 上，`content` 是空的（900 与 4000 都试过），页面上表现为"点了没结果"。
+ *
+ * 但这已经是**按服务商分家**的了：默认形状（认不出来的地址）只发 OpenAI 兼容的基础字段，
+ * DeepSeek 那家单独带上 thinking。谁用哪套见 `aiProviders` 的表与 `aiProviders.check`。
  */
+const DEEPSEEK_SHAPE: ChatShape = { thinking: true, maxTokensField: 'max_tokens', temperature: true };
+const STRICT_SHAPE: ChatShape = { thinking: false, maxTokensField: 'max_completion_tokens', temperature: false };
+
 const request = buildChatRequest({ model: 'deepseek-flash', messages });
-assert.deepEqual(request.thinking, { type: 'disabled' }, '必须显式关掉思考，否则回复只有思考没有正文');
+assert.equal('thinking' in request, false, '默认形状不发任何一家专有的参数');
 assert.deepEqual(request.response_format, { type: 'json_object' }, '默认要求 JSON 输出');
 assert.equal(request.model, 'deepseek-flash');
 assert.equal(request.max_tokens, 900);
+assert.equal(request.temperature, 0.3);
 assert.ok(Array.isArray(request.messages) && request.messages.length === 2, '请求里要带上两条消息');
 
+// DeepSeek 那一家：必须显式关掉思考，否则回复只有思考没有正文。
+const deepseekBody = buildChatRequest({ model: 'deepseek-flash', messages, shape: DEEPSEEK_SHAPE });
+assert.deepEqual(deepseekBody.thinking, { type: 'disabled' }, 'DeepSeek 必须显式关掉思考');
+assert.equal(deepseekBody.max_tokens, 900, 'DeepSeek 的上限仍写在 max_tokens 上');
+
+// OpenAI / Grok 那一类：上限换字段，且不发 temperature（部分推理模型只接受默认值）。
+const strictBody = buildChatRequest({ model: 'gpt-x', messages, shape: STRICT_SHAPE });
+assert.equal(strictBody.max_completion_tokens, 900, '换了形状要把上限写到 max_completion_tokens 上');
+assert.equal('max_tokens' in strictBody, false, '换了字段名就不该再出现 max_tokens');
+assert.equal('temperature' in strictBody, false, '不发 temperature 时整个字段不出现');
+
 // 被 400 拒掉时可以退一步：去掉 response_format，其它参数不变。
-const withoutJson = buildChatRequest({ model: 'deepseek-flash', messages, jsonMode: false });
+const withoutJson = buildChatRequest({ model: 'deepseek-flash', messages, jsonMode: false, shape: DEEPSEEK_SHAPE });
 assert.equal('response_format' in withoutJson, false, 'jsonMode 为假时不应带 response_format');
 assert.deepEqual(withoutJson.thinking, { type: 'disabled' }, '去掉 JSON 模式也要保持关闭思考');
 

@@ -8,6 +8,7 @@
  *   搬过来，老用户不用重填；搬完就不再读旧的，所以「清除 key」不会被迁移复活。
  * - 这里只管配置的形状与读写。提示词与请求体在 `draftPrompt.ts`，网络调用在页面脚本里。
  */
+import { AI_PROVIDERS } from './aiProviders.ts';
 
 /** 配置自己的键。与 BP 进度分开，改配置才不会顺带把 BP 进度覆盖掉。 */
 export const AI_STORE_KEY = 'd2s-ai-v1';
@@ -15,15 +16,15 @@ export const AI_STORE_KEY = 'd2s-ai-v1';
 export const LEGACY_STORE_KEY = 'd2s-draft-v1';
 
 /**
- * 默认地址就是老版本写死的那个，只是现在可以改。
+ * 默认那一套（地址与模型名）**取自预设表里的 DeepSeek 那条**，不在这里再抄一遍：
+ * 抄两遍就得靠自检盯着别漂移，而本来可以只有一个地方写它。
  *
- * 请求按 `<baseUrl>/chat/completions`、`<baseUrl>/models` 拼；DeepSeek 这两条都在根路径下，
- * 所以默认值不含 `/v1`。别家（OpenAI 之类）按各自习惯把 `/v1` 一起填进地址里。
+ * 默认地址就是老版本写死的那个，只是现在可以改。请求按 `<baseUrl>/chat/completions`、
+ * `<baseUrl>/models` 拼；DeepSeek 这两条都在根路径下，所以默认值不含 `/v1`。
  */
-export const DEFAULT_AI_BASE_URL = 'https://api.deepseek.com';
-/** 下拉里的建议值。模型名允许手填，这里只是省打字。 */
-export const AI_MODEL_SUGGESTIONS = ['deepseek-flash', 'deepseek-v4-pro'] as const;
-export const DEFAULT_AI_MODEL = AI_MODEL_SUGGESTIONS[0];
+const DEFAULT_PROVIDER = AI_PROVIDERS.find((provider) => provider.id === 'deepseek');
+export const DEFAULT_AI_BASE_URL = DEFAULT_PROVIDER?.baseUrl ?? 'https://api.deepseek.com';
+export const DEFAULT_AI_MODEL = DEFAULT_PROVIDER?.models?.[0] ?? 'deepseek-flash';
 
 export interface AiConfig {
 	baseUrl: string;
@@ -137,23 +138,6 @@ export function endpointOf(config: AiConfig): string {
 /** 列模型地址，给「测试连接」用。 */
 export function modelsEndpointOf(config: AiConfig): string {
 	return `${normalizeBaseUrl(config.baseUrl)}/models`;
-}
-
-const DEEPSEEK_HOST = /(^|\.)deepseek\.com$/i;
-
-/**
- * 要不要在请求里显式关掉思考。
- *
- * `thinking: { type: 'disabled' }` 是 DeepSeek 的口径，**不能无脑发给所有服务商**：
- * OpenAI 那类严格校验的端点会把不认识的参数当 400 直接拒掉。所以只在 DeepSeek 域名下发。
- * 其它服务商要不要关、用什么参数关，属于按提供商适配的部分（见 docs/draft-ai-plan.md 阶段 3）。
- */
-export function needsThinkingDisabled(baseUrl: string): boolean {
-	try {
-		return DEEPSEEK_HOST.test(new URL(normalizeBaseUrl(baseUrl)).hostname);
-	} catch {
-		return false;
-	}
 }
 
 function readJson(storage: AiStorage, key: string): Record<string, unknown> | null {

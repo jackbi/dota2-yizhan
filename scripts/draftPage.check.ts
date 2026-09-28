@@ -92,13 +92,18 @@ assert.match(script, /window\.setTimeout\([\s\S]{0,80}playOpponentMove/, '自动
 assert.match(script, /ourSide: turn\.side/, 'AI 要走对面那一手，就得用对面的视角算候选');
 assert.match(script, /'theirs'/, '替对面落子要用对手模式的提示词');
 assert.match(script, /let why = localMoveReason\(top, turn\.action\)/, '模型没给理由时要退回本地依据，而不是留一句没信息量的话');
-assert.match(script, /async function askModelForOpponentMove[\s\S]*?catch \{[\s\S]*?return null;/, '模型调用失败要返回 null，由调用方退回数据决策');
+// 失败（网络、限流、参数被拒、解析不过）一律返回 null，由调用方退回数据决策。
+assert.match(script, /async function askModelForOpponentMove[\s\S]*?if \(!reply\.ok\) return null;/, '模型调用失败要返回 null，由调用方退回数据决策');
 assert.match(script, /isConfigured\(ai\) \? 'AI' : '本地'/, '没配模型时台头必须写"本地"，不能还写 AI');
 assert.match(script, /isConfigured\(ai\) \? '让 AI 解释这几手' : '配置模型后可以解释'/, '"让 AI 解释"那个按钮在没配模型时要改成说得通的入口文案');
 assert.match(script, /aiSideInput\.disabled = !configured/, '没配模型时要禁用"对面交给 AI"，否则开关看着是开的却没有 AI');
 assert.match(script, /aiSidePref/, '开关要区分"用户的选择"与"被配置逼出来的值"，否则配好模型回来还是关的');
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
 assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
+// 三条调用路径走同一个入口：退让顺序、超时、按服务商拼的请求头都只写一遍。
+assert.match(script, /async function requestChat\(/, '三条模型调用要走同一个 requestChat，别各写一遍');
+assert.match(script, /headersFor\(ai\.baseUrl, ai\.apiKey\)/, '请求头要按服务商拼（Anthropic 那个跨域开关头在里面）');
+assert.match(script, /shapeFor\(ai\.baseUrl\)/, '请求形状（思考开关、上限字段名）要按地址决定');
 
 /**
  * 模型配置只住在 `/settings`。

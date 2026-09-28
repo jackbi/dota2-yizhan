@@ -13,8 +13,10 @@ import {
 	parseVerdictReply,
 	VERDICT_MAX_TOKENS,
 } from '../lib/draftPrompt.ts';
+import type { PromptMessage } from '../lib/draftPrompt.ts';
 import type { AiConfig } from '../lib/aiConfig.ts';
-import { aiStateLabel, endpointOf, isConfigured, loadAiConfig, needsThinkingDisabled } from '../lib/aiConfig.ts';
+import { aiStateLabel, endpointOf, isConfigured, loadAiConfig } from '../lib/aiConfig.ts';
+import { headersFor, shapeFor } from '../lib/aiProviders.ts';
 import { adviceNarrative, opponentMoveReason } from '../lib/draftNarrative.ts';
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
 import { advise } from '../lib/draftScore.ts';
@@ -59,6 +61,25 @@ const STORE_KEY = 'd2s-draft-v1';
  * 点错地址变成永久卡死。超时后走的是既有的失败路径（退回本地依据）。
  */
 const MODEL_TIMEOUT_MS = 30_000;
+
+/**
+ * 请求体被 400 拒掉时的退让顺序：每步只去掉一个「不是每家都认」的可选参数。
+ *
+ * 1. `response_format`（要求 JSON 输出）——不认它的服务商会直接 400；
+ * 2. `temperature`——部分推理模型只接受默认值。
+ *
+ * 换来换去都在参数上，不换服务商的形状（那由 `aiProviders` 的表决定）。解析层本来就能处理
+ * 带代码块围栏的回复，所以退到最后一步功能仍然成立。
+ */
+const CHAT_FALLBACKS = [
+	{ jsonMode: true, temperature: true },
+	{ jsonMode: false, temperature: true },
+	{ jsonMode: false, temperature: false },
+] as const;
+
+/** 一次模型调用的结果。`status` 为 0 表示请求根本没发出去（网络、跨域或超时）。 */
+type ChatReply = { ok: true; content: string; finishReason: string } | { ok: false; status: number; text: string };
+
 const ATTR_LABEL: Record<string, string> = { STR: '力量', AGI: '敏捷', INT: '智力', UNI: '全才' };
 const ATTR_ORDER = ['STR', 'AGI', 'INT', 'UNI'];
 
@@ -135,6 +156,8 @@ if (data) {
 	let theirTeam = typeof stored.theirTeam === 'string' ? stored.theirTeam : '';
 	/** 模型配置。只存在这台浏览器；形状与读写见 lib/aiConfig.ts。 */
 	const ai: AiConfig = loadAiConfig();
+	/** 按地址挑出的请求形状：DeepSeek 要关思考、OpenAI/Grok 的上限字段不一样，详见 lib/aiProviders.ts。 */
+	const shape = shapeFor(ai.baseUrl);
 	/**
 	 * 用户对「对面交给 AI」的选择。
 	 *
@@ -849,23 +872,16 @@ if (data) {
 			if (verdictBtn) verdictBtn.disabled = true;
 			try {
 				const messages = buildVerdictMessages({ verdict: built, data: draft, selfTeam: ourTeam, foeTeam: theirTeam, foeForm });
-				const send = (jsonMode: boolean) =>
-					fetch(endpointOf(ai), {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
-						signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-						body: JSON.stringify(
-							buildChatRequest({ model: ai.model, messages, jsonMode, maxTokens: VERDICT_MAX_TOKENS, disableThinking: needsThinkingDisabled(ai.baseUrl) }),
-						),
-					});
-				let response = await send(true);
-				if (response.status === 400) response = await send(false);
-				if (!response.ok) {
-					if (verdictStatus) verdictStatus.textContent = `模型没返回结果（HTTP ${response.status}），上面是本地算的数字`;
+				const reply = await requestChat(messages, VERDICT_MAX_TOKENS);
+				if (!reply.ok) {
+					if (verdictStatus) {
+						verdictStatus.textContent = reply.status
+							? `模型没返回结果（HTTP ${reply.status}），上面是本地算的数字`
+							: '调用模型失败（网络、跨域或超时），上面是本地算的数字';
+					}
 					return;
 				}
-				const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-				const parsed = parseVerdictReply(body.choices?.[0]?.message?.content ?? '');
+				const parsed = parseVerdictReply(reply.content);
 				if (!parsed) {
 					if (verdictStatus) verdictStatus.textContent = '模型的回复解析不了，只保留本地算的数字';
 					return;
@@ -1164,37 +1180,26 @@ if (data) {
 
 		/** 让模型替对面做决定。返回 null 时调用方退回数据里的第一顺位。 */
 		async function askModelForOpponentMove(enemyAdvice: Advice, enemy: TeamSide): Promise<{ heroId: number; reason: string } | null> {
-			try {
-				const messages = buildAdviceMessages(
-					{
-						advice: enemyAdvice,
-						data: draft,
-						// 视角翻转：从对面看，它自己是"我方"，屏幕前的人是"对面"。
-						selfTeam: theirTeam,
-						foeTeam: ourTeam,
-						recorded,
-						ourSide: enemy,
-						firstPicker: firstPickerSide(),
-						foeForm,
-					},
-					'theirs',
-				);
-				const response = await fetch(endpointOf(ai), {
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
-					// 自动出招卡住会把整个盘面按住，所以这个调用也带超时（超时即退回数据决策）。
-					signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-					body: JSON.stringify(buildChatRequest({ model: ai.model, messages, disableThinking: needsThinkingDisabled(ai.baseUrl) })),
-				});
-				if (!response.ok) return null;
-				const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
-				const parsed = parseAdviceReply(body.choices?.[0]?.message?.content ?? '', allowedHeroIds(enemyAdvice));
-				if (!parsed) return null;
-				return { heroId: parsed.picks[0].heroId, reason: parsed.picks[0].reason };
-			} catch {
-				// 网络、限流、解析失败都退回数据决策，别让对战卡在这里。
-				return null;
-			}
+			const messages = buildAdviceMessages(
+				{
+					advice: enemyAdvice,
+					data: draft,
+					// 视角翻转：从对面看，它自己是"我方"，屏幕前的人是"对面"。
+					selfTeam: theirTeam,
+					foeTeam: ourTeam,
+					recorded,
+					ourSide: enemy,
+					firstPicker: firstPickerSide(),
+					foeForm,
+				},
+				'theirs',
+			);
+			// 网络、限流、超时、解析失败都退回数据决策，别让对战卡在这里——所以这里一律返回 null。
+			const reply = await requestChat(messages);
+			if (!reply.ok) return null;
+			const parsed = parseAdviceReply(reply.content, allowedHeroIds(enemyAdvice));
+			if (!parsed) return null;
+			return { heroId: parsed.picks[0].heroId, reason: parsed.picks[0].reason };
 		}
 
 		function onHeroClick(heroId: number): void {
@@ -1428,6 +1433,51 @@ if (data) {
 		}
 
 		/**
+		 * 发一次模型请求。返回 `ok: false` 时 `status` 是 HTTP 状态码（0 表示没发出去）。
+		 *
+		 * 三条调用路径（建议解释、对手出招、复盘）走的是同一段：退让顺序、超时、请求头都在这里，
+		 * 免得三处各写一遍、改了一处漏两处。
+		 */
+		async function requestChat(messages: PromptMessage[], maxTokens?: number): Promise<ChatReply> {
+			let last: { status: number; text: string } = { status: 0, text: '' };
+			for (const step of CHAT_FALLBACKS) {
+				let response: Response;
+				try {
+					response = await fetch(endpointOf(ai), {
+						method: 'POST',
+						// 请求头按服务商拼：Anthropic 那个跨域开关头就挂在这里。
+						headers: headersFor(ai.baseUrl, ai.apiKey),
+						signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+						body: JSON.stringify(
+							buildChatRequest({
+								model: ai.model,
+								messages,
+								jsonMode: step.jsonMode,
+								maxTokens,
+								shape: { ...shape, temperature: step.temperature },
+							}),
+						),
+					});
+				} catch {
+					// 网络、跨域、超时：换参数再试没有意义，直接交给调用方去说明。
+					return { ok: false, status: 0, text: '' };
+				}
+				if (response.ok) {
+					const body = (await response.json().catch(() => null)) as
+						| { choices?: { message?: { content?: string }; finish_reason?: string }[] }
+						| null;
+					const choice = body?.choices?.[0];
+					return { ok: true, content: choice?.message?.content ?? '', finishReason: choice?.finish_reason ?? '' };
+				}
+				const text = await response.text().catch(() => '');
+				// 只有「参数不认」这类 400 值得退一步；key、额度、限流换了参数也一样。
+				if (response.status !== 400) return { ok: false, status: response.status, text };
+				last = { status: response.status, text };
+			}
+			return { ok: false, status: last.status, text: last.text };
+		}
+
+		/**
 		 * 让模型解释这一手。请求体里的候选、数字全部来自本地计算结果，
 		 * 模型只负责排序与措辞；解析不过就当这次没结果。
 		 */
@@ -1458,42 +1508,26 @@ if (data) {
 			setStatus('模型思考中…');
 			if (adviceAi) adviceAi.disabled = true;
 			try {
-				/**
-				 * 发一次请求。`jsonMode` 为假时去掉 `response_format`：
-				 * 这个参数万一不受支持会被 400 拒掉，而解析层本来就能处理带代码块围栏的回复，
-				 * 所以退一步继续用，不要让整个功能跟着挂掉。
-				 */
-				const send = (jsonMode: boolean) =>
-					fetch(endpointOf(ai), {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
-						signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-						body: JSON.stringify(buildChatRequest({ model: ai.model, messages, jsonMode, disableThinking: needsThinkingDisabled(ai.baseUrl) })),
-					});
-				let response = await send(true);
-				if (response.status === 400) {
-					response = await send(false);
-				}
-				if (!response.ok) {
-					const text = await response.text().catch(() => '');
+				const reply = await requestChat(messages);
+				if (!reply.ok) {
 					setStatus(
-						response.status === 401
+						reply.status === 0
+							? '请求发不出去：网络、代理，或这家服务没放开跨域'
+							: reply.status === 401
 							? 'key 无效或已过期'
-							: response.status === 402
+							: reply.status === 402
 								? '余额不足或额度用尽'
-								: response.status === 429
+								: reply.status === 429
 									? '触发限流，稍后再试'
-									: `请求失败（HTTP ${response.status}）${text.slice(0, 80)}`,
+									: `请求失败（HTTP ${reply.status}）${reply.text.slice(0, 80)}`,
 					);
 					return;
 				}
-				const body = (await response.json()) as { choices?: { message?: { content?: string }; finish_reason?: string }[] };
-				const choice = body.choices?.[0];
-				const content = choice?.message?.content ?? '';
+				const content = reply.content;
 				if (!content.trim()) {
 					// 实测过的一种情况：模型把上限全用在思考上，content 是空的。
 					// 请求里已经关了思考，这里只是兜底，别让用户看到"点了没反应"。
-					setStatus(choice?.finish_reason === 'length' ? '模型输出被截断，再点一次试试' : '模型这次返回了空内容，再点一次试试');
+					setStatus(reply.finishReason === 'length' ? '模型输出被截断，再点一次试试' : '模型这次返回了空内容，再点一次试试');
 					return;
 				}
 				const parsed = parseAdviceReply(content, allowedHeroIds(advice));
