@@ -211,3 +211,8 @@ docs(draft): 更新阵容分析的 AI 章节
 
 Chrome 内置模型（Gemini Nano）**没有纳入**：它没有 HTTP 端点，与本站「填一个地址直接发请求」
 的结构接不上，想接得另写一条调用路径。这条限制写在 `lib/aiProviders.ts` 的注释里。
+
+那两步实测后来也做成了脚本（`scripts/aiProviders.probe.ts`，`pnpm probe:providers`）：它探的
+就是预设表本身，加新服务商时不用再手工 curl。跑起来带出的两个坑都写进了脚本注释——Node 的
+`fetch` 默认不走代理环境变量（需要代理的服务商会被误报成「连不上」），以及边缘节点偶尔会把
+探测请求当异常流量（所以第一次不正常就重试一次）。它联网，所以不进 `pnpm check`。

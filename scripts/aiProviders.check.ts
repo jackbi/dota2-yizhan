@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DEFAULT_AI_MODEL, validateBaseUrl } from '../src/lib/aiConfig.ts';
 import { AI_PROVIDERS, headersFor, initialProviderId, providerOf, shapeFor } from '../src/lib/aiProviders.ts';
 
@@ -115,5 +116,19 @@ assert.deepEqual(
 	{ 'Content-Type': 'application/json', Authorization: 'Bearer sk-y' },
 	'别家不该多出莫名其妙的自定义头',
 );
+
+/**
+ * 探测脚本里的默认 Origin 必须与站点的对外域名一致。
+ *
+ * 它决定预检时声明「请求来自哪个站点」——写错了这个脚本就开始验错的东西（服务商放行的是
+ * 另一个域名，而真实站点仍会被拦）。两处都是写死的字符串，所以拿源码对着比，跟
+ * `draftFoe.check.ts` 比对队名规则是同一个套路。
+ */
+const probe = readFileSync(new URL('./aiProviders.probe.ts', import.meta.url), 'utf8');
+const astroConfig = readFileSync(new URL('../astro.config.mjs', import.meta.url), 'utf8');
+const siteOrigin = /const SITE_ORIGIN = '([^']+)'/.exec(astroConfig)?.[1];
+const probeOrigin = /const DEFAULT_ORIGIN = '([^']+)'/.exec(probe)?.[1];
+assert.ok(siteOrigin, '没能从 astro.config.mjs 里读出 SITE_ORIGIN，解析多半坏了');
+assert.equal(probeOrigin, siteOrigin, '探测脚本的默认 Origin 要与站点域名一致');
 
 console.log('aiProviders.check 通过');

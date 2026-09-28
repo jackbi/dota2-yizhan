@@ -374,6 +374,18 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
    `authorization`。这一条是本站的硬门槛——请求从浏览器直接发出，服务商不放行就只能自建代理。
 3. **参数差异**：以 linshenkx/prompt-optimizer 的适配器为准，它把各家的上限字段与思考开关分了家。
 
+这三步已经写成了脚本，加新服务商或怀疑某家改了策略时跑一遍就行：
+
+```bash
+pnpm probe:providers                                  # 全部探一遍
+pnpm probe:providers --only=openai,anthropic          # 只看几家
+```
+
+它探的就是 `lib/aiProviders.ts` 那张表，不用另外维护清单；退出码 1 表示有服务商是 404 或被跨域
+挡住。两个坑写在脚本里了：**Node 的 `fetch` 默认不认代理环境变量**（脚本自己带
+`NODE_USE_ENV_PROXY=1` 重启一次，否则需要代理的那几家会被误报成「连不上」），以及**边缘节点
+偶尔会把探测请求当异常流量**（第一次不正常就再试一次）。
+
 实测结论：
 
 | 情况 | 服务商 |
@@ -442,6 +454,7 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
 | `scripts/draftPage.check.ts` | 页面 id 与脚本对账、显隐手法检查 |
 | `scripts/aiConfig.check.ts` | 迁移、地址拼接、三态、按服务商决定参数的自检 |
 | `scripts/aiProviders.check.ts` | 预设表自洽、按地址认服务商、形状与请求头、默认模型不漂移的自检 |
+| `scripts/aiProviders.probe.ts` | 联网探各家的地址与跨域（`pnpm probe:providers`，不进 `pnpm check`） |
 | `scripts/settingsPage.check.ts` | 设置页的 id 对账与「key 只存在本机」这类承诺文案的自检 |
 
 写完页面容易踩的两个坑，都写进了 `draftPage.check.ts`：
