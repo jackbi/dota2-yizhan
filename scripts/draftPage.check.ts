@@ -106,6 +106,11 @@ assert.match(script, /aiSideInput\.disabled = !configured/, '没配模型时要�
 assert.ok(page.includes('id="draft-ai-hint"'), '开关旁边要有写原因的位置');
 assert.match(script, /aiHint\.textContent = configured \? '' : '未配置模型，对面由本地数据出招'/, '要把原因写进开关旁边那一句');
 assert.match(script, /aiSidePref/, '开关要区分"用户的选择"与"被配置逼出来的值"，否则配好模型回来还是关的');
+// 模型从「对面近期拿过的」那一栏里挑人也要算数：两栏都得查，否则会静默丢掉它的选择。
+assert.match(script, /advice\.foeCandidates\.find\(\(item\) => item\.heroId === pick\.heroId\)/, '模型选到"对面擅长"那栏时不能把它丢掉');
+// 配置在别处改了要跟上：bfcache 返回、另一个标签页保存。
+assert.match(script, /addEventListener\('pageshow'/, '从 bfcache 返回时要重读配置');
+assert.match(script, /event\.key === AI_STORE_KEY/, '另一个标签页改了配置要跟上');
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
 assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
 // 三条调用路径走同一个入口：退让顺序、超时、按服务商拼的请求头都只写一遍。

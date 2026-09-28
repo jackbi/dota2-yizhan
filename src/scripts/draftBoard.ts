@@ -15,7 +15,7 @@ import {
 } from '../lib/draftPrompt.ts';
 import type { PromptMessage } from '../lib/draftPrompt.ts';
 import type { AiConfig } from '../lib/aiConfig.ts';
-import { aiStateLabel, endpointOf, isConfigured, loadAiConfig } from '../lib/aiConfig.ts';
+import { AI_STORE_KEY, aiStateLabel, endpointOf, isConfigured, loadAiConfig } from '../lib/aiConfig.ts';
 import { headersFor, shapeFor } from '../lib/aiProviders.ts';
 import { adviceNarrative, opponentMoveReason } from '../lib/draftNarrative.ts';
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
@@ -155,9 +155,9 @@ if (data) {
 	let ourTeam = typeof stored.ourTeam === 'string' ? stored.ourTeam : '';
 	let theirTeam = typeof stored.theirTeam === 'string' ? stored.theirTeam : '';
 	/** 模型配置。只存在这台浏览器；形状与读写见 lib/aiConfig.ts。 */
-	const ai: AiConfig = loadAiConfig();
+	let ai: AiConfig = loadAiConfig();
 	/** 按地址挑出的请求形状：DeepSeek 要关思考、OpenAI/Grok 的上限字段不一样，详见 lib/aiProviders.ts。 */
-	const shape = shapeFor(ai.baseUrl);
+	let shape = shapeFor(ai.baseUrl);
 	/**
 	 * 用户对「对面交给 AI」的选择。
 	 *
@@ -994,9 +994,18 @@ if (data) {
 
 			/** 模型给过解释时，优先用它的顺序与文案，数字仍然来自本站数据。 */
 			const ordered: { candidate: AdviceCandidate; reason: string[]; risk: string }[] = [];
+			/** 已经画过的英雄，避免「对面擅长」那一栏把同一张卡再画一遍。 */
+			const appended = new Set<number>();
 			if (aiResult) {
 				for (const pick of aiResult.picks) {
-					const candidate = advice.candidates.find((item) => item.heroId === pick.heroId);
+					/*
+					 * 两栏都得找：解析白名单（`allowedHeroIds`）与提示词都把「对面近期拿过的」算作可选项，
+					 * 只在这里查 `candidates` 的话，模型选中那一栏的英雄会被静默丢掉——卡片退回本地顺序，
+					 * 而摘要上还写着「AI：…」，用户看不出这一手其实没算数。
+					 */
+					const candidate =
+						advice.candidates.find((item) => item.heroId === pick.heroId) ??
+						advice.foeCandidates.find((item) => item.heroId === pick.heroId);
 					if (!candidate) continue;
 					ordered.push({ candidate, reason: [pick.reason, ...candidate.reasons], risk: pick.risk || candidate.risk });
 				}
@@ -1029,6 +1038,7 @@ if (data) {
 				card.disabled = !legal.ok;
 				card.title = legal.ok ? `点一下就把 ${hero?.name ?? ''} 录进第 ${snapshotNow().nextStep} 手` : legal.reason ?? '';
 				adviceCards.append(card);
+				appended.add(item.candidate.heroId);
 			};
 
 			for (const item of ordered.slice(0, aiResult ? ADVICE_TARGET_COUNT + 2 : 5)) appendCard(item);
@@ -1038,11 +1048,14 @@ if (data) {
 			 * 这些是**对面近期真的在拿**的。BP 里两者的用法不同，混着排会让谁更熟悄悄主导顺序。
 			 */
 			if (advice.foeCandidates.length > 0) {
-				const heading = document.createElement('p');
-				heading.className = 'mt-2 text-xs font-semibold text-gold';
-				heading.textContent = `对面近期拿过的（${foeHeadline(foeForm)}）`;
-				adviceCards.append(heading);
-				for (const candidate of advice.foeCandidates) appendCard({ candidate, reason: candidate.reasons, risk: candidate.risk });
+				const rest = advice.foeCandidates.filter((candidate) => !appended.has(candidate.heroId));
+				if (rest.length > 0) {
+					const heading = document.createElement('p');
+					heading.className = 'mt-2 text-xs font-semibold text-gold';
+					heading.textContent = `对面近期拿过的（${foeHeadline(foeForm)}）`;
+					adviceCards.append(heading);
+					for (const candidate of rest) appendCard({ candidate, reason: candidate.reasons, risk: candidate.risk });
+				}
 			}
 		}
 
@@ -1388,6 +1401,14 @@ if (data) {
 				cancelAutoMove();
 				void playOpponentMove();
 			});
+
+			// 配置的那两条回边，见 refreshAiConfig 的注释。
+			window.addEventListener('pageshow', (event) => {
+				if (event.persisted) refreshAiConfig();
+			});
+			window.addEventListener('storage', (event) => {
+				if (event.key === AI_STORE_KEY) refreshAiConfig();
+			});
 		}
 
 		function syncSideButtons(): void {
@@ -1428,6 +1449,25 @@ if (data) {
 			// 原因写在开关旁边（设置区那份隔着一百多行，用户第一反应是盯着这个灰掉的开关）。
 			if (aiHint) aiHint.textContent = configured ? '' : '未配置模型，对面由本地数据出招';
 			syncAiState();
+		}
+
+		/**
+		 * 配置在别处被改了就把这一页也跟上。
+		 *
+		 * 之前只在加载时读一次，于是「去 /settings 填好再按返回键回来」这一路是坏的：
+		 * 从 bfcache 退回来时脚本根本不会重跑，页面继续按「未配置模型」渲染；另一个标签页里
+		 * 保存了新 key，这一页也还在用旧的发请求。两条路各有一个事件：
+		 * `pageshow`（persisted 为真 = 从缓存恢复）与 `storage`（另一个标签页写进了同一个键）。
+		 */
+		function refreshAiConfig(): void {
+			const next = loadAiConfig();
+			if (next.baseUrl === ai.baseUrl && next.apiKey === ai.apiKey && next.model === ai.model) return;
+			ai = next;
+			shape = shapeFor(ai.baseUrl);
+			aiSide = isConfigured(ai) && aiSidePref;
+			if (aiSideInput) aiSideInput.checked = aiSide;
+			syncAiControls();
+			renderAll();
 		}
 
 		// ------------------------------------------------------------ 模型调用
