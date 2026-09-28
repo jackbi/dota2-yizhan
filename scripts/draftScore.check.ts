@@ -155,6 +155,13 @@ assert.equal(afterBans.candidates[0]?.position, 3, '7 号应落在三号位');
 assert.ok((afterBans.candidates[0]?.ranking ?? 0) > 0, '首选的收益必须为正，否则等于没建议');
 assert.match(afterBans.candidates[0]?.reasons[0] ?? '', /3 号位/, '依据要说清是哪个号位');
 assert.match(afterBans.candidates[0]?.reasons[0] ?? '', /\d+\.\d%/, '依据要带具体数字');
+/*
+ * 口径要按真实窗口写：STRATZ 不传 week 时给的是**上一个完整自然周**（最坏离现在 7~14 天），
+ * 写成「近 N 天」是错的——docs/data-sources.md 专门禁过，draftPrompt.check 里也有一条源码级断言。
+ * 这里再钉一次渲染出来的结果，免得它又被改回一句看着很正常的话。
+ */
+assert.match(afterBans.candidates[0]?.reasons[0] ?? '', /在上一完整自然周的胜率/, '依据里的统计窗口要用 windowLabel 写');
+assert.ok(!/近 \d+ 天/.test(afterBans.candidates[0]?.reasons[0] ?? ''), '依据里不许出现「近 N 天」');
 
 // 候选排序、去重，且不能出现已经用掉的英雄。
 const rankings = afterBans.candidates.map((candidate) => candidate.ranking);

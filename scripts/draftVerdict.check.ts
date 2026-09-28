@@ -105,6 +105,12 @@ const base = { data, ourSide: 'radiant' as const, selfTeam: '我方队', foeTeam
 		v.rows.filter((row) => row.percent).length === 2,
 		'只有「平均号位胜率」「对位偏差」两行是百分比口径',
 	);
+	// 统计窗口按真实口径写（`windowLabel`），不是「近 N 天」：见 docs/data-sources.md 的禁令。
+	assert.ok(
+		v.notes.some((note) => note.includes('统计窗口是上一完整自然周')),
+		'口径说明要写清统计窗口，且用 windowLabel 的说法',
+	);
+	assert.ok(!v.notes.some((note) => /近 \d+ 天/.test(note)), '口径说明里不许出现「近 N 天」');
 	ok('胜率 = 0.5 + 号位偏差 + 对位偏差，两边互补，口径写在提示里');
 }
 
