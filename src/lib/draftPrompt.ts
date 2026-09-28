@@ -33,12 +33,6 @@ export const ADVICE_TARGET_COUNT = 3;
  */
 export type PromptRole = 'ours' | 'theirs';
 
-/** DeepSeek 的模型名。两个都走 OpenAI 兼容的 chat/completions。 */
-export const DEEPSEEK_MODELS = ['deepseek-flash', 'deepseek-v4-pro'] as const;
-export type DeepseekModel = (typeof DEEPSEEK_MODELS)[number];
-export const DEFAULT_DEEPSEEK_MODEL: DeepseekModel = 'deepseek-flash';
-export const DEEPSEEK_ENDPOINT = 'https://api.deepseek.com/chat/completions';
-
 export interface PromptMessage {
 	role: 'system' | 'user';
 	content: string;
@@ -430,15 +424,25 @@ export interface ChatRequestOptions {
 	/** 是否要求 JSON 输出。被 400 拒掉时调用方会去掉它重试。 */
 	jsonMode?: boolean;
 	maxTokens?: number;
+	/**
+	 * 是否在请求里显式关掉思考。默认开。
+	 *
+	 * 由调用方按服务商决定（见 `aiConfig.needsThinkingDisabled`）：这个参数只有 DeepSeek 认，
+	 * 发给严格校验的端点会被 400 拒掉。
+	 */
+	disableThinking?: boolean;
 }
 
 /**
- * 组装 DeepSeek 的 `chat/completions` 请求体。
+ * 组装 `chat/completions` 请求体。形状是 OpenAI 兼容的那一套，DeepSeek 也在其中。
  *
  * **必须显式关掉思考**（`thinking: { type: 'disabled' }`）。这不是调优，是不关就没有结果：
  * `deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
  * 吃光，`content` 是空的（`finish_reason: length`）；把上限提到 4000 也一样空，耗时 21 秒。
  * 关掉之后 1.8 秒返回 288 个 token 的正常 JSON。
+ *
+ * 这一条只在 DeepSeek 上发（`disableThinking` 为假时整个字段不出现），因为它同时也是个
+ * 非标准参数：换一家就可能被当未知参数拒掉。
  */
 export function buildChatRequest(options: ChatRequestOptions): Record<string, unknown> {
 	return {
@@ -447,7 +451,7 @@ export function buildChatRequest(options: ChatRequestOptions): Record<string, un
 		temperature: 0.3,
 		max_tokens: options.maxTokens ?? ADVICE_MAX_TOKENS,
 		...(options.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
-		thinking: { type: 'disabled' },
+		...(options.disableThinking === false ? {} : { thinking: { type: 'disabled' } }),
 	};
 }
 

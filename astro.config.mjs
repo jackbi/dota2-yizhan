@@ -325,6 +325,12 @@ export default defineConfig({
 				const url = page.replace(/\/$/, '');
 				if (THIN_ITEM_URLS.has(url)) return false;
 				if (url === `${SITE_ORIGIN}/me` || url.startsWith(`${SITE_ORIGIN}/me/`)) return false;
+				/*
+				 * `/settings` 是「填自己的 key」那一页，收录进去只会让搜索结果里多一个
+				 * 个人配置页：它对外没有内容，点进去的人也不该从搜索进来。与 `/me/*` 同理，
+				 * 区别是它不需要登录，所以只是不提交、不屏蔽抓取。
+				 */
+				if (url === `${SITE_ORIGIN}/settings`) return false;
 				return true;
 			},
 		}),

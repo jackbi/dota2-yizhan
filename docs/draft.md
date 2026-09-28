@@ -1,7 +1,8 @@
 # 阵容分析（`/draft`）
 
 看比赛的时候手动把双方的 ban/pick 点进来，站点按号位胜率算出几个候选，轮到自己这边时看建议。
-也可以让 AI 扮演对面，跟它把一局 BP 打完。页面是静态的，唯一的运行时外部依赖是用户自己的 key。
+也可以让模型扮演对面，跟它把一局 BP 打完。页面是静态的，唯一的运行时外部依赖是用户自己的 key；
+不配也完整可用，只是那段解释由本地模板写（见下面「模型负责什么」与「配置住在哪」）。
 
 两种用法共用一套东西：
 
@@ -327,19 +328,48 @@ STRATZ 的分位统计里倒是有 `stunDuration` / `castDamage` / `cs` 这些�
 并明确三条硬约束：只能从候选里挑、理由里的数字只能来自给定字段、输出必须是 JSON。
 回复解析会丢掉候选之外的 `heroId`，解析不过就当这次没有结果，退回纯数据面板。
 
-key 的边界写清楚：存在浏览器 `localStorage`，请求由浏览器直接发给 `api.deepseek.com`
-（实测它对本站 origin 放开 CORS），服务端不经手、不落库、不记日志。别人 clone 之后用
-自己的 key，作者不承担费用。**浏览器扩展能读到 localStorage 里的 key**，公共电脑上别存，
-页面上也这么写。
+**没配模型时功能是完整的**。这是这个页面的底线，也是它敢把模型做成可选的原因：
 
-模型名走 `deepseek-flash` / `deepseek-v4-pro`，请求是 OpenAI 兼容格式；`response_format`
-被拒（400）时会去掉该参数重试一次，因为解析层本来就能处理带代码块围栏的回复。
+- 建议面板的候选、号位、胜率、依据、风险全部来自 `draftScore`；
+- 复盘胜率来自 `draftVerdict`；
+- 对面那一手退回「数据里的第一顺位」，依据由 `draftNarrative.opponentMoveReason` 用结构化字段
+  重写一句。**不复用候选卡的 `reasons`**：那些句子按出招方的视角生成，里面有「我方 / 对面」，
+  直接贴到日志行上人称会指反；
+- 解释那一段由 `draftNarrative.adviceNarrative` 把前两条依据串起来，占的就是模型那段的位置。
 
-**请求里必须显式关掉思考**（`thinking: { type: 'disabled' }`）。这条不是调优，是不关就没结果：
+同时**不许假装有 AI**：没配置时台头写「（本地）」而不是「（AI）」，手动出招那个按钮是
+「让对面走这一手」，「对面交给 AI」开关禁用并在旁边写明原因。以前没配 key 时界面照样写着
+「（AI）」，而实际跑的是本地启发式——用户从结果上看不出差别。`scripts/draftPage.check.ts`
+把这四条都钉住了。
+
+## 配置住在哪
+
+表单在 `/settings`，形状、读写、迁移与三态判定都在 `lib/aiConfig.ts`。
+
+- **key 只存在这台浏览器**（`d2s-ai-v1`），请求由浏览器直接发给用户自己填的地址，服务端不经手、
+  不落库、不记日志。别人 clone 之后用自己的 key，作者不承担费用。**浏览器扩展能读到
+  localStorage 里的 key**，公共电脑上别存，页面上也这么写。
+- 配置与 BP 进度是**两个键**。老版本把 key 与模型名塞在 `d2s-draft-v1` 里，`loadAiConfig`
+  第一次读时会搬过来，之后不再读旧的——所以点过「清除 key」之后它不会被迁移复活。
+- 三态：未配置 / 上次测试没通过 / 可用。「没测过」算可用，这点差别留在文案里说。
+- 「测试连接」打 `<地址>/models`，结果（时间 + 成败）**会落库**，BP 台据此显示「已配但连不上」。
+  地址、key、模型任意一项改了，旧的测试结果作废。
+- **所有模型请求都带超时**（对话 30 秒，测试连接 20 秒）。地址可填之后这条才是必需的：地址写错、
+  或服务商黑洞掉连接时 `fetch` 会一直挂着，自动出招就卡在「正在看数据…」，盘面看得见却推不动。
+  超时后走的是既有的失败路径——退回本地依据。
+
+地址与模型名都可填，请求仍是 OpenAI 兼容的 `chat/completions`。默认地址保持
+`https://api.deepseek.com`，与老版本写死的端点、测试地址完全一致。
+
+**`thinking: { type: 'disabled' }` 只在 DeepSeek 域名下发。** 这条不是调优，是不关就没结果：
 `deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
 吃掉、`content` 是空的（`finish_reason: length`），把上限提到 4000 也一样空且耗时 21 秒；
-关掉之后 1.8 秒返回 288 个 token 的正常 JSON。请求体的组装在 `draftPrompt.ts` 的
-`buildChatRequest` 里，`scripts/draftPrompt.check.ts` 盯着这一条别被改掉。
+关掉之后 1.8 秒返回 288 个 token 的正常 JSON。但它同时是个非标准参数，发给严格校验的端点会被
+400 拒掉，所以按地址判断（`needsThinkingDisabled`）。`response_format` 被拒（400）时会去掉该
+参数重试一次，解析层本来就能处理带代码块围栏的回复。
+
+**更细的分家适配还没做**：`max_tokens` 与 `response_format` 仍是 DeepSeek 那套口径，接别家时
+如果报参数错误，多半是这里。
 
 ## 文件分工
 
@@ -351,6 +381,8 @@ key 的边界写清楚：存在浏览器 `localStorage`，请求由浏览器直�
 | `src/lib/draftData.ts` | 组装英雄、号位胜率、职业样本 |
 | `src/lib/draftScore.ts` | 候选打分与依据生成（纯函数） |
 | `src/lib/draftPrompt.ts` | 提示词与回复解析（不联网） |
+| `src/lib/aiConfig.ts` | 模型配置的形状、读写、迁移与三态判定（纯函数 + 存储适配） |
+| `src/lib/draftNarrative.ts` | 没接模型时的解释模板（纯函数，只重组已有依据） |
 | `src/lib/draftFoe.ts` | 对面近期偏好的形状、聚合与文案（纯函数） |
 | `src/lib/draftVerdict.ts` | 双方阵容锁定后的对比与胜率（纯函数） |
 | `src/lib/stratzTeamForm.ts` | 运行时代取队伍偏好（走 STRATZ，可配中转） |
@@ -358,13 +390,17 @@ key 的边界写清楚：存在浏览器 `localStorage`，请求由浏览器直�
 | `src/pages/api/draft/foe.ts` | `GET /api/draft/foe?id=`：把队伍偏好交给页面 |
 | `src/pages/draft-teams.json.ts` | 构建期烘焙的队名 → 队伍 id 索引 |
 | `src/pages/draft-data.json.ts` | `GET /draft-data.json`：页面内联的那份数据，供程序取用（同一次构建、同一个单飞） |
-| `src/scripts/draftBoard.ts` | 客户端：渲染、交互、DeepSeek 调用 |
+| `src/scripts/draftBoard.ts` | 客户端：渲染、交互、模型调用 |
+| `src/pages/settings.astro` | AI 设置页的骨架（全站唯一填 key 的地方） |
+| `src/scripts/settingsForm.ts` | 设置页：校验、测试连接、保存与清除 |
 | `scripts/draftOrder.check.ts` | 顺序表的自检 |
 | `scripts/draftScore.check.ts` | 打分层的自检（候选顺序必须说得通） |
 | `scripts/draftFoe.check.ts` | 阵营/胜负归属、排序、文案、队名规则的自检 |
 | `scripts/draftVerdict.check.ts` | 胜率口径、镜像对位、熟手不进胜率的自检 |
 | `scripts/draftPrompt.check.ts` | 提示词约束与解析容错的自检 |
 | `scripts/draftPage.check.ts` | 页面 id 与脚本对账、显隐手法检查 |
+| `scripts/aiConfig.check.ts` | 迁移、地址拼接、三态、按服务商决定参数的自检 |
+| `scripts/settingsPage.check.ts` | 设置页的 id 对账与「key 只存在本机」这类承诺文案的自检 |
 
 写完页面容易踩的两个坑，都写进了 `draftPage.check.ts`：
 
@@ -373,20 +409,27 @@ key 的边界写清楚：存在浏览器 `localStorage`，请求由浏览器直�
 2. **别用 `hidden` 类藏东西。** Tailwind 的 utility 层会盖过脚本写的内联 `display`，
    元素永远露不出来；要藏就用内联 `style="display: none"`，并且脚本里必须能找到显示它的代码。
 
+`settingsPage.check.ts` 用同一套办法看住设置页，另外钉住那两句对外承诺的文案：key 只存在本机、
+站点不经手，以及 key 输入框必须是 `password` + 关掉自动填充。这一页是全站唯一填 key 的地方，
+文案被顺手删掉不会报错，只会让承诺悄悄失效。
+
 样式那块另有一个坑：**脚本建出来的节点拿不到 Astro 的作用域属性**，所以本页的 `<style>`
 必须是 `is:global`，否则英雄格子和 BP 格子全部没有样式（实测症状是格子退回 256px 的原始
 图片尺寸、整页被拉成七千多像素高）。
 
 ## 验证到哪一步
 
-- `pnpm check`：四个脚本全过（顺序表、打分、提示词、页面结构）。
+- `pnpm check`：31 个脚本全过，其中阵容分析相关的六个是顺序表、打分、提示词、页面结构，加上
+  本轮新增的 `aiConfig.check.ts`（迁移、地址拼接、三态、按服务商决定参数）与
+  `settingsPage.check.ts`（设置页 id 对账与承诺文案）。
 - `pnpm build`：`/draft` 正常预渲染，内联数据 127 个英雄、约 28 KB，比赛下拉 24 项。
 - 浏览器里实测：英雄池 127 个格子、两列各 7 禁 5 选、点英雄会推进手号、撤销/跳过/清空正常、
   切换先选权后两列归属整体镜像、刷新后进度从 localStorage 恢复、候选卡片点了就是录一手。
-- 接口层：用无效 key 打真实的 `api.deepseek.com`，`/models` 与 `chat/completions` 都返回 401，
-  页面上分别显示「失败：HTTP 401」与「key 无效或已过期」；请求体与回复渲染用打桩验证过。
+- 配置链路（打桩验证）：老数据（key 与模型名在 `d2s-draft-v1` 里）能搬进 `d2s-ai-v1`；
+  清除过 key 之后刷新不会把旧 key 搬回来；地址 / key / 模型任一改动都会作废上次的测试结果。
 - **没验的部分**：真实模型调用没跑（需要真 key，会花钱），所以模型输出质量只靠提示词约束与
-  解析容错保证，实际效果要你自己拿一场比赛试试。
+  解析容错保证，实际效果要你自己拿一场比赛试试。除 DeepSeek 以外的服务商也没实测过——
+  地址与模型名能填，但参数口径还没分家。
 
 ## 已知取舍
 

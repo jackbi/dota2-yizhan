@@ -80,6 +80,10 @@ assert.ok(page.includes("import '../scripts/draftBoard'"), '页面要加载客�
 /**
  * 这块是"和 AI 对着打"的入口，几个点缺一个就退化成只能看建议：
  * 总开关、AI 的落子区块、自动出招的定时器，以及**调用失败要退回数据决策**的兜底。
+ *
+ * 另外三条是「不许假装有 AI」：没配模型时台头要写「本地」而不是「AI」，手动出招那个按钮
+ * 要换成「让对面走这一手」，开关要禁用。以前没配 key 时界面照样写着「（AI）」，而实际走的是
+ * 本地启发式——用户从结果上看不出差别，所以这几条要钉住。
  */
 assert.ok(page.includes('id="draft-ai-side"'), '要有"对面交给 AI"的开关');
 assert.ok(page.includes('id="draft-ai-move"'), '要有 AI 落子的区块');
@@ -87,8 +91,23 @@ assert.ok(page.includes('id="draft-ai-play"'), '关掉自动时要能手动让�
 assert.match(script, /window\.setTimeout\([\s\S]{0,80}playOpponentMove/, '自动出招要有定时器');
 assert.match(script, /ourSide: turn\.side/, 'AI 要走对面那一手，就得用对面的视角算候选');
 assert.match(script, /'theirs'/, '替对面落子要用对手模式的提示词');
-assert.match(script, /const why = reason \|\| '按号位胜率与剩余手数判断'/, '模型没给理由时要退回数据决策的说明');
+assert.match(script, /let why = localMoveReason\(top, turn\.action\)/, '模型没给理由时要退回本地依据，而不是留一句没信息量的话');
 assert.match(script, /async function askModelForOpponentMove[\s\S]*?catch \{[\s\S]*?return null;/, '模型调用失败要返回 null，由调用方退回数据决策');
+assert.match(script, /isConfigured\(ai\) \? 'AI' : '本地'/, '没配模型时台头必须写"本地"，不能还写 AI');
+assert.match(script, /isConfigured\(ai\) \? '让 AI 解释这几手' : '配置模型后可以解释'/, '"让 AI 解释"那个按钮在没配模型时要改成说得通的入口文案');
+assert.match(script, /aiSideInput\.disabled = !configured/, '没配模型时要禁用"对面交给 AI"，否则开关看着是开的却没有 AI');
+assert.match(script, /aiSidePref/, '开关要区分"用户的选择"与"被配置逼出来的值"，否则配好模型回来还是关的');
+// 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
+assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
+
+/**
+ * 模型配置只住在 `/settings`。
+ *
+ * 这一页留一行状态和一个入口；如果谁又把 key 输入框搬回来，两处都能改配置，存储又会打架。
+ */
+assert.ok(page.includes('id="draft-ai-state"'), 'BP 台要显示配置状态');
+assert.ok(page.includes('href="/settings"'), 'BP 台要能走到设置页');
+assert.ok(!page.includes('id="draft-key"'), 'key 输入框只在 /settings，别在 BP 台再放一个');
 
 /**
  * 两处提示词组装都必须按"视角"传队名（`selfTeam` / `foeTeam`）。

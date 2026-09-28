@@ -6,8 +6,6 @@ import type { DraftData, DraftHero } from '../lib/draftData.ts';
 import { ATTRIBUTE_ICON } from '../lib/heroApi';
 import {
 	ADVICE_TARGET_COUNT,
-	DEEPSEEK_ENDPOINT,
-	DEFAULT_DEEPSEEK_MODEL,
 	buildAdviceMessages,
 	buildChatRequest,
 	buildVerdictMessages,
@@ -15,6 +13,9 @@ import {
 	parseVerdictReply,
 	VERDICT_MAX_TOKENS,
 } from '../lib/draftPrompt.ts';
+import type { AiConfig } from '../lib/aiConfig.ts';
+import { aiStateLabel, endpointOf, isConfigured, loadAiConfig, needsThinkingDisabled } from '../lib/aiConfig.ts';
+import { adviceNarrative, opponentMoveReason } from '../lib/draftNarrative.ts';
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
 import { advise } from '../lib/draftScore.ts';
 import type { DraftVerdict } from '../lib/draftVerdict.ts';
@@ -22,7 +23,7 @@ import { buildVerdict } from '../lib/draftVerdict.ts';
 import type { DraftSide } from '../lib/draftOrder.ts';
 import { CM_PHASE_STARTS, CM_STEPS, canPlay, otherSide, play, sideOfOwner, skip, snapshot, undo } from '../lib/draftOrder.ts';
 import type { FoeForm } from '../lib/draftFoe.ts';
-import { foeHeadline, foeHighlights, foeWinRate } from '../lib/draftFoe.ts';
+import { MIN_PICKS, foeHeadline, foeHeroOf, foeHighlights, foeWinRate } from '../lib/draftFoe.ts';
 import type { LaneData } from '../lib/draftLanes.ts';
 import { formatNet } from '../lib/draftLanes.ts';
 
@@ -34,20 +35,30 @@ import { formatNet } from '../lib/draftLanes.ts';
 const normTeamName = (value: string): string => value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
 
 /**
- * 阵容分析页的客户端：录制 BP、算建议、可选地让 DeepSeek 解释。
+ * 阵容分析页的客户端：录制 BP、算建议、可选地让模型解释。
  *
  * 有两条边界写在这里而不是服务端：
- * - **DeepSeek 的 key 只存在这台浏览器**（localStorage），请求由浏览器直接发给 DeepSeek，
+ * - **模型的 key 只存在这台浏览器**（localStorage），请求由浏览器直接发给用户自己填的地址，
  *   站点不经手。这也是这个功能能开源的前提：别人 clone 之后用自己的 key，作者不承担费用。
+ *   配置的形状与读写都在 `lib/aiConfig.ts`，设置页是 `/settings`。
  * - **建议的排序不依赖模型**。候选、号位、胜率、样本量都是本地算的（`draftScore`），
- *   模型拿到的是算好的候选，只能在里面排个序、写段解释。它挂了、key 无效、余额不足，
- *   数据面板照常可用。
+ *   模型拿到的是算好的候选，只能在里面排个序、写段解释。它挂了、没配、key 无效、余额不足，
+ *   数据面板照常可用，解释那一段由 `draftNarrative` 用本地依据补上。
  *
  * DOM 只建一次：英雄池 127 个格子、两边各 12 个 BP 格子先建好，状态变化时改属性而不是
  * 重建节点。重建会让浏览器反复解码头像，点起来一顿一顿的。
  */
 
 const STORE_KEY = 'd2s-draft-v1';
+/**
+ * 模型请求的超时。
+ *
+ * 加了「地址可填」之后这条才变成必需：地址写错、或者服务商那边黑洞掉连接时，`fetch` 会一直挂着，
+ * 而自动出招就卡在这上面——盘面停在「正在看数据…」，看得见却推不动，还以为是页面坏了。
+ * 30 秒的依据：实测同一条提示词关掉思考后 1.8 秒返回，给慢服务商留足余量，又不至于把一次
+ * 点错地址变成永久卡死。超时后走的是既有的失败路径（退回本地依据）。
+ */
+const MODEL_TIMEOUT_MS = 30_000;
 const ATTR_LABEL: Record<string, string> = { STR: '力量', AGI: '敏捷', INT: '智力', UNI: '全才' };
 const ATTR_ORDER = ['STR', 'AGI', 'INT', 'UNI'];
 
@@ -82,9 +93,13 @@ interface Stored {
 	firstPick?: 'ours' | 'theirs';
 	ourTeam?: string;
 	theirTeam?: string;
+	/**
+	 * 老版本把 key 与模型名存在这里，现在搬去了 `d2s-ai-v1`（见 lib/aiConfig.ts 的迁移）。
+	 * 声明留着只是为了让 `loadAiConfig` 读得到，这个文件自己不再写这两项。
+	 */
 	key?: string;
 	model?: string;
-	/** 对面是不是交给 AI（默认是）。 */
+	/** 用户对「对面交给 AI」的选择（默认是）。没配置模型时实际会被关掉。 */
 	aiSide?: boolean;
 	/** 跳过 24 手 BP，直接给两边各选五个英雄。 */
 	directMode?: boolean;
@@ -118,8 +133,17 @@ if (data) {
 	let firstPick: 'ours' | 'theirs' = stored.firstPick === 'theirs' ? 'theirs' : 'ours';
 	let ourTeam = typeof stored.ourTeam === 'string' ? stored.ourTeam : '';
 	let theirTeam = typeof stored.theirTeam === 'string' ? stored.theirTeam : '';
-	let model = typeof stored.model === 'string' && stored.model ? stored.model : DEFAULT_DEEPSEEK_MODEL;
-	let aiSide = stored.aiSide !== false;
+	/** 模型配置。只存在这台浏览器；形状与读写见 lib/aiConfig.ts。 */
+	const ai: AiConfig = loadAiConfig();
+	/**
+	 * 用户对「对面交给 AI」的选择。
+	 *
+	 * 与下面的 `aiSide` 分开是有原因的：没配置模型时实际值一律是关的，但那是**被迫**关的，
+	 * 不能把它写进存储——否则用户配好模型回来，开关还停在「关」上，看起来像没生效。
+	 */
+	let aiSidePref = stored.aiSide !== false;
+	/** 实际生效值：没配置模型就没有 AI 可以交给对面。 */
+	let aiSide = isConfigured(ai) && aiSidePref;
 	let attrFilter = 'all';
 	let positionFilter = 'all';
 	let query = '';
@@ -178,6 +202,8 @@ if (data) {
 	const adviceBody = element<HTMLDivElement>('draft-advice-body');
 	const adviceStatus = element<HTMLSpanElement>('draft-advice-status');
 	const adviceSummary = element<HTMLParagraphElement>('draft-advice-summary');
+	/** 没接模型时那段解释，由本地依据拼出来；有模型结果时它是空的。 */
+	const adviceNote = element<HTMLParagraphElement>('draft-advice-note');
 	const compositionLine = element<HTMLParagraphElement>('draft-composition');
 	const adviceCards = element<HTMLDivElement>('draft-advice-cards');
 	const lineupBox = element<HTMLDivElement>('draft-lineup');
@@ -192,9 +218,9 @@ if (data) {
 	const directHint = element<HTMLSpanElement>('draft-direct-hint');
 	const boardPanel = element<HTMLDivElement>('draft-board-panel');
 	const advicePanel = element<HTMLElement>('draft-advice-panel');
-	const keyInput = element<HTMLInputElement>('draft-key');
-	const keyState = element<HTMLSpanElement>('draft-key-state');
-	const modelSelect = element<HTMLSelectElement>('draft-model');
+	/** 配置状态那一行。表单在 /settings，这里只显示现状并给入口。 */
+	const aiState = element<HTMLSpanElement>('draft-ai-state');
+	const aiConfigBox = element<HTMLElement>('draft-ai-config');
 	const ourTeamInput = element<HTMLInputElement>('draft-our-team');
 	const theirTeamInput = element<HTMLInputElement>('draft-their-team');
 	const matchSelect = element<HTMLSelectElement>('draft-match');
@@ -224,7 +250,8 @@ if (data) {
 			try {
 				localStorage.setItem(
 					STORE_KEY,
-					JSON.stringify({ recorded, ourSide, firstPick, ourTeam, theirTeam, key: keyInput?.value ?? '', model, aiSide, directMode, directOurs, directTheirs }),
+					// 只写用户的开关偏好，不写被配置状态逼出来的那个值（见 aiSidePref 的注释）。
+					JSON.stringify({ recorded, ourSide, firstPick, ourTeam, theirTeam, aiSide: aiSidePref, directMode, directOurs, directTheirs }),
 				);
 			} catch {
 				// 隐私模式下写不进去，不影响使用。
@@ -813,9 +840,8 @@ if (data) {
 			renderVerdict();
 			verdictBox?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
-			const key = (keyInput?.value ?? '').trim();
-			if (!key) {
-				if (verdictStatus) verdictStatus.textContent = '数字已经算好；填上 DeepSeek key 才会有文字分析';
+			if (!isConfigured(ai)) {
+				if (verdictStatus) verdictStatus.textContent = '数字已经算好；配好模型才会有文字分析（在下面的「AI 解释」里去设置）';
 				return;
 			}
 
@@ -824,10 +850,13 @@ if (data) {
 			try {
 				const messages = buildVerdictMessages({ verdict: built, data: draft, selfTeam: ourTeam, foeTeam: theirTeam, foeForm });
 				const send = (jsonMode: boolean) =>
-					fetch(DEEPSEEK_ENDPOINT, {
+					fetch(endpointOf(ai), {
 						method: 'POST',
-						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-						body: JSON.stringify(buildChatRequest({ model, messages, jsonMode, maxTokens: VERDICT_MAX_TOKENS })),
+						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
+						signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+						body: JSON.stringify(
+							buildChatRequest({ model: ai.model, messages, jsonMode, maxTokens: VERDICT_MAX_TOKENS, disableThinking: needsThinkingDisabled(ai.baseUrl) }),
+						),
 					});
 				let response = await send(true);
 				if (response.status === 400) response = await send(false);
@@ -904,14 +933,31 @@ if (data) {
 			const advice = currentAdvice();
 			if (!advice) {
 				if (adviceSummary) adviceSummary.textContent = '24 手已经走完，没有下一手可建议。';
+				if (adviceNote) adviceNote.textContent = '';
 				if (adviceCards) adviceCards.innerHTML = '';
 				if (lineupBox) lineupBox.innerHTML = '';
 				if (adviceAi) adviceAi.style.display = 'none';
 				return;
 			}
-			if (adviceAi) adviceAi.style.display = '';
+			/*
+			 * 同一个按钮两种说法：没配模型时它其实是「去配置」的入口，写成「让 AI 解释」会让人以为
+			 * 点了就有结果，然后收到一句「没配置模型」——那是把一次失望写在按钮上。
+			 */
+			if (adviceAi) {
+				adviceAi.style.display = '';
+				adviceAi.textContent = isConfigured(ai) ? '让 AI 解释这几手' : '配置模型后可以解释';
+			}
 			if (adviceSummary) {
 				adviceSummary.textContent = aiResult?.summary ? `${advice.summary} AI：${aiResult.summary}` : advice.summary;
+			}
+			/*
+			 * 没接模型（或模型这次没给出结果）时，用本地依据补一段解释；有模型结果时让位给它——
+			 * 两段都摆出来会互相打架，而且模型那段的顺序和本地的不一定一致。
+			 */
+			if (adviceNote) {
+				const narrative = aiResult ? '' : adviceNarrative(advice, (id) => heroById.get(id)?.name ?? `英雄 #${id}`);
+				adviceNote.textContent = narrative;
+				adviceNote.style.display = narrative ? '' : 'none';
 			}
 			if (compositionLine) compositionLine.textContent = advice.composition.text;
 
@@ -1006,6 +1052,9 @@ if (data) {
 			}
 			const turn = currentTurn();
 			const opponentTurn = Boolean(turn && !turn.ours);
+			// 同一个按钮两种含义：接了模型是「让 AI 走」，没配模型时只是让本地规则替对面走。
+			// 标签跟着配置走，不然又是一个「写着 AI 其实没有 AI」的地方。
+			if (aiPlay) aiPlay.textContent = isConfigured(ai) ? '让 AI 走这一手' : '让对面走这一手';
 			// 轮到我们时也留着这一行：对面刚禁/刚选了什么、为什么，是这一手要参考的信息。
 			if (aiMoveBox) aiMoveBox.style.display = opponentTurn || lastAiMove ? '' : 'none';
 			if (adviceToggle) adviceToggle.style.display = turn && turn.ours ? '' : 'none';
@@ -1020,7 +1069,8 @@ if (data) {
 			}
 
 			const actionText = turn.action === 'ban' ? '禁用' : '挑选';
-			if (aiWho) aiWho.textContent = `${sideLabel(turn.side)}（AI）${actionText}`;
+			// 没配模型时对面走的是本地规则，台头就不能写「AI」。
+			if (aiWho) aiWho.textContent = `${sideLabel(turn.side)}（${isConfigured(ai) ? 'AI' : '本地'}）${actionText}`;
 			if (aiBusy) {
 				if (aiStatus) aiStatus.textContent = '正在看数据…';
 				if (aiPlay) aiPlay.style.display = 'none';
@@ -1041,14 +1091,38 @@ if (data) {
 			}
 
 			cancelAutoMove();
-			if (aiStatus) aiStatus.textContent = lastAiMove || '这一手由你代打，直接点英雄池';
+			if (aiStatus) {
+				aiStatus.textContent =
+					lastAiMove || (isConfigured(ai) ? '这一手由你代打，直接点英雄池' : '没配置模型，这一手由你代打；也可以让它按本地数据自己走');
+			}
 			if (aiPlay) aiPlay.style.display = aiSide ? 'none' : '';
 		}
 
 		/**
+		 * 本地规则那一手的依据，拼给界面那行日志用。
+		 *
+		 * **不复用候选卡的 `reasons`**：那些句子是按出招方的视角生成的，里面有「我方 / 对面」，
+		 * 直接贴到这行上人称会指反。这里只用结构化字段重写，顺便只保留这一手真正的关键依据。
+		 */
+		function localMoveReason(candidate: AdviceCandidate, action: 'ban' | 'pick'): string {
+			const familiar = foeHeroOf(foeForm, candidate.heroId);
+			return opponentMoveReason({
+				action,
+				position: candidate.position,
+				rate: candidate.rate,
+				hasSample: candidate.hasSample,
+				// 门槛与「对面擅长什么」那一栏共用 MIN_PICKS，免得出现「依据里说他是熟手、
+				// 熟悉度那一栏却没有他」这种对不上的情况。
+				foePicks: familiar && familiar.picks >= MIN_PICKS ? familiar.picks : null,
+				windowDays: foeForm?.windowDays ?? 0,
+			});
+		}
+
+		/**
 		 * 对面这一手怎么走。**数据先算、模型后挑**：先用对面的视角算出候选，
-		 * 有 key 就让模型在里面挑一个并说明，没有 key（或调用失败）就直接取数据里的第一顺位。
-		 * 所以不配 key 也能和 AI 对着打，只是它不会说话。
+		 * 配了模型就让它在里面挑一个并说明；没配（或调用失败）就取数据里的第一顺位，
+		 * 依据用 `localMoveReason` 从结构化字段重写一句。所以不配模型也能对着打，
+		 * 台头会写明这一手是「本地」走的，不会假装有 AI。
 		 */
 		async function playOpponentMove(): Promise<void> {
 			const turn = currentTurn();
@@ -1064,20 +1138,21 @@ if (data) {
 					return;
 				}
 
-				let heroId = enemyAdvice.candidates[0].heroId;
-				let reason = '';
-				if ((keyInput?.value ?? '').trim()) {
+				const top = enemyAdvice.candidates[0];
+				let heroId = top.heroId;
+				// 先把本地那句依据备好：模型失败时直接用它，而不是回落到一句没有信息量的空话。
+				let why = localMoveReason(top, turn.action);
+				if (isConfigured(ai)) {
 					const decided = await askModelForOpponentMove(enemyAdvice, turn.side);
 					if (decided) {
 						heroId = decided.heroId;
-						reason = decided.reason;
+						why = decided.reason;
 					}
 				}
 
 				recorded = play(recorded, heroId);
 				const hero = heroById.get(heroId);
 				const actionText = turn.action === 'ban' ? '禁用' : '挑选';
-				const why = reason || '按号位胜率与剩余手数判断';
 				lastAiMove = `${sideLabel(turn.side)}${actionText}了 ${hero?.name ?? ''} · ${why}`;
 				aiResult = null;
 				save();
@@ -1104,10 +1179,12 @@ if (data) {
 					},
 					'theirs',
 				);
-				const response = await fetch(DEEPSEEK_ENDPOINT, {
+				const response = await fetch(endpointOf(ai), {
 					method: 'POST',
-					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${(keyInput?.value ?? '').trim()}` },
-					body: JSON.stringify(buildChatRequest({ model, messages })),
+					headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
+					// 自动出招卡住会把整个盘面按住，所以这个调用也带超时（超时即退回数据决策）。
+					signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+					body: JSON.stringify(buildChatRequest({ model: ai.model, messages, disableThinking: needsThinkingDisabled(ai.baseUrl) })),
 				});
 				if (!response.ok) return null;
 				const body = (await response.json()) as { choices?: { message?: { content?: string } }[] };
@@ -1293,7 +1370,8 @@ if (data) {
 			});
 
 			aiSideInput?.addEventListener('change', () => {
-				aiSide = Boolean(aiSideInput.checked);
+				aiSidePref = Boolean(aiSideInput.checked);
+				aiSide = isConfigured(ai) && aiSidePref;
 				cancelAutoMove();
 				aiStallStep = -1;
 				save();
@@ -1302,23 +1380,6 @@ if (data) {
 			aiPlay?.addEventListener('click', () => {
 				cancelAutoMove();
 				void playOpponentMove();
-			});
-
-			keyInput?.addEventListener('change', () => {
-				save();
-				syncKeyState();
-			});
-			modelSelect?.addEventListener('change', () => {
-				model = modelSelect.value;
-				save();
-			});
-			element<HTMLButtonElement>('draft-clear')?.addEventListener('click', () => {
-				if (keyInput) keyInput.value = '';
-				save();
-				syncKeyState('已清除');
-			});
-			element<HTMLButtonElement>('draft-test')?.addEventListener('click', () => {
-				void testConnection();
 			});
 		}
 
@@ -1331,33 +1392,39 @@ if (data) {
 			});
 		}
 
-		function syncKeyState(extra?: string): void {
-			if (!keyState) return;
-			const has = (keyInput?.value ?? '').trim().length > 0;
-			keyState.textContent = extra ?? (has ? 'key 只存在这台浏览器' : '还没填 key');
-			// 故意**不**在没有 key 时禁用按钮：禁用状态下点击不触发事件，用户只会看到"点了没反应"，
-			// 反而不知道要先去填 key。
+		/**
+		 * 配置状态那一行。
+		 *
+		 * **本页不再能改配置**：表单在 `/settings`，这里只说明现在是什么状态、并给一个入口。
+		 * 文案取 `aiConfig` 的三态，本页再补上「对面会由谁出招」这半句。
+		 */
+		function syncAiState(extra?: string): void {
+			if (!aiState) return;
+			aiState.textContent = extra ?? (isConfigured(ai) ? aiStateLabel(ai) : `${aiStateLabel(ai)}；对面由本地数据出招`);
 		}
 
-		// ------------------------------------------------------------ DeepSeek
+		/**
+		 * 把与模型有关的控件摆到与配置一致的位置。
+		 *
+		 * 没配置时**禁用**「对面交给 AI」：开关能点、点了却什么也没接上，等于在骗人。
+		 * 这与「按钮别随便禁用」那条老规矩不冲突——那说的是禁用之后没人告诉用户为什么；
+		 * 这里禁用时旁边就写着原因和入口。
+		 */
+		function syncAiControls(): void {
+			const configured = isConfigured(ai);
+			if (!configured && aiSide) {
+				// 被配置逼着关掉的值不写回存储，见 aiSidePref 的注释。
+				aiSide = false;
+				if (aiSideInput) aiSideInput.checked = false;
+			}
+			if (aiSideInput) aiSideInput.disabled = !configured;
+			syncAiState();
+		}
+
+		// ------------------------------------------------------------ 模型调用
 
 		function setStatus(text: string): void {
 			if (adviceStatus) adviceStatus.textContent = text;
-		}
-
-		async function testConnection(): Promise<void> {
-			const key = (keyInput?.value ?? '').trim();
-			if (!key) {
-				syncKeyState('先填 key');
-				return;
-			}
-			syncKeyState('测试中…');
-			try {
-				const response = await fetch('https://api.deepseek.com/models', { headers: { Authorization: `Bearer ${key}` } });
-				syncKeyState(response.ok ? '连接正常' : `失败：HTTP ${response.status}`);
-			} catch {
-				syncKeyState('连不上，检查网络或代理');
-			}
 		}
 
 		/**
@@ -1365,11 +1432,11 @@ if (data) {
 		 * 模型只负责排序与措辞；解析不过就当这次没结果。
 		 */
 		async function explainWithModel(): Promise<void> {
-			const key = (keyInput?.value ?? '').trim();
-			if (!key) {
-				setStatus('先在下面填 DeepSeek key');
-				keyInput?.focus();
-				keyInput?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			if (!isConfigured(ai)) {
+				setStatus('没配置模型；建议由本站数据算出，配置之后才会多一段解释（入口在下面「AI 解释」的设置里）');
+				// 原来这里把焦点挪到 key 输入框。输入框搬去 /settings 之后，留在本页能做的是
+				// 把配置那一行推到眼前：直接跳页会让人以为刚录的 BP 丢了。
+				aiConfigBox?.scrollIntoView({ block: 'center', behavior: 'smooth' });
 				return;
 			}
 			const advice = currentAdvice();
@@ -1397,10 +1464,11 @@ if (data) {
 				 * 所以退一步继续用，不要让整个功能跟着挂掉。
 				 */
 				const send = (jsonMode: boolean) =>
-					fetch(DEEPSEEK_ENDPOINT, {
+					fetch(endpointOf(ai), {
 						method: 'POST',
-						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-						body: JSON.stringify(buildChatRequest({ model, messages, jsonMode })),
+						headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ai.apiKey}` },
+						signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+						body: JSON.stringify(buildChatRequest({ model: ai.model, messages, jsonMode, disableThinking: needsThinkingDisabled(ai.baseUrl) })),
 					});
 				let response = await send(true);
 				if (response.status === 400) {
@@ -1412,7 +1480,7 @@ if (data) {
 						response.status === 401
 							? 'key 无效或已过期'
 							: response.status === 402
-								? 'DeepSeek 余额不足'
+								? '余额不足或额度用尽'
 								: response.status === 429
 									? '触发限流，稍后再试'
 									: `请求失败（HTTP ${response.status}）${text.slice(0, 80)}`,
@@ -1447,14 +1515,12 @@ if (data) {
 
 		if (ourTeamInput) ourTeamInput.value = ourTeam;
 		if (theirTeamInput) theirTeamInput.value = theirTeam;
-		if (keyInput) keyInput.value = typeof stored.key === 'string' ? stored.key : '';
-		if (modelSelect) modelSelect.value = model;
 		if (aiSideInput) aiSideInput.checked = aiSide;
 		buildPool();
 		buildBoard();
 		bindControls();
 		syncSideButtons();
-		syncKeyState();
+		syncAiControls();
 		renderAll();
 		// 刷新后带着上次的队名，顺手把对面的近期习惯也取回来。
 		void syncFoeForm();

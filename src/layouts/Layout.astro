@@ -272,6 +272,12 @@ const structuredJson = inlineJson(structuredData);
 				</div>
 				<div class="flex flex-wrap gap-x-8 gap-y-3 text-sm">
 					{NAV.map((item) => <a href={item.href} class="text-muted transition hover:text-cream">{item.label}</a>)}
+					<!--
+						AI 设置不进 NAV：主导航已经有十项，而这一页只服务于阵容分析那一个功能，
+						占一格不值。放页脚是为了让它在不经过 `/draft` 时也找得到——它是全站唯一
+						填 key 的地方，藏太深会让人以为模型是站点替他们调的。
+					-->
+					<a href="/settings" class="text-muted transition hover:text-cream">AI 设置</a>
 				</div>
 			</div>
 			<div class="border-t border-line">

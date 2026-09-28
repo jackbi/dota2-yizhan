@@ -1,0 +1,118 @@
+---
+/**
+ * AI 设置页。
+ *
+ * 为什么单独一页而不是塞在 `/draft` 里：
+ *
+ * - 配置是**低频动作**（填一次能用很久），录 BP 是高频率动作，两者挤在一起时后者的操作
+ *   总被前者的表单占位；
+ * - 配置将来不只给 BP 台用，单独一页才谈得上复用；
+ * - 存储也就此与 BP 进度分开（`d2s-ai-v1` 与 `d2s-draft-v1`），改配置不会顺带把 BP 进度覆盖掉。
+ *
+ * 边界没有变：**key 只存在这台浏览器**，请求由浏览器直接发给用户自己填的地址，本站不经手、
+ * 不落库、不记日志。所以这一页是纯静态页，不需要登录，服务端一行都不用改。
+ */
+import Layout from '../layouts/Layout.astro';
+import { AI_MODEL_SUGGESTIONS, DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL } from '../lib/aiConfig';
+---
+
+<Layout
+	title="AI 设置 | DOTA2 驿站"
+	description="给阵容分析配一个模型：地址、key、模型名。key 只存在这台浏览器，请求由浏览器直接发出，站点不经手。"
+	breadcrumbs={[{ name: 'AI 设置' }]}
+>
+	<div class="mx-auto max-w-2xl px-4 py-10 sm:px-6">
+		<h1 class="font-display text-2xl">AI 设置</h1>
+		<p class="mt-3 text-sm leading-relaxed text-muted">
+			这里是「阵容分析」用得到的模型配置。默认那家开箱可用，也可以填任何 OpenAI 兼容的服务——
+			地址、key、模型名都由你决定。<strong class="text-cream">key 只存在这台浏览器</strong>，
+			请求由浏览器直接发给你填的地址，本站不经手也不保存；公共电脑上别存。
+		</p>
+
+		<section class="mt-6 rounded-2xl border border-line bg-surface/60 p-4" aria-label="模型配置">
+			<h2 class="font-display text-lg">模型</h2>
+			<div class="mt-4 grid grid-cols-1 gap-4">
+				<label class="block text-xs text-muted">
+					API 地址
+					<input
+						id="settings-base-url"
+						type="text"
+						autocomplete="off"
+						spellcheck="false"
+						placeholder={DEFAULT_AI_BASE_URL}
+						class="mt-1 w-full rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint"
+					/>
+					<span class="mt-1 block text-faint">
+						请求会拼成 <code>地址 + /chat/completions</code>。别家带版本段就一起填，例如
+						<code>https://api.openai.com/v1</code>。
+					</span>
+				</label>
+				<label class="block text-xs text-muted">
+					API key
+					<input
+						id="settings-key"
+						type="password"
+						autocomplete="off"
+						placeholder="sk-..."
+						class="mt-1 w-full rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint"
+					/>
+				</label>
+				<label class="block text-xs text-muted">
+					模型名
+					<input
+						id="settings-model"
+						type="text"
+						autocomplete="off"
+						spellcheck="false"
+						list="settings-model-options"
+						placeholder={DEFAULT_AI_MODEL}
+						class="mt-1 w-full rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint"
+					/>
+					<datalist id="settings-model-options">
+						{AI_MODEL_SUGGESTIONS.map((model) => <option value={model} />)}
+					</datalist>
+					<span class="mt-1 block text-faint">可以手填，下拉只是省打字。</span>
+				</label>
+			</div>
+
+			<div class="mt-5 flex flex-wrap items-center gap-3">
+				<button id="settings-save" type="button" class="filter-chip">保存</button>
+				<button id="settings-test" type="button" class="filter-chip">测试连接</button>
+				<button id="settings-clear" type="button" class="filter-chip">清除 key</button>
+				<span id="settings-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
+			</div>
+			<p id="settings-detail" class="mt-3 text-xs leading-relaxed text-faint"></p>
+		</section>
+
+		<p class="mt-6 text-xs leading-relaxed text-faint">
+			配置存的是「用哪家、哪把 key、哪个模型」，请求体本身仍是 OpenAI 兼容的
+			<code>chat/completions</code>。少数服务商专有的参数（比如 DeepSeek 那个必须关掉的思考开关）
+			会按地址自动处理，更细的分家适配还没做——填了别的地址如果报参数错误，多半是这个原因。
+			不配也能用：阵容分析的候选、胜率、复盘数字全部由本站数据算出，配置只影响那段文字解释。
+		</p>
+	</div>
+</Layout>
+
+<style is:global>
+	/* 这一页用到 .filter-chip（与 /draft 同名），但样式是各自页面作用域的，所以要在这儿重来一份。 */
+	.filter-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		border: 1px solid var(--color-line);
+		border-radius: 0.5rem;
+		padding: 0.35rem 0.6rem;
+		font-size: 0.75rem;
+		color: var(--color-muted);
+		background: var(--color-surface-2);
+		transition: color 0.12s ease-in-out, border-color 0.12s ease-in-out;
+	}
+	.filter-chip:hover {
+		color: var(--color-cream);
+		border-color: var(--color-gold-deep);
+	}
+</style>
+
+<script>
+	import '../scripts/settingsForm';
+</script>

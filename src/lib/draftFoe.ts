@@ -115,7 +115,7 @@ const MIN_RATE_SAMPLE = 2;
  * 只打过一场的英雄说明不了偏好，写在依据里反而把真正该看的几个挤下去——
  * 一份 12 场的窗口里，「拿过 1 场」和「拿过 5 场」不是同一个量级的事。
  */
-const MIN_PICKS = 2;
+export const MIN_PICKS = 2;
 
 /** 胜率；样本不够或没有分出胜负时返回 null，调用方就别写百分比。 */
 export function foeWinRate(hero: FoeHero): number | null {
