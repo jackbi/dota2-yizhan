@@ -1,6 +1,3 @@
-import { md5Hex } from './md5';
-import { parseHuyaStream } from './huyaStream';
-
 /**
  * 直播**直链**解析（只在服务端跑）。
  *
@@ -44,6 +41,10 @@ import { parseHuyaStream } from './huyaStream';
  * `sampleStream()`）已经删掉：它每探一次就消费掉那条一次性 token，且在生产上等于开放一个
  * 「查任意房间直链」的入口。结论都记在 docs/live.md 的「分屏页的画面」一节。
  */
+
+// 带扩展名：自检（`scripts/liveStream.check.ts`）要用 Node 直接跑这个模块，Node 的 ESM 解析不补扩展名。
+import { md5Hex } from './md5.ts';
+import { parseHuyaStream } from './huyaStream.ts';
 
 /** 斗鱼的风控对 UA 敏感，用一个真实的桌面 Chrome。 */
 const UA =
@@ -121,12 +122,38 @@ export interface DouyuResolve {
 }
 
 /**
+ * 签名里 MD5 链的轮数上限。
+ *
+ * 轮数就是上游 `getEncryption` 给的 `enc_time`——一个**远端数字**。正常房间实测是个位数，
+ * 但把它直接当循环次数用，一条异常响应就能让这里烧掉几十亿次哈希：本地构建卡死，
+ * Workers 上直接撞 CPU 上限（请求超时，看起来像"斗鱼挂了"）。所以超过这个上限一律当
+ * 形状不对，宁可解析失败也别去转。
+ */
+const MAX_ENC_TIME = 1000;
+
+/**
+ * 上游给的轮数换算成实际循环次数；不可信（不是非负整数、超过 `MAX_ENC_TIME`）时返回 null。
+ * 调用方按「形状不对」处理，`douyuAuth` 自己再夹一次——它是热循环，不该只有一个调用方记得守规矩。
+ *
+ * 只认十进制数字串与数字本身：`Number('')` 是 0、`Number([])` 也是 0，靠 `Number` 认形状的话
+ * 这两种会悄悄变成"0 轮"，而它们只可能来自形状不对的响应。
+ */
+export function encRounds(raw: unknown): number | null {
+	const text = typeof raw === 'number' ? String(raw) : typeof raw === 'string' ? raw.trim() : '';
+	if (!/^\d+$/.test(text)) return null;
+	const value = Number(text);
+	return value <= MAX_ENC_TIME ? value : null;
+}
+
+/**
  * 斗鱼的 `auth`：`f = rand_str` 迭代 `enc_time` 次 `md5(f + key)`，最后再挂上房间号与秒级时间戳。
  * `is_special === 1` 时不挂房间号（特殊房间，实测少见）。
  */
-function douyuAuth(key: string, randStr: string, encTime: number, isSpecial: number, roomId: string, ts: number): string {
+export function douyuAuth(key: string, randStr: string, encTime: number, isSpecial: number, roomId: string, ts: number): string {
+	// 轮数过一道 `encRounds`（见 `MAX_ENC_TIME`）：这是热循环，不能只靠调用方守规矩。
+	const rounds = encRounds(encTime) ?? 0;
 	let f = randStr;
-	for (let i = 0; i < encTime; i++) f = md5Hex(f + key);
+	for (let i = 0; i < rounds; i++) f = md5Hex(f + key);
 	return md5Hex(f + key + (isSpecial === 1 ? '' : roomId + ts));
 }
 
@@ -174,11 +201,17 @@ export async function resolveDouyu(
 	const encData = (enc.data?.data ?? enc.data) as Record<string, unknown> | undefined;
 	const key = typeof encData?.key === 'string' ? encData.key : '';
 	const randStr = typeof encData?.rand_str === 'string' ? encData.rand_str : '';
-	const encTime = Number(encData?.enc_time ?? 0);
+	const encTime = encRounds(encData?.enc_time);
 	const encPayload = typeof encData?.enc_data === 'string' ? encData.enc_data : '';
 	const isSpecial = Number(encData?.is_special ?? 0);
 	if (!key || !randStr || !encPayload) {
 		errors.push(`getEncryption 返回的形状不对：${JSON.stringify(enc.data).slice(0, 300)}`);
+		return result;
+	}
+	// `enc_time` 直接决定签名里要串多少轮 MD5，所以它不在可信范围时按形状不对处理：
+	// 悄悄夹到上限会拿着一个错的 auth 去打下一个接口，拿到的失败原因反而更难查。
+	if (encTime === null) {
+		errors.push(`getEncryption 的 enc_time 不在可信范围：${JSON.stringify(encData?.enc_time)}`);
 		return result;
 	}
 	steps.push(`getEncryption: enc_time=${encTime} is_special=${isSpecial} key=${key.slice(0, 6)}…`);

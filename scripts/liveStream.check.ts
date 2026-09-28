@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
+import { douyuAuth, encRounds } from '../src/lib/liveStream.ts';
 import { parseHuyaStream } from '../src/lib/huyaStream.ts';
 
 /**
- * `src/lib/huyaStream.ts` 的自检（纯函数，不联网）。
+ * 直播解析侧的自检（纯函数，不联网）。
  *
- * 这里解析错就等于把一条播不了的地址喂给播放器，所以把形状钉死：线路按接口偏好排序、
- * `http://` 一律抬成 `https://`、非 200 与缺字段当解析失败、轮播房间「没有线路」也不能算成功。
+ * `huyaStream.ts` 那半：解析错就等于把一条播不了的地址喂给播放器，所以把形状钉死——线路按
+ * 接口偏好排序、`http://` 一律抬成 `https://`、非 200 与缺字段当解析失败、轮播房间「没有线路」
+ * 也不能算成功。
+ *
+ * `liveStream.ts` 那半只钉一件事：斗鱼签名里 MD5 链的轮数。它由上游 `getEncryption` 的
+ * `enc_time` 决定，那个数字直接当循环次数用就是让远端决定我们烧多少 CPU——
+ * 一条异常响应就能把本地构建卡死、把 Workers 的 CPU 额度打满（看起来却像是"斗鱼挂了"）。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/liveStream.check.ts`）。
  */
@@ -105,6 +111,34 @@ const payload = (data: unknown, status = 200) => ({ status, data });
 	assert.equal(parseHuyaStream(null), null);
 	assert.equal(parseHuyaStream('nonsense'), null);
 	ok('非 200 / 缺 data / 完全不是对象 → null');
+}
+
+// 斗鱼签名轮数：正常值原样用，不可信的一律拒绝（调用方据此报错退出，循环里也夹了一道）
+{
+	assert.equal(encRounds(0), 0, '0 轮是合法的（不串就是原串）');
+	assert.equal(encRounds(1), 1);
+	assert.equal(encRounds('3'), 3, '接口给的是 JSON，数字有时是字符串');
+	ok('轮数：正常值原样通过');
+}
+
+{
+	for (const raw of [1e9, 1001, -1, 1.5, 'abc', undefined, null, NaN, Infinity, {}, []]) {
+		assert.equal(encRounds(raw), null, `不该把 ${JSON.stringify(raw) ?? String(raw)} 当成轮数`);
+	}
+	ok('轮数：超范围 / 负数 / 非整数 / 非数字一律拒绝');
+}
+
+{
+	// 一条异常响应（这里给 10 亿）不能比「0 轮」多烧任何一次哈希：两者必须算出同一个签名。
+	const absurd = douyuAuth('key', 'rand', 1e9, 0, '9999', 1700000000);
+	const zero = douyuAuth('key', 'rand', 0, 0, '9999', 1700000000);
+	assert.equal(absurd, zero, '超出上限的轮数要按 0 轮算，不能真的去串十亿次 MD5');
+	assert.notEqual(
+		douyuAuth('key', 'rand', 2, 0, '9999', 1700000000),
+		zero,
+		'正常轮数要真的参与计算：签名必须随 enc_time 变化',
+	);
+	ok('签名：轮数超上限时不比 0 轮多算一次');
 }
 
 console.log(`liveStream 全部断言通过（${cases} 组）`);
