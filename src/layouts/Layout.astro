@@ -109,7 +109,14 @@ const structuredData = [
  * 内联 JSON-LD 走 `inlineJson`：里面的 title / description / 面包屑名字是第三方内容
  * （帖子标题、英雄名…），`JSON.stringify` 不碰 `<`，一个 `</script>` 就能提前闭合脚本元素。
  */
-const structuredJson = inlineJson(structuredData);
+/*
+ * 整份结构化数据包在 `@graph` 里、带上一个 `@context`。
+ *
+ * **没有 `@context` 的话这些节点等于没写**：`@type: 'WebSite'` 只是一个普通字符串，绑不到
+ * schema.org 的词表上，Rich Results Test 会直接报「未检测到项目」。多个节点共用一个上下文，
+ * 这也是 Google 推荐的写法（比在每个节点上重复一遍 `@context` 干净）。
+ */
+const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': structuredData });
 ---
 
 <!doctype html>
