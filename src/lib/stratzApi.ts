@@ -563,7 +563,11 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 				'stratz-hero',
 				'STRATZ 英雄数据',
 				'empty',
-				ENDPOINT.mode !== 'none' ? '请求未拿到数据（限流、挑战页或接口异常）' : '未配置 STRATZ_TOKEN / STRATZ_RELAY_URL',
+				// 只配了一半（有 URL 没 token，或反过来）时 `ENDPOINT.problem` 写得明明白白，
+				// 别一律说成"未配置"——照着这句日志去查会往错的方向找（docs/deploy.md 有这条要求）。
+				ENDPOINT.mode !== 'none'
+					? '请求未拿到数据（限流、挑战页或接口异常）'
+					: (ENDPOINT.problem ?? '未配置 STRATZ_TOKEN / STRATZ_RELAY_URL'),
 			);
 			return null;
 		}
