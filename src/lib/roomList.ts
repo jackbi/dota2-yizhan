@@ -1,7 +1,8 @@
 import path from 'node:path';
-import { isFresh, readCacheJson, writeCacheFile } from './buildCache';
-import { reportSource } from './dataHealth';
-import { extractJson, fetchNote, fetchText } from './fetchText';
+// 带扩展名：自检（`scripts/roomList.check.ts`）要用 Node 直接跑这个模块，Node 的 ESM 解析不补扩展名。
+import { isFresh, readCacheJson, writeCacheFile } from './buildCache.ts';
+import { reportSource } from './dataHealth.ts';
+import { extractJson, fetchNote, fetchText } from './fetchText.ts';
 import type { RoomRef } from '../data/types';
 
 /**
