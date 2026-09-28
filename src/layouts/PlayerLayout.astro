@@ -35,7 +35,15 @@ const stats = [
 ];
 ---
 
-<Layout title={`${profile.name} · 我的战绩 | DOTA2 驿站`} description={`${profile.name} 的 DOTA2 战绩：比赛记录、英雄统计与分析。`}>
+<!--
+	`title` 是各页传进来的页签名（概况 / 比赛 / 英雄 / 分析 …），**必须用上**：7 个 /me 页面
+	共用一个标题的话，浏览器标签页、历史记录、分享预览全都分不出是哪一页——docs/seo.md 里
+	「最值钱的一条，别退化成统一标题」说的就是这件事。
+-->
+<Layout
+	title={`${profile.name} · ${title} | DOTA2 驿站`}
+	description={`${profile.name} 的 DOTA2 战绩：${title}（比赛记录、英雄统计与对位分析）。`}
+>
 	<div class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 		<!-- 资料头 -->
 		<section class="overflow-hidden rounded-xl border border-line bg-surface">

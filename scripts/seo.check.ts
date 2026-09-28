@@ -55,4 +55,16 @@ for (const [pattern, label] of [
 // `<title>` 在 og 那几行之前，所以对着整份文件查。
 assert.match(layout, /<title>\{title\}<\/title>/, '<title> 要跟着页面 title 走，不能写死');
 
+/*
+ * `/me/*` 那七个页面共用 `PlayerLayout`，各自的页签名（概况 / 比赛 / 英雄 / 分析 …）通过 `title`
+ * 传进来。传了不用的话七个页面标题完全一样，标签页、历史记录、分享预览都分不出是哪一页
+ * ——docs/seo.md 里那条「最值钱的一条，别退化成统一标题」说的就是这个。
+ */
+const playerLayout = readFileSync(new URL('../src/layouts/PlayerLayout.astro', import.meta.url), 'utf8');
+assert.match(
+	playerLayout,
+	/title=\{`[^`]*\$\{title\}[^`]*`\}/,
+	'PlayerLayout 要把各页传进来的 title 用上（否则 /me/* 七页一个标题）',
+);
+
 console.log('seo.check 通过');
