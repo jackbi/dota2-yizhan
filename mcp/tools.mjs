@@ -186,7 +186,15 @@ async function getMatchup({ hero: heroQuery, vs, limit = 8 }) {
 	].join('\n');
 }
 
-async function analyzeLineup({ radiant, dire, firstPicker = 'radiant' }) {
+/*
+ * 只有两边各五个英雄——**没有先选方这个入参**。
+ *
+ * 曾经在 schema 里收过一个 `firstPicker`，但它既没传给 `buildVerdict`（`VerdictInput` 里也没有
+ * 这个字段），也不影响任何输出：阵容锁定之后，胜率只由号位偏差与对位偏差相加得出，先选优势
+ * 不存在于这套算法里（它只在 BP 过程中的"最后一手归谁"上有意义）。留着它会让调用方以为
+ * 传 `dire` 就算进了先选优势——那是把不存在的口径写进契约。
+ */
+async function analyzeLineup({ radiant, dire }) {
 	const data = await draftData();
 	if (radiant?.length !== 5 || dire?.length !== 5) {
 		throw new Error(`两边各要 5 个英雄（现在收到天辉 ${radiant?.length ?? 0} 个、夜魇 ${dire?.length ?? 0} 个）。`);
@@ -470,7 +478,6 @@ export const TOOLS = [
 			properties: {
 				radiant: { type: 'array', items: { type: 'string' }, description: '天辉五个英雄' },
 				dire: { type: 'array', items: { type: 'string' }, description: '夜魇五个英雄' },
-				firstPicker: { type: 'string', enum: ['radiant', 'dire'], description: '谁先选，默认 radiant' },
 			},
 			required: ['radiant', 'dire'],
 		},
