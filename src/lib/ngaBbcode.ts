@@ -1,4 +1,5 @@
-import { decodeEntities } from './articleHtml';
+// 带扩展名：自检（`scripts/ngaBbcode.check.ts`）要用 Node 直接跑这个模块，Node 的 ESM 解析不补扩展名。
+import { decodeEntities } from './articleHtml.ts';
 
 /**
  * NGA 帖子正文的 BBCode 渲染。
