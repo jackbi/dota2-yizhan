@@ -17,6 +17,22 @@ import { GUIDE_POSITION_LABEL, guideTime, loadGuideAuthors, loadGuideIndex, type
  */
 export const prerender = false;
 
+/*
+ * 只留一种 URL 形态：`/heroes/8/guides` 与 `/heroes/8/guides/` 都会 200，而 canonical 是照
+ * `Astro.url.pathname` 拼的（见 `Layout.astro`），于是两种形态**各指自己**。内容一模一样却有两个
+ * 主版本，Google 只能自己挑一个，没被挑中的那半就报「重复网页，Google 选定了与用户不同的规范
+ * 网页」——Search Console 上就是成片的这一条。
+ *
+ * 预渲染页面没有这个问题：`/tournaments` 会被 Cloudflare 的静态资源规则 307 到 `/tournaments/`，
+ * 天生只有一个地址。SSR 路由两种写法都命中，得自己收口。
+ *
+ * 收口方向选不带斜杠：站内进这个页的链接本来就是不带斜杠的形式（英雄页的入口与页内的位置标签）。
+ * 参数要留着，`?p=2` 是"看几号位"。
+ */
+if (Astro.url.pathname.endsWith('/')) {
+	return Astro.redirect(`${Astro.url.pathname.replace(/\/+$/, '')}${Astro.url.search}`, 301);
+}
+
 const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路', 3: '劣势路', 4: '游走辅助', 5: '保护辅助' };
 
 const heroId = Number(Astro.params.id);
