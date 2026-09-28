@@ -287,7 +287,17 @@ function loadHeroDetail(id: number | string): Promise<any> {
 	const key = String(id);
 	let pending = heroDetailCache.get(key);
 	if (!pending) {
-		pending = getJson<{ result: { heroes: any } }>(`${BASE}/hero?hero_id=${key}`).then((data) => data.result.heroes);
+		pending = getJson<{ result: { heroes: any } }>(`${BASE}/hero?hero_id=${key}`)
+			.then((data) => data.result.heroes)
+			/*
+			 * 失败的 promise **不能留在缓存里**：留一次网络抖动，这个英雄在本进程里就永远坏了
+			 * （构建要么整轮失败，要么把它烘成全 0 的角色数据）。删掉之后下一个调用者会重试，
+			 * 而已经拿到这个 promise 的调用者照样收到那个异常。
+			 */
+			.catch((error: unknown) => {
+				heroDetailCache.delete(key);
+				throw error;
+			});
 		heroDetailCache.set(key, pending);
 	}
 	return pending;
