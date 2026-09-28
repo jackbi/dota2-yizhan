@@ -227,23 +227,3 @@ export interface TournamentsBundle {
 	degraded: boolean;
 	sources: DataSourceStatus[];
 }
-
-export type ItemType =
-	| 'carry'
-	| 'support'
-	| 'caster'
-	| 'utility'
-	| 'offlane'
-	| 'boots'
-	| 'neutral';
-
-export interface Item {
-	id: string;
-	name: string;
-	cn: string;
-	type: ItemType;
-	cost: number;
-	active: boolean;
-	components: string[];
-	short: string;
-}
