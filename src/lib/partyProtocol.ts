@@ -234,3 +234,27 @@ export function decodeLobbyMessage(raw: string): LobbyMessage | null {
 	}
 	return { t: 'rooms', rooms };
 }
+
+/** 房间的 HTTP 路径前缀。大厅是 `/api/party/rooms`，不在这个前缀下。 */
+export const ROOM_PATH_PREFIX = '/api/party/room/';
+
+/** 房间码的形状：4–8 位大写字母数字。 */
+const ROOM_CODE_RE = /^[A-Z0-9]{4,8}$/;
+
+/**
+ * 从 `/api/party/room/<房间码>` 里取出房间码；路径不在前缀下、或房间码形状不对时返回 null。
+ *
+ * 单独抽出来是因为它有一个**会抛异常的入口**：`decodeURIComponent` 遇到坏的百分号编码
+ * （`/api/party/room/%`，手打或爬虫扫出来的）会抛 URIError。放在 Worker 的路由里那段
+ * try/catch 没法自检，而它错了的表现是整个请求 500——本来只是"房间码不对"。
+ */
+export function parseRoomPath(pathname: string): string | null {
+	if (!pathname.startsWith(ROOM_PATH_PREFIX)) return null;
+	let code: string;
+	try {
+		code = decodeURIComponent(pathname.slice(ROOM_PATH_PREFIX.length)).toUpperCase();
+	} catch {
+		return null;
+	}
+	return ROOM_CODE_RE.test(code) ? code : null;
+}

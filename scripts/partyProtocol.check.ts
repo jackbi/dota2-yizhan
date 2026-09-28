@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { decodeClientMessage, decodeLobbyMessage, decodeServerMessage, encodeMessage } from '../src/lib/partyProtocol.ts';
+import { decodeClientMessage, decodeLobbyMessage, decodeServerMessage, encodeMessage, parseRoomPath } from '../src/lib/partyProtocol.ts';
 
 /**
  * `src/lib/partyProtocol.ts` 的自检（纯函数，不联网）。
@@ -141,6 +141,33 @@ ok('chat：空/非字符串被拒，超长裁剪');
 	assert.equal(lobby?.rooms[1]?.count, 0, '负数归零');
 	assert.equal(decodeLobbyMessage(JSON.stringify({ t: 'rooms' })), null);
 	ok('大厅消息：坏行跳过，数字字段归一');
+}
+
+// 房间码从路径里取：这一层原先 inline 在 Worker 的路由里，坏百分号编码会让整个请求 500
+{
+	assert.equal(parseRoomPath('/api/party/room/abc12'), 'ABC12', '小写要抬成大写（房间码在 URL 里人手打过）');
+	assert.equal(parseRoomPath('/api/party/room/ABCD1234'), 'ABCD1234');
+	assert.equal(parseRoomPath('/api/party/room/%41%42%43%44%45'), 'ABCDE', '百分号编码是合法路径，要还原');
+	ok('房间码：正常路径取得到，大小写与百分号编码都归一');
+}
+
+{
+	// 这些都是"坏请求"，必须返回 null（Worker 据此回 400），**不能抛异常**：
+	// `/api/party/room/%` 会让 decodeURIComponent 抛 URIError，以前那里就变成 500。
+	for (const path of [
+		'/api/party/room/%',
+		'/api/party/room/%zz',
+		'/api/party/room/%E4%B8%AD%E6%96%87',
+		'/api/party/room/',
+		'/api/party/room/ABC',
+		'/api/party/room/ABCDEFGHI',
+		'/api/party/room/AB-CD',
+		'/api/party/rooms',
+		'/api/party/roomx/ABCDE',
+	]) {
+		assert.equal(parseRoomPath(path), null, `${path} 应当按"房间码不对"处理`);
+	}
+	ok('房间码：坏编码 / 长度不对 / 不在前缀下都返回 null，不抛');
 }
 
 console.log(`partyProtocol 全部断言通过（${cases} 组）`);

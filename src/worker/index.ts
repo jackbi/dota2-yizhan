@@ -6,6 +6,7 @@
  * 换成自定义入口以后，`/api/party/*` 这类请求可以**先被我们接住**，其余原样交给 Astro。
  */
 import server from '@astrojs/cloudflare/entrypoints/server';
+import { parseRoomPath } from '../lib/partyProtocol';
 import { PartyLobby, PartyRoom } from './partyRoom';
 
 export { PartyLobby, PartyRoom };
@@ -78,8 +79,10 @@ export default {
 			return env.PARTY_LOBBY.get(env.PARTY_LOBBY.idFromName('lobby')).fetch(request);
 		}
 		if (url.pathname.startsWith('/api/party/room/')) {
-			const code = decodeURIComponent(url.pathname.slice('/api/party/room/'.length)).toUpperCase();
-			if (!/^[A-Z0-9]{4,8}$/.test(code)) return new Response('房间码不对', { status: 400 });
+			// 房间码的解析（含坏百分号编码那种会让 `decodeURIComponent` 抛错的地址）在
+			// `partyProtocol.parseRoomPath` 里，那边有自检——原先这段 inline 的 try/catch 没法验。
+			const code = parseRoomPath(url.pathname);
+			if (!code) return new Response('房间码不对', { status: 400 });
 			return env.PARTY_ROOMS.get(env.PARTY_ROOMS.idFromName(code)).fetch(request);
 		}
 		return server.fetch(request, env as never, ctx);
