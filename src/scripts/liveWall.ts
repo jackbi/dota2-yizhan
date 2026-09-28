@@ -1245,7 +1245,11 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 		video.addEventListener('ended', () => {
 			if (attempts.get(index) !== attempt) return;
 			const now = Date.now();
-			const strikes = now - (lastEndedAt.get(index) ?? 0) < 20_000 ? (endedStrikes.get(index) ?? 0) + 1 : 0;
+			/*
+			 * 兜底初值用 `now` 而不是 0：`?? 0` 会让 `now - 0 < 20_000` 恒假，于是**第一次断流
+			 * 根本不计数**，说好的"20 秒内连着断三次"要断到第四次才认输。
+			 */
+			const strikes = now - (lastEndedAt.get(index) ?? now) < 20_000 ? (endedStrikes.get(index) ?? 0) + 1 : 1;
 			lastEndedAt.set(index, now);
 			endedStrikes.set(index, strikes);
 			if (strikes >= 3) {
