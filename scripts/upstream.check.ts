@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
 /**
- * 上游给的东西不能直接信。四条不变量，共同点是**坏了不报错**：页面看着一切正常，只是慢、
+ * 上游给的东西不能直接信。五条不变量，共同点是**坏了不报错**：页面看着一切正常，只是慢、
  * 或者某张图永远是破的、某个日期永远印着 1970。每一条都对应一个真实踩过的坑：
  *
  * 1. **`src/lib` 里每个 fetch 都要能超时。** 上游挂起时，没有超时的取数会把整轮构建拖到平台
@@ -15,6 +15,9 @@ import { readFileSync, readdirSync } from 'node:fs';
  * 4. **0 不是时间戳。** OpenDota 的进行中比赛会给 `activate_time: 0`，而 `??` 只挡 null/undefined；
  *    `new Date(0)` 是合法的 1970-01-01，卡片上就会多出一个看着像真日期的假信息。取数侧要兜底，
  *    展示侧也要有守卫（同一个值在 `draft.astro` 里早就有守卫）。
+ * 5. **退回旧缓存要有年龄上限。** 直播状态的缓存文件是上一次构建留下的，可能已经好几天；
+ *    见到文件就用，页面上就是一个绿点写着「直播中」。开播状态按分钟变，这条要么给上限、
+ *    要么就得说清这份快照是什么时候的。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/upstream.check.ts`）。
  */
@@ -79,5 +82,13 @@ assert.ok(
 	'比赛卡片要守卫 startTime=0：否则 datetime 会印出 1970-01-01',
 );
 assert.ok(matchRow.includes('时间待定'), '时间不可用时要有替代文案');
+
+// ---------------------------------------------------------------- 5. 退回旧缓存要有年龄上限
+
+const live = lib('liveApi.ts');
+assert.ok(live.includes('const STALE_MAX_MS'), '直播状态退回旧缓存要给年龄上限：几天前的「直播中」摆出来就是个绿点');
+assert.ok(/hit\.ageMs > STALE_MAX_MS/.test(live), 'readStale 要拿文件年龄去卡上限，不能见到文件就用');
+assert.ok(!live.includes('readRawJson'), '退回旧缓存不能走 readRawJson：那条路读不到年龄，等于没有上限');
+assert.ok(live.includes('withStaleNote(stale)'), '退回旧缓存时要把这份快照有多旧说出来，别让读者以为它是刚抓的');
 
 console.log(`upstream.check 通过（扫了 ${withFetch.length} 个取数文件）`);

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { isFresh, readCacheJson, readRawJson, writeCacheFile } from './buildCache';
+import { isFresh, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
 import { extractJson, fetchNote, fetchText, sleep } from './fetchText';
@@ -48,6 +48,15 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
 /** 开播状态变化很快，缓存只用来省掉同一轮构建里的重复请求。 */
 const TTL_SECONDS = 5 * 60;
+/**
+ * 退回旧缓存时的年龄上限。
+ *
+ * 缓存文件是**上一次构建**留下的，可能是好几天前那份。开播状态按分钟变，把几天前的
+ * 「直播中」当现在渲染出来就是编状态——页面上那是个绿点，而 `docs/live.md` 里写死了
+ * 「任何情况下都不写死假的正在直播」。所以只拿它兜"连续几次构建都没抓到"这种短暂故障，
+ * 超过这个上限就当没有缓存，老老实实标「状态未知」。
+ */
+const STALE_MAX_MS = 2 * 60 * 60 * 1000;
 /** 代理是第三方服务，别把它打爆。 */
 const CONCURRENCY = 3;
 /** 抓取失败后等同伴进程写缓存的轮次与间隔。 */
@@ -160,9 +169,23 @@ async function readCache(file: string, ttlSeconds: number): Promise<LiveStatus |
 	return hit && isFresh(hit.ageMs, ttlSeconds) ? hit.value : null;
 }
 
-/** 只读内容、不看年龄——离线构建与「上游失败退回旧缓存」用。 */
-function readStale(file: string): Promise<LiveStatus | null> {
-	return readRawJson<LiveStatus>(file);
+/**
+ * 只读内容、不看 TTL——离线构建与「上游失败退回旧缓存」用，但**有年龄上限**（见 `STALE_MAX_MS`）。
+ *
+ * 返回年龄是给 `withStaleNote` 用的：退回旧缓存时页面要能说出这份状态是什么时候的。
+ */
+async function readStale(file: string): Promise<{ status: LiveStatus; ageMs: number } | null> {
+	const hit = await readCacheJson<LiveStatus>(file);
+	if (!hit || hit.ageMs > STALE_MAX_MS) return null;
+	return { status: hit.value, ageMs: hit.ageMs };
+}
+
+/** 用旧缓存顶上时，把它有多旧写进 `note`：绿点仍是那次抓到的结论，读者得知道是什么时候下的。 */
+function withStaleNote(hit: { status: LiveStatus; ageMs: number }): LiveStatus {
+	const minutes = Math.max(1, Math.round(hit.ageMs / 60_000));
+	const ago = minutes < 60 ? `${minutes} 分钟前` : `${Math.round(minutes / 60)} 小时前`;
+	const note = `本次没取到开播状态，这是 ${ago}的快照`;
+	return { ...hit.status, note: hit.status.note ? `${hit.status.note}；${note}` : note };
 }
 
 function writeCache(file: string, status: LiveStatus): Promise<void> {
@@ -187,9 +210,10 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 	const cached = await readCache(file, TTL_SECONDS);
 	if (cached) return cached;
 
-	const stale = OFFLINE ? await readStale(file) : null;
-	if (stale) return stale;
-	if (OFFLINE) return unknownStatus('离线构建且没有缓存');
+	if (OFFLINE) {
+		const stale = await readStale(file);
+		return stale ? withStaleNote(stale) : unknownStatus('离线构建且没有缓存');
+	}
 
 	const url = apiUrl(room.platform, room.roomId);
 	if (!url) return unknownStatus('暂不支持该平台');
@@ -244,7 +268,8 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 		}
 	}
 
-	return (await readStale(file)) ?? unknownStatus('平台接口没有响应');
+	const stale = await readStale(file);
+	return stale ? withStaleNote(stale) : unknownStatus('平台接口没有响应');
 }
 
 /**
@@ -255,7 +280,8 @@ async function waitForPeerCache(file: string): Promise<LiveStatus | null> {
 	for (let i = 0; i < PEER_WAIT_ROUNDS; i++) {
 		await sleep(PEER_WAIT_MS);
 		const cached = await readStale(file);
-		if (cached) return cached;
+		// 同伴进程刚写进来的那份就在 TTL 内；这里的年龄门槛挡的是「上一轮构建留下的旧文件」。
+		if (cached) return cached.status;
 	}
 	return null;
 }
