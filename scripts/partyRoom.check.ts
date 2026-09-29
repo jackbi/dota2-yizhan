@@ -34,6 +34,8 @@ function stripComments(source: string): string {
 }
 
 const worker = stripComments(readFileSync(new URL('../src/worker/partyRoom.ts', import.meta.url), 'utf8'));
+/** 带注释的原文：下面有心跳间隔这类"只写在注释里"的口径。 */
+const workerRaw = readFileSync(new URL('../src/worker/partyRoom.ts', import.meta.url), 'utf8');
 const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts', import.meta.url), 'utf8'));
 
 // 1. 空置保留期：alarm 里删房间之前必须判"空置够久"
@@ -192,6 +194,21 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	);
 	assert.ok(!/pathname\.split\('\/'\)\.pop\(\)/.test(worker), '别再手拆路径段取房间码');
 	ok('房间码：路由与 DO 同一个解析函数');
+}
+
+// 6. 心跳间隔：文档与注释里的数字要跟着 `PING_MS`
+{
+	/*
+	 * 这两个数字不改任何判定，但它们是别人调 `LOBBY_HEARTBEAT_MS`（"15 分钟够不够"）时的依据，
+	 * 而 docs/ 是口径记录——写错就是把人往错的方向带。上一版就是照着"每 20 秒"写的。
+	 */
+	const ping = Number(/const PING_MS = ([\d_]+)/.exec(client)?.[1]?.replace(/_/g, ''));
+	assert.ok(Number.isFinite(ping) && ping > 0, '没解析出客户端的 PING_MS');
+	const seconds = ping / 1000;
+	const docs = readFileSync(new URL('../docs/party.md', import.meta.url), 'utf8');
+	assert.ok(docs.includes(`每 ${seconds} 秒一次 ping`), `docs/party.md 要写「每 ${seconds} 秒一次 ping」（现在 PING_MS=${ping}）`);
+	assert.ok(workerRaw.includes(`客户端每 ${seconds} 秒 ping 一次`), `partyRoom.ts 的心跳注释要写「客户端每 ${seconds} 秒 ping 一次」`);
+	ok(`心跳间隔（${seconds} 秒）在文档、注释与客户端三处一致`);
 }
 
 console.log(`partyRoom 全部断言通过（${cases} 组）`);
