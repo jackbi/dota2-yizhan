@@ -45,6 +45,13 @@ type StoredRoom = {
 	 * 不变量：这里的每个 id 都还在 `state.members` 里。
 	 */
 	pending?: Record<string, number>;
+	/**
+	 * 名册变成空的时刻。空置保留期（`EMPTY_ROOM_TTL_MS`）从这一刻算起。
+	 *
+	 * 单独记一笔是因为「名册空了」和「空置到期」**不是同一件事**：宽限期到点那次唤醒会把断线的人
+	 * 摘掉、名册随之变空，但房间的保留期这时才刚开始。只看"名册空不空"就会在那次唤醒上顺手删房间。
+	 */
+	emptySince?: number;
 };
 
 /** 每条连接自己的东西。限流计数放这儿：它天然属于连接，DO 被回收再唤醒也还在。 */
@@ -57,13 +64,22 @@ const EMPTY_ROOM_TTL_MS = 10 * 60_000;
  *
  * 刷新页面是「旧连接先断、新连接后到」，切网络（换 Wi-Fi、手机信号抖一下）也会先断后连。
  * 不留这点时间的话，名册、队伍位置、roll 结果会被当场清掉，房主刷新还会把房间交出去——
- * 而 `clientId` 那套重连本来就是为了避免这些。20 秒比客户端 5 秒的重连节拍宽松得多，
- * 又短到不会让真有事的空位一直占着。
+ * 而 `clientId` 那套重连本来就是为了避免这些。
+ *
+ * 45 秒是照客户端的退避阶梯定的（`RECONNECT_DELAYS_MS`：0.6 / 1.8 / 4.3 / 9.3 / 19.3 / 39.3 秒）：
+ * 要盖住 39.3 秒那一次尝试，宽限就得比它长。原来写 20 秒时，手机息屏/地铁断网这类
+ * 十几秒的空档会正好卡在第 5 与第 6 次尝试之间——人在宽限内被摘掉，回来就成了"重新加入"，
+ * 队伍位置与 roll 结果正是这时候丢的。
  */
-const MEMBER_GRACE_MS = 20_000;
+const MEMBER_GRACE_MS = 45_000;
 /** 单个连接 10 秒内的消息上限，超了就断开——公开的 WebSocket 端点要有最基础的闸门。 */
 const MESSAGE_BURST = 60;
 const MESSAGE_WINDOW_MS = 10_000;
+/** 「房间没了」那条上报的重试：删掉房间之后没有下一次上报机会了（见 `tellLobby`）。 */
+const LOBBY_REPORT_ATTEMPTS = 3;
+const LOBBY_REPORT_RETRY_MS = 250;
+/** 大厅卡片的兜底寿命；只用来把"永久幽灵卡片"变成"有上限"（见 `PartyLobby.pruneStale`）。 */
+const LOBBY_ROOM_TTL_MS = 6 * 3600_000;
 
 const json = (body: unknown, status = 200): Response =>
 	new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -145,17 +161,26 @@ export class PartyRoom {
 	 *
 	 * DO 同一时刻只有一个 alarm，所以「宽限到期」和「空房间到期」这两件事必须在同一个 handler
 	 * 里处理，由 `scheduleAlarm()` 取最近的那个时间点。
+	 *
+	 * **两件事各有各的到期判据**：宽限到点那次唤醒会把断线的人摘掉、名册随之变空，但空置保留期
+	 * 这时才刚开始（`emptySince`）。所以这里不能写成"名册空就删"，否则最后一个人断线 45 秒后
+	 * 房间、聊天、roll、队伍位置就全没了，`EMPTY_ROOM_TTL_MS` 形同虚设。
 	 */
 	async alarm(): Promise<void> {
 		if (!this.stored) return;
 		await this.sweepPending();
-		if (this.stored && this.stored.state.members.length === 0) {
-			// 空房间到期：连聊天一起删，并让大厅把卡片摘了。
-			const code = this.stored.code;
-			this.stored = null;
-			await this.ctx.storage.deleteAll();
-			await this.tellLobby(code, 0);
-		}
+		if (!this.stored) return;
+		if (this.stored.state.members.length > 0) return;
+
+		const emptySince = this.stored.emptySince ?? Date.now();
+		this.stored.emptySince = emptySince;
+		if (Date.now() - emptySince < EMPTY_ROOM_TTL_MS) return;
+
+		// 空房间到期：连聊天一起删，并让大厅把卡片摘了。
+		const code = this.stored.code;
+		this.stored = null;
+		await this.ctx.storage.deleteAll();
+		await this.tellLobby(code, 0);
 	}
 
 	// ------------------------------------------------------------ 进房
@@ -210,11 +235,13 @@ export class PartyRoom {
 		const member: L.Member = { id: message.clientId, name, avatar, joinedAt: roster?.joinedAt ?? Date.now() };
 		const before = this.stored.state;
 		this.stored.state = L.upsertMember(before, member).state;
+		// 有人进来就不再是空房：清掉空置起点，下一次变空时重新计时。
+		this.stored.emptySince = undefined;
 		if (!roster) this.push(this.sys(`${name} 加入了房间`));
 
 		/*
 		 * 回来的人从「待清理」里划掉：这就是宽限期的全部意义——同一个人（同一个 clientId）
-		 * 在 20 秒内重新连上，名册、队伍位置、roll 结果都还在原地。
+		 * 在 45 秒内重新连上，名册、队伍位置、roll 结果都还在原地。
 		 * 写 attachment 时把原有字段带上（限流计数在里面），别顺手抹掉。
 		 */
 		const attachment = (ws.deserializeAttachment() as Attachment | null) ?? { clientId: null };
@@ -355,6 +382,8 @@ export class PartyRoom {
 				if (member) this.apply(L.removeMember(this.stored.state, id), `${member.name} 离开了房间`);
 			}
 			this.stored.pending = next;
+			// 名册刚好空掉：空置保留期从这一刻开始算，而不是从这次唤醒的 deadline 算。
+			this.stored.emptySince = this.stored.state.members.length === 0 ? Date.now() : undefined;
 			// 走的可能是房主：这时候才轮到换人。
 			this.ensureHost();
 			await this.persist();
@@ -367,14 +396,16 @@ export class PartyRoom {
 	/**
 	 * 排下一次唤醒：宽限到期与空房间到期取最近的那个（DO 只能挂一个 alarm）。
 	 *
-	 * 两件事都不会同时成立：待清理的人还在名册里，所以名册不是空的。
+	 * 「待清理的人还在名册里」意味着这两件事在同一时刻不会都成立，但**先后一定成立**：
+	 * 宽限到点摘完人，名册可能刚好变空，空置倒计时从那一刻才开始（`emptySince`）。
+	 * 所以两个时间点都要按各自的口径算，别用"名册空不空"当共同判据。
 	 */
 	private async scheduleAlarm(): Promise<void> {
 		if (!this.stored) return;
 		const pendingAt = Object.values(this.stored.pending ?? {});
 		const times: number[] = [];
 		if (pendingAt.length > 0) times.push(Math.min(...pendingAt) + MEMBER_GRACE_MS);
-		if (this.stored.state.members.length === 0) times.push(Date.now() + EMPTY_ROOM_TTL_MS);
+		if (this.stored.state.members.length === 0) times.push((this.stored.emptySince ?? Date.now()) + EMPTY_ROOM_TTL_MS);
 		if (times.length === 0) {
 			await this.ctx.storage.deleteAlarm();
 			return;
@@ -467,16 +498,30 @@ export class PartyRoom {
 		}
 	}
 
+	/**
+	 * 把房间的现状报给大厅。
+	 *
+	 * **不能因为 `this.stored` 已经是 null 就直接返回**：房间到期删除那一步就是先清掉 `stored`
+	 * 再报「这里没人了」，那条早退会让删除后的大厅卡片永远留着。
+	 *
+	 * 「房间没了」这条上报会重试几次：count > 0 的报告失败了还有下一次有人进出兜底，
+	 * 而房间删掉之后**没有下一次了**，那一次失败就等于留一张永久卡片。
+	 */
 	private async tellLobby(code: string, count: number): Promise<void> {
-		if (!this.stored) return;
-		try {
-			const lobby = this.env.PARTY_LOBBY.get(this.env.PARTY_LOBBY.idFromName('lobby'));
-			await lobby.fetch('https://party.internal/rooms', {
-				method: 'POST',
-				body: JSON.stringify({ code, name: count > 0 ? this.stored.name : '', count }),
-			});
-		} catch {
-			// 大厅没更新成功不影响房间本身；下一次有人进出会再报一次。
+		const name = count > 0 ? (this.stored?.name ?? '') : '';
+		const body = JSON.stringify({ code, name, count });
+		const attempts = count > 0 ? 1 : LOBBY_REPORT_ATTEMPTS;
+		const lobby = this.env.PARTY_LOBBY.get(this.env.PARTY_LOBBY.idFromName('lobby'));
+
+		for (let attempt = 0; attempt < attempts; attempt += 1) {
+			try {
+				const response = await lobby.fetch('https://party.internal/rooms', { method: 'POST', body });
+				if (response.ok) return;
+				console.warn(`[party] 大厅上报被拒：${code} count=${count} HTTP ${response.status}`);
+			} catch (error) {
+				console.warn(`[party] 大厅上报失败：${code} count=${count} ${error instanceof Error ? error.message : error}`);
+			}
+			if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, LOBBY_REPORT_RETRY_MS));
 		}
 	}
 }
@@ -522,7 +567,29 @@ export class PartyLobby {
 		}
 	}
 
+	/**
+	 * 兜底清理：久到不可能是活房间的卡片直接摘掉。
+	 *
+	 * 正常路径是房间自己在名册变空时上报 count 0（那条上报还会重试，见 `PartyRoom.tellLobby`），
+	 * 但整条链路可能一次都没送达，而卡片是**落盘**的——不清理就会一直挂在那儿等人点进去看
+	 * 「房间不存在了」。
+	 *
+	 * TTL 给得很宽（6 小时）：房间只在有人进出或操作时上报，安静打一下午的房间也完全正常，
+	 * 短期内没有任何「他还活着吗」的信号可用。这条只是把"永远"变成"有上限"。
+	 */
+	private pruneStale(now = Date.now()): boolean {
+		let changed = false;
+		for (const [code, room] of this.rooms) {
+			if (now - room.at > LOBBY_ROOM_TTL_MS) {
+				this.rooms.delete(code);
+				changed = true;
+			}
+		}
+		return changed;
+	}
+
 	async fetch(request: Request): Promise<Response> {
+		if (this.pruneStale()) await this.persist();
 		if (isWebSocket(request)) {
 			const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
 			this.ctx.acceptWebSocket(server);

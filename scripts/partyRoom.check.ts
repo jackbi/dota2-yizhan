@@ -1,0 +1,121 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+/**
+ * `src/worker/partyRoom.ts`（房间 DO + 大厅 DO）与 `src/scripts/partyRoom.ts`（客户端）里
+ * 几条**在本地根本跑不出来**的不变量。
+ *
+ * Durable Object 在本地预览里跑不起来（WebSocket Hibernation、alarm、storage 都是 workerd
+ * 的东西），所以这一块的行为没法像别处那样喂输入看输出。但踩过的坑都集中在时序上，而那些
+ * 时序在源码里是看得出来的：
+ *
+ * 1. **空置保留期不能被宽限唤醒顺手吃掉。** 宽限到点摘完人，名册刚好变空——但"名册空"
+ *    不等于"空置到期"。上一版就是这么写的，于是最后一个人断线 20 秒后房间连同聊天、
+ *    roll、队伍位置一起没了，而文档承诺保留 10 分钟。
+ *
+ * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/partyRoom.check.ts`）。
+ */
+
+let cases = 0;
+const ok = (label: string): void => {
+	cases += 1;
+	console.log(`  ✓ ${label}`);
+};
+
+/** 去掉注释行：注释里写着"上一版是这么写的"，不摘掉就会被自己的说明骗过去。 */
+function stripComments(source: string): string {
+	return source
+		.split('\n')
+		.filter((line) => {
+			const trimmed = line.trim();
+			return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+		})
+		.join('\n');
+}
+
+const worker = stripComments(readFileSync(new URL('../src/worker/partyRoom.ts', import.meta.url), 'utf8'));
+const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts', import.meta.url), 'utf8'));
+
+// 1. 空置保留期：alarm 里删房间之前必须判"空置够久"
+{
+	const start = worker.indexOf('async alarm()');
+	const end = worker.indexOf('private async join(');
+	assert.ok(start > 0 && end > start, '没能从 partyRoom.ts 里切出 alarm()，解析多半坏了');
+	const alarm = worker.slice(start, end);
+
+	assert.ok(alarm.includes('emptySince'), 'alarm() 要按 emptySince 判空置时长，不能只看名册空不空');
+	assert.ok(alarm.includes('EMPTY_ROOM_TTL_MS'), 'alarm() 要引空置保留期');
+	assert.ok(
+		alarm.indexOf('EMPTY_ROOM_TTL_MS') < alarm.indexOf('deleteAll()'),
+		'空置时长的判定必须排在 deleteAll() 之前',
+	);
+	assert.ok(
+		!/members\.length === 0\) \{\s*const code = this\.stored\.code/.test(alarm),
+		'alarm() 里不该再有"名册空就删房间"那种写法：宽限唤醒刚把人摘掉时名册也是空的',
+	);
+	assert.ok(
+		/emptySince \?\? Date\.now\(\)\) \+ EMPTY_ROOM_TTL_MS/.test(worker),
+		'scheduleAlarm() 的空房 deadline 要从 emptySince 算，而不是从"现在"算',
+	);
+	assert.ok(
+		/this\.stored\.emptySince = this\.stored\.state\.members\.length === 0 \? Date\.now\(\) : undefined/.test(worker),
+		'名册变空那一刻要记下 emptySince（并在这之后清掉）',
+	);
+	assert.match(worker, /this\.stored\.emptySince = undefined;\n\s*if \(!roster\)/, '有人进房要清掉 emptySince');
+	ok('空房保留期：名册空 != 空置到期');
+}
+
+// 2. 客户端：节拍不抢在退避阶梯前面，且同一时刻只留一个重连计时器
+{
+	assert.ok(client.includes('lobbyRetryAt') && client.includes('roomRetryAt'), '重连要让出"下一次允许尝试的时刻"');
+	assert.ok(
+		/Date\.now\(\) >= lobbyRetryAt\) connectLobby\(\)/.test(client),
+		'大厅的 5 秒节拍要先看退避排的时间点',
+	);
+	assert.ok(
+		/Date\.now\(\) >= roomRetryAt\) openRoomSocket\(\)/.test(client),
+		'房间的 5 秒节拍要先看退避排的时间点',
+	);
+	assert.ok(
+		!/if \(!lobbySocket \|\| lobbySocket\.readyState > WebSocket\.OPEN\) connectLobby\(\);/.test(client),
+		'不该再有"只要 socket 不是 OPEN 就连"的写法：那会把退避阶梯跨过去',
+	);
+	assert.ok(client.includes('window.clearTimeout(lobbyReconnectTimer)'), '大厅重连也要只留一个计时器（close 与回到前台都会排）');
+	ok('重连节拍让位于退避阶梯');
+}
+
+// 3. 跨文件：宽限期要盖得住客户端阶梯的最后一次尝试
+{
+	const ladder = /const RECONNECT_DELAYS_MS = \[([^\]]+)\]/.exec(client)?.[1];
+	assert.ok(ladder, '没解析出客户端的退避阶梯');
+	const delays = ladder.split(',').map((part) => Number(part.trim().replace(/[_\s]/g, '')));
+	assert.ok(delays.length >= 3 && delays.every((value) => Number.isFinite(value) && value > 0), `退避阶梯解析异常：${ladder}`);
+	const lastAttemptAt = delays.reduce((sum, value) => sum + value, 0);
+
+	const grace = Number(/const MEMBER_GRACE_MS = ([\d_]+)/.exec(worker)?.[1]?.replace(/_/g, ''));
+	assert.ok(Number.isFinite(grace) && grace > 0, '没解析出服务端的宽限期');
+	assert.ok(
+		grace >= lastAttemptAt,
+		`宽限期 ${grace}ms 盖不住最后一次重连尝试（阶梯累加到 ${lastAttemptAt}ms）：人会在自己下一次尝试之前被摘掉`,
+	);
+	ok(`宽限期（${grace}ms）盖得住阶梯的最后一次尝试（${lastAttemptAt}ms）`);
+}
+
+// 4. 上报大厅：删房间那条也要发得出、且看 res.ok
+{
+	const start = worker.indexOf('private async tellLobby(');
+	const end = worker.indexOf('export class PartyLobby');
+	assert.ok(start > 0 && end > start, '没能切出 tellLobby()');
+	const tell = worker.slice(start, end);
+
+	assert.ok(
+		!/private async tellLobby\(code: string, count: number\): Promise<void> \{\s*if \(!this\.stored\) return;/.test(tell),
+		'tellLobby 不能因为 this.stored 是 null 就早退：房间到期删除是"先清 stored 再报没人了"',
+	);
+	assert.ok(tell.includes('response.ok'), 'tellLobby 要看 res.ok：只看有没有抛异常会把 4xx/5xx 当成功');
+	assert.ok(/LOBBY_REPORT_ATTEMPTS/.test(tell), '"房间没了"那条上报要重试：删掉之后没有下一次机会了');
+	assert.ok(worker.includes('pruneStale'), '大厅要有按 at 的兜底清理，否则一次都没送达的上报会留一张永久卡片');
+	ok('大厅上报与兜底清理');
+}
+
+console.log(`partyRoom 全部断言通过（${cases} 组）`);

@@ -185,6 +185,15 @@ let roomSocket: WebSocket | null = null;
 let roomSocketRetry = 0;
 let lobbySocketRetry = 0;
 let reconnectTimer = 0;
+/** 大厅那条重连的计时器。房间那条用 `reconnectTimer`，两条互不干扰。 */
+let lobbyReconnectTimer = 0;
+/*
+ * 下一次**允许**重连的时刻。退避阶梯排的那一次就落在这个时间点上，5 秒节拍不许抢在它前面：
+ * 原先节拍是无条件重连（只看 socket 是否 OPEN），于是断网标签页每 5 秒打一次，
+ * 阶梯里的 10 秒 / 20 秒两档永远轮不到——`docs/party.md` 承诺的"自动退避"名存实亡。
+ */
+let lobbyRetryAt = 0;
+let roomRetryAt = 0;
 let pingTimer = 0;
 /** 主动离开期间不要重连（close 事件分不清「断了」和「我自己关的」）。 */
 let leaving = false;
@@ -382,6 +391,7 @@ function connectLobby(): void {
 	lobbySocket = socket;
 	socket.addEventListener('open', () => {
 		lobbySocketRetry = 0;
+		lobbyRetryAt = 0;
 		renderNet();
 	});
 	socket.addEventListener('message', (event) => {
@@ -412,14 +422,22 @@ function scheduleReconnect(kind: SocketKind): void {
 	if (kind === 'lobby') {
 		const delay = RECONNECT_DELAYS_MS[Math.min(lobbySocketRetry, RECONNECT_DELAYS_MS.length - 1)];
 		lobbySocketRetry += 1;
-		window.setTimeout(connectLobby, delay);
+		lobbyRetryAt = Date.now() + delay;
+		// 只留一个计时器：close 与 visibilitychange 都可能排重连，叠起来会把阶梯跨过去。
+		window.clearTimeout(lobbyReconnectTimer);
+		lobbyReconnectTimer = window.setTimeout(() => {
+			lobbyRetryAt = 0;
+			connectLobby();
+		}, delay);
 		return;
 	}
 	if (!roomCode) return;
 	const delay = RECONNECT_DELAYS_MS[Math.min(roomSocketRetry, RECONNECT_DELAYS_MS.length - 1)];
 	roomSocketRetry += 1;
+	roomRetryAt = Date.now() + delay;
 	window.clearTimeout(reconnectTimer);
 	reconnectTimer = window.setTimeout(() => {
+		roomRetryAt = 0;
 		if (roomCode) openRoomSocket();
 	}, delay);
 }
@@ -508,6 +526,7 @@ async function enterRoom(options: {
 	roomCode = options.code;
 	joinIntent = { password: options.password, asHost: options.asHost, name: options.name };
 	roomSocketRetry = 0;
+	roomRetryAt = 0;
 	isHost = false;
 	selfId = '';
 	room = null;
@@ -574,6 +593,7 @@ function openRoomSocket(): void {
 	roomSocket = socket;
 	socket.addEventListener('open', () => {
 		roomSocketRetry = 0;
+		roomRetryAt = 0;
 		window.clearInterval(pingTimer);
 		pingTimer = window.setInterval(() => {
 			if (socket.readyState === WebSocket.OPEN) socket.send(encodeMessage({ t: 'ping' }));
@@ -656,6 +676,7 @@ async function leaveRoom(options: { silent?: boolean } = {}): Promise<void> {
 	// 先置位再关连接：close 回调看到 leaving 就不会排重连。
 	leaving = true;
 	window.clearTimeout(reconnectTimer);
+	roomRetryAt = 0;
 	window.clearInterval(pingTimer);
 	const socket = roomSocket;
 	roomSocket = null;
@@ -1420,6 +1441,9 @@ function bindEvents(): void {
 	 */
 	document.addEventListener('visibilitychange', () => {
 		if (document.hidden) return;
+		// 回到前台是主动来一发，不用等退避：这一次尝试本身就把阶梯重置了。
+		lobbyRetryAt = 0;
+		roomRetryAt = 0;
 		connectLobby();
 		if (roomCode && roomSocket?.readyState !== WebSocket.OPEN) openRoomSocket();
 		renderNet();
@@ -1512,8 +1536,9 @@ async function copyText(text: string, button: HTMLButtonElement): Promise<void> 
  */
 function startTicker(): void {
 	window.setInterval(() => {
-		if (!lobbySocket || lobbySocket.readyState > WebSocket.OPEN) connectLobby();
-		if (roomCode && (!roomSocket || roomSocket.readyState > WebSocket.OPEN)) openRoomSocket();
+		// 该重连才重连，而且不早于退避阶梯排的那一次（见 `lobbyRetryAt` / `roomRetryAt`）。
+		if ((!lobbySocket || lobbySocket.readyState > WebSocket.OPEN) && Date.now() >= lobbyRetryAt) connectLobby();
+		if (roomCode && (!roomSocket || roomSocket.readyState > WebSocket.OPEN) && Date.now() >= roomRetryAt) openRoomSocket();
 		renderNet();
 	}, 5000);
 }

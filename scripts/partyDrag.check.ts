@@ -145,7 +145,8 @@ assert.match(worker, /this\.ctx\.storage\.put\('rooms'/, '房间列表变化后�
  * - 限流按 `clientId`（找不到就 `'anon'`）记账时：换 id 就能绕过，而所有未进房的连接共用
  *   一个桶，一个陌生 socket 连发 60 条就能让每个人的 join 都被判超限。
  */
-assert.ok(worker.includes('const MEMBER_GRACE_MS = 20_000'), '断线要留宽限期');
+// 具体秒数由 partyRoom.check 按客户端退避阶梯校验，这里只要求它存在。
+assert.match(worker, /const MEMBER_GRACE_MS = [\d_]+/, '断线要留宽限期');
 assert.ok(
 	worker.includes('this.stored.pending = { ...(this.stored.pending ?? {}), [clientId]: Date.now() }'),
 	'断开时只记待清理时刻，不立刻摘人',
