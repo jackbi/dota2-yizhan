@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { NAV } from '../src/data/site.ts';
 
 /**
- * 页头右侧那一组的自检。
+ * 导航的自检：页头右侧那一组，加上「每个导航项都得有页面」。
  *
  * 顺序是固定的：**开源仓库 · AI 设置 · Steam 登录**。前两个原先分别只在页脚的链接表和页脚
  * 底行，页头没有入口；它们被挪走或删掉时**页面照样能看**，只是想看代码、想配自己那把 key 的人
@@ -10,6 +11,9 @@ import { readFileSync } from 'node:fs';
  *
  * 小屏只留图标（文字到 xl 才出现），所以两个链接都必须带 `aria-label`，否则读屏的访问者
  * 只能听到一个没有名字的链接。
+ *
+ * 第二组是主导航项与页面的对应关系。加一个导航项最容易漏的一步就是忘了建那个页面：
+ * 链接照样渲染、照样能点，点下去才是 404，而 404 不会让构建失败。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/headerNav.check.ts`）。
  */
@@ -64,5 +68,23 @@ assert.ok(!/>\s*AI 设置\s*</.test(header), 'AI 设置只留图标：文字会�
 // 站在这一页上时它要能高亮，否则读者不知道自己在这一页。
 assert.match(header, /aria-current=\{isActive\('\/settings'\)/, 'AI 设置要以当前页高亮');
 assert.match(header, /aria-current=\{isActive\('\/donate'\)/, '赞赏要以当前页高亮');
+
+/*
+ * 导航项到页面的映射：`/teams` 可能是 `src/pages/teams.astro`，也可能是
+ * `src/pages/teams/index.astro`，两种都认（`/news` 现在是前者、曾经是后者）。
+ * 首页那条是空段，对应 `src/pages/index.astro`。NAV 里的 `href` 带不带尾斜杠都行。
+ */
+{
+	const PAGES = new URL('../src/pages/', import.meta.url);
+	for (const item of NAV) {
+		const segment = item.href.replace(/^\/+|\/+$/g, '');
+		const candidates = segment === '' ? ['index.astro'] : [`${segment}.astro`, `${segment}/index.astro`];
+		assert.ok(
+			candidates.some((rel) => existsSync(new URL(rel, PAGES))),
+			`导航项「${item.label}」（${item.href}）没有对应的页面：${candidates.join(' 与 ')} 都不存在`,
+		);
+	}
+	console.log(`  ✓ 导航 ${NAV.length} 项都指向真实存在的页面`);
+}
 
 console.log('headerNav.check 通过');

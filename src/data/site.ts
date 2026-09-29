@@ -5,6 +5,7 @@ export const NAV = [
 	{ href: '/party/', label: '开黑房间' },
 	{ href: '/news', label: '资讯' },
 	{ href: '/tournaments', label: '赛事' },
+	{ href: '/teams', label: '战队' },
 	{ href: '/draft', label: '阵容分析' },
 	{ href: '/patches', label: '版本' },
 	{ href: '/heroes', label: '英雄' },
