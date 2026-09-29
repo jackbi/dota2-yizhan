@@ -97,6 +97,7 @@ const ok = (label: string): void => {
 	// 带单位时按万/亿换算：删掉非数字字符会得到 12，差一千倍且不会报错。
 	assert.equal(hot('1.2万'), 12_000, '「1.2万」是一万二，不是十二');
 	assert.equal(hot('3万'), 30_000);
+	assert.equal(hot('1,234'), 1234, '带千分位的写法也要先去掉逗号，否则会被读成 1');
 	assert.equal(hot('0'), undefined, '0 不写成热度');
 	assert.equal(hot('abc'), undefined, '认不出来就当没有热度，别猜');
 	assert.equal(hot(''), undefined);

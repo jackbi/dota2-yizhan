@@ -98,7 +98,8 @@ export function parseDouyuCategory(html: string): Omit<RoomRef, 'key' | 'source'
  * 热度只用来做同平台内的提示，不参与排序，所以"拿不到"比"拿错"划算。
  */
 function huyaHot(raw: unknown): number | undefined {
-	const text = String(raw ?? '').trim();
+	// 顺手去掉千分位逗号：`1,234` 会先被正则匹配成 1，又是一次千倍级别的误差。
+	const text = String(raw ?? '').replace(/,/g, '').trim();
 	const match = /^([\d.]+)\s*(万|亿)?/.exec(text);
 	if (!match) return undefined;
 	const base = Number(match[1]);

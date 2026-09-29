@@ -355,11 +355,15 @@ async function loadAll(): Promise<LiveSnapshot> {
 		.map((state) => `${LIVE_STATE_LABEL[state]} ${counts.get(state)}`);
 	if (unrecognized > 0) parts.push(`平台昵称与旧叫法不同 ${unrecognized}`);
 
+	// 「拿没拿到」看的是**能用**的状态有几个：全是「状态未知」时这一源就是没拿到，
+	// 不能因为"这一轮确实发过请求"就写成 fresh（上游挂掉那一轮正是这个形状）。
+	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0) + (counts.get('closed') ?? 0);
+
 	await reportSource(
 		'live',
 		'直播开播状态',
 		// 有一个房间吃了缓存就写 cache：那份状态是旧构建的结论，不该按"联网抓取"记。
-		fromCache > 0 ? 'cache' : fromNetwork > 0 ? 'fresh' : 'empty',
+		usable === 0 ? 'empty' : fromCache > 0 ? 'cache' : 'fresh',
 		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}（本轮联网 ${fromNetwork} 个、吃缓存 ${fromCache} 个）`,
 	);
 
