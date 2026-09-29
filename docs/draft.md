@@ -98,7 +98,7 @@
 | 数据 | 来源 | 口径 |
 | --- | --- | --- |
 | 英雄名、属性、头像 | 官方 datafeed（`heroApi`） | 与英雄页同一份；取不到时退回 OpenDota 的英雄表，属性按全才处理 |
-| 号位胜率 | STRATZ `heroStats`（`stratzApi.fetchHeroMeta`） | 超凡入圣及以上、上一完整自然周（窗口定义与三个消费方见 `src/lib/metaWindow.ts`）、单个号位少于 200 场不计 |
+| 号位胜率 | STRATZ `heroStats`（`stratzApi.fetchHeroMeta`） | 超凡入圣及以上、上一个完整统计周（窗口定义与三个消费方见 `src/lib/metaWindow.ts`）、单个号位少于 200 场不计 |
 | 英雄对位（克制） | STRATZ `heroStats.matchUp`（`stratzApi.fetchHeroMatchups`） | 同样的高分局口径；只留场次 ≥ 200 的对偶，实测约 1600 对 / 32KB，**不按偏差筛**（理由见下） |
 | 线上对位（分路） | STRATZ `heroStats.laneOutcome`（`stratzApi.fetchHeroLanes`） | 「某人打某个号位时线上遇到谁 / 和谁走一路」，只留每格**记了结果 ≥ 50 场**；单独一份 `/draft-lanes.json`（约 90KB），**不进胜率**（见「线上对位」一节） |
 | 职业热度 | OpenDota `/api/heroStats` 的 `pro_*` | 滚动窗口，全英雄合计只有 600 多次出场，只能当旁证，按实数展示 |

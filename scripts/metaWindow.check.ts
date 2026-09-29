@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DAY_MS, dayInWeek, inWeek, previousWeek } from '../src/lib/metaWindow.ts';
+import { DAY_MS, WEEK_MS, dayInWeek, inWeek, previousStatWeek, weekAnchorSeconds } from '../src/lib/metaWindow.ts';
 
 /**
  * `src/lib/metaWindow.ts` 的自检。
@@ -8,8 +8,10 @@ import { DAY_MS, dayInWeek, inWeek, previousWeek } from '../src/lib/metaWindow.t
  * 这个窗口把三处消费方绑在一起（号位胜率、`banDay` 累加、版本提醒），它算错一天，
  * 页面上那句话就不准，而且**没有任何东西会报错**：数字照常显示，只是口径不同。
  *
- * 所以这里钉的是边界：东八区周一 00:00 起、到下一个周一 00:00 止（不含），
- * 以及"上一完整自然周"在整个星期里都要落在一周之前——不能把当前这个还没走完的周算进去。
+ * 窗口的定义不是想出来的，是实测出来的（2026-09-29）：上游按 **Unix 纪元对齐的 7 天桶**
+ * 切窗，边界落在**周四 00:00 UTC**——跨过 `2026-09-24T00:00Z` 总场次从 1,763,328 跳到
+ * 1,073,094，而桶内换任意时刻结果一致。所以下面钉的就是这个边界，外加"传给上游的锚点必须
+ * 落在上一桶里"（差一点就会拿到当前那个没走完的桶，正是这条修复要躲开的）。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/metaWindow.check.ts`）。
  */
@@ -20,76 +22,71 @@ const ok = (label: string): void => {
 	console.log(`  ✓ ${label}`);
 };
 
-/** 用东八区的墙上时间写测试数据，免得读的人自己心算偏移。只写日期时按当天 00:00 算。 */
-const at = (iso: string): number => Date.parse(`${iso.includes('T') ? iso : `${iso}T00:00:00`}+08:00`);
-const day = (iso: string): number => Math.floor((at(iso) + 8 * 3600_000) / DAY_MS);
+const at = (iso: string): number => Date.parse(iso);
+/** 东八区墙上时间 → 时刻，写测试数据时少换算一次。 */
+const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 
-// 1. 一周中间的某天：窗口是上一个完整自然周
+// 1. 实测的那个边界：2026-09-24T00:00Z 之前之后，窗口整整差一周
 {
-	// 2026-09-30 是周三；上一个完整自然周是 09-21（周一）到 09-27（周日）。
-	const week = previousWeek(at('2026-09-30T12:00:00'));
-	assert.equal(week.startMs, at('2026-09-21T00:00:00'), '窗口从上周一 00:00 开始');
-	assert.equal(week.endMs, at('2026-09-28T00:00:00'), '窗口到本周一 00:00 结束（不含）');
-	assert.equal(week.firstDay, day('2026-09-21'));
-	assert.equal(week.lastDay, day('2026-09-27'));
-	ok('周三看到的窗口 = 上周一到上周日');
+	const after = previousStatWeek(at('2026-09-29T02:12:00Z')); // 探针当天
+	assert.equal(after.startMs, at('2026-09-17T00:00:00Z'), '窗口起点');
+	assert.equal(after.endMs, at('2026-09-24T00:00:00Z'), '窗口终点（= 实测的跳变点）');
+
+	const justBefore = previousStatWeek(at('2026-09-23T22:13:00Z')); // 探针里还是旧桶的那一刻
+	assert.equal(justBefore.endMs, at('2026-09-17T00:00:00Z'));
+	assert.equal(after.startMs - justBefore.startMs, WEEK_MS, '边界前后正好差一个桶');
+	assert.notEqual(previousStatWeek(at('2026-09-24T00:00:00Z')).startMs, justBefore.startMs, '边界那一刻已经换桶');
+	ok('边界：周四 00:00 UTC（纪元的 7 天桶）');
 }
 
-// 2. 周一当天：刚过去的那一周就是上一个完整自然周（边界最容易算错的那天）
+// 2. 锚点必须落在上一桶里：差一秒就会拿到当前那个没走完的桶
 {
-	const week = previousWeek(at('2026-09-28T00:30:00'));
-	assert.equal(week.startMs, at('2026-09-21T00:00:00'));
-	assert.equal(week.endMs, at('2026-09-28T00:00:00'));
-	ok('周一凌晨：窗口仍是刚结束的那一周，不包含今天');
+	for (const iso of ['2026-09-29T02:12:00Z', '2026-09-24T00:00:01Z', '2026-09-30T23:59:59Z', '2026-01-01T00:00:00Z']) {
+		const week = previousStatWeek(at(iso));
+		const anchorMs = weekAnchorSeconds(week) * 1000;
+		assert.ok(anchorMs >= week.startMs && anchorMs < week.endMs, `${iso}：锚点要落在窗口内（否则上游返回当前桶）`);
+		assert.ok(anchorMs < at(iso), `${iso}：锚点在"现在"之前`);
+	}
+	ok('上游锚点落在目标桶内');
 }
 
-// 3. 周日深夜：本周还没走完，窗口不该把本周算进来
+// 3. 不变量：长度 7 天、终点是周四 00:00 UTC、不越过"现在"、日序号与窗口一致
 {
-	const week = previousWeek(at('2026-09-27T23:59:59'));
-	assert.equal(week.startMs, at('2026-09-14T00:00:00'), '周日深夜时"上一完整自然周"是 09-14~09-20');
-	assert.equal(week.endMs, at('2026-09-21T00:00:00'));
-	assert.equal(inWeek(at('2026-09-27T23:59:59'), week), false, '当前这一周不算（还没走完）');
-	ok('周日深夜：不把当前这个未完成的周算进去');
-}
-
-// 4. 不变量：窗口永远是 7 天、永远整周落在"现在"之前、周内每一天都算在内
-{
-	for (const iso of [
-		'2026-01-01T00:00:00',
-		'2026-02-28T23:59:59',
-		'2026-06-15T08:00:00',
-		'2026-09-28T00:00:00',
-		'2026-12-31T23:59:59',
-		'2027-03-08T10:00:00',
-	]) {
+	for (const iso of ['2026-01-01T00:00:00Z', '2026-03-08T10:00:00Z', '2026-09-24T00:00:00Z', '2026-12-31T23:59:59Z', '2027-03-08T10:00:00Z']) {
 		const now = at(iso);
-		const week = previousWeek(now);
-		assert.equal(week.endMs - week.startMs, 7 * DAY_MS, `${iso}：窗口长度要正好 7 天`);
+		const week = previousStatWeek(now);
+		assert.equal(week.endMs - week.startMs, WEEK_MS, `${iso}：窗口长度要正好 7 天`);
 		assert.equal(week.lastDay - week.firstDay, 6, `${iso}：日序号也跨 7 天`);
-		assert.ok(week.endMs <= now, `${iso}：窗口不能越过"现在"`);
-		assert.ok(week.startMs <= week.endMs);
+		assert.ok(week.endMs <= now, `${iso}：窗口不能越过"现在"（否则拿到的是没走完的桶）`);
+		assert.equal(week.firstDay, week.startMs / DAY_MS, `${iso}：起点要落在 UTC 日边界上`);
+		assert.equal(week.lastDay, week.endMs / DAY_MS - 1);
+		assert.equal(new Date(week.endMs).getUTCDay(), 4, `${iso}：窗口终点要是周四（纪元对齐）`);
+		assert.equal(new Date(week.endMs).getUTCHours(), 0);
 		assert.equal(inWeek(week.startMs, week), true, `${iso}：起点含`);
 		assert.equal(inWeek(week.endMs, week), false, `${iso}：终点不含`);
-		assert.equal(inWeek(week.endMs - 1, week), true, `${iso}：终点前一毫秒还在窗口里`);
 		assert.equal(dayInWeek(week.firstDay, week) && dayInWeek(week.lastDay, week), true);
 		assert.equal(dayInWeek(week.firstDay - 1, week), false);
 		assert.equal(dayInWeek(week.lastDay + 1, week), false);
-		// 起点必须是东八区的周一 00:00。
-		const shifted = new Date(week.startMs + 8 * 3600_000);
-		assert.equal(shifted.getUTCDay(), 1, `${iso}：窗口起点要是周一`);
-		assert.equal(shifted.getUTCHours(), 0);
 	}
-	ok('不变量：7 天整周、不越界、边界含前不含后、起点是东八区周一');
+	ok('不变量：7 天整桶、终点周四 00:00 UTC、含前不含后');
 }
 
-// 5. 接线：三处消费方都得用这一个窗口，不能各算各的
+// 4. 东八区的读者不用管时区：本机时间怎么变都不影响窗口边界
+{
+	const week = previousStatWeek(shanghai('2026-09-29T10:12:00'));
+	assert.equal(week.startMs, at('2026-09-17T00:00:00Z'));
+	assert.equal(week.endMs, at('2026-09-24T00:00:00Z'));
+	ok('窗口按 UTC 算，与读者所在时区无关');
+}
+
+// 5. 接线：三处消费方共用这一个窗口，别各算各的
 {
 	const lib = (name: string): string => readFileSync(new URL(`../src/lib/${name}`, import.meta.url), 'utf8');
 	const draftData = lib('draftData.ts');
 	assert.match(
 		draftData,
-		/inWeek\(releasedAt, previousWeek\(now\)\)/,
-		'版本提醒要按同一个自然周判断"跨版本"，不能再用滚动 7 天',
+		/inWeek\(releasedAt, previousStatWeek\(now\)\)/,
+		'版本提醒要按同一个窗口判断"跨版本"，不能再用滚动 7 天',
 	);
 	assert.ok(
 		!/Date\.now\(\) - releasedAt <= HERO_META_WINDOW_DAYS/.test(draftData),
@@ -97,12 +94,12 @@ const day = (iso: string): number => Math.floor((at(iso) + 8 * 3600_000) / DAY_M
 	);
 
 	const stratz = lib('stratzApi.ts');
-	assert.match(stratz, /dayInWeek\(row\.day, week\)/, '被禁用数要裁进同一个自然周');
-	assert.ok(
-		!/const oldestDay = Math\.floor\(Date\.now\(\) \/ 1000 \/ SECONDS_PER_DAY\)/.test(stratz),
-		'被禁用数不该再按滚动 7 天累加',
-	);
-	ok('接线：版本提醒与被禁用数共用同一个窗口');
+	assert.match(stratz, /dayInWeek\(row\.day, week\)/, '被禁用数要裁进同一个窗口');
+	assert.match(stratz, /week: weekAnchorSeconds\(week\)/, 'stats 查询要显式要上一桶，不能靠"不传 week"');
+	assert.match(stratz, /take: \$\{BAN_TAKE_DAYS\}/, 'banDay 要说明取多少天');
+	const takeDays = Number(/const BAN_TAKE_DAYS = (\d+)/.exec(stratz)?.[1]);
+	assert.ok(takeDays >= 14, `日桶至少要覆盖 14 天（窗口最远 13 天前），现在是 ${takeDays}`);
+	ok('接线：版本提醒、被禁用数、stats 查询共用同一个窗口');
 }
 
 console.log(`metaWindow 全部断言通过（${cases} 组）`);

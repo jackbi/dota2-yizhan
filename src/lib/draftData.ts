@@ -16,7 +16,7 @@ import {
 } from './stratzApi';
 import type { HeroMatchups } from './draftMatchup';
 import { LANE_MIN_GAMES } from './draftLanes';
-import { inWeek, previousWeek } from './metaWindow';
+import { inWeek, previousStatWeek } from './metaWindow';
 
 /**
  * 阵容分析要用的一份数据。
@@ -79,7 +79,7 @@ export interface DraftData {
 	/** 号位胜率的口径说明，直接展示在页面上。 */
 	bracketLabel: string;
 	windowDays: number;
-	/** 窗口的人话说法（`上一完整自然周`）。页面上别自己拼「近 N 天」，见 `stratzApi.ts`。 */
+	/** 窗口的人话说法（`上一个完整统计周`）。页面上别自己拼「近 N 天」，见 `stratzApi.ts`。 */
 	windowLabel: string;
 	/** 这批胜率对应的游戏版本。 */
 	patch: DraftPatch;
@@ -235,13 +235,13 @@ export function loadDraftData(): Promise<DraftData> {
  * 版本列表按时间倒序，第一条就是当前版本。`date` 是官方给的发布日（UTC 当天零点），
  * 拿不到日期时不算跨版本，因为"不知道"不该说成"跨了"。
  *
- * 判据必须对着统计窗口本身（`previousWeek`），而不是"现在往前 7 天"：窗口是上一个完整自然周，
- * 最坏情况下离现在有 7~13 天，按滚动 7 天算会对窗口外的补丁误报、又对窗口里的补丁漏报。
+ * 判据必须对着统计窗口本身（`previousStatWeek`），而不是"现在往前 7 天"：窗口是上一个完整统计周，
+ * 离现在最多两周多，按滚动 7 天算会对窗口外的补丁误报、又对窗口里的补丁漏报。
  */
 function toPatch(list: readonly { version: string; date: string }[], now = Date.now()): DraftPatch {
 	const latest = list[0];
 	if (!latest) return { version: '', date: '', straddles: false };
 	const releasedAt = Date.parse(`${latest.date}T00:00:00Z`);
-	const straddles = Number.isFinite(releasedAt) && inWeek(releasedAt, previousWeek(now));
+	const straddles = Number.isFinite(releasedAt) && inWeek(releasedAt, previousStatWeek(now));
 	return { version: latest.version, date: latest.date, straddles };
 }

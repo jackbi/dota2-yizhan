@@ -47,9 +47,9 @@ function shortfall(row, value) {
 /**
  * 一行口径说明。每个工具的输出结尾都带上它，模型才知道这批数字是什么时候的。
  *
- * 窗口写成 `windowLabel`（「上一完整自然周」），不写「近 N 天」：STRATZ 不传 `week` 时给的
- * 是上一个完整自然周，最坏离现在 7~13 天，说成"近 7 天"就是错的——而这段文字是给模型读的，
- * 它会照着复述。
+ * 窗口写成 `windowLabel`（「上一个完整统计周」），不写「近 N 天」：上游按纪元对齐的 7 天桶切窗
+ * （周四 00:00 UTC 为界），不传 `week` 拿到的是当前那个没走完的桶，说成"近 7 天"或"自然周"都不对
+ * ——而这段文字是给模型读的，它会照着复述。
  */
 function caliber(data) {
 	const patch = data.patch?.version ? `版本 ${data.patch.version}` : '版本未知';

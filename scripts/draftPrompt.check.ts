@@ -49,8 +49,8 @@ const data: DraftData = {
 	updatedAt: '2026-09-17T00:00:00.000Z',
 	bracketLabel: '超凡入圣及以上',
 	windowDays: 7,
-	// 口径文案用的是这个标签（「上一完整自然周」），页面上不许写成「近 7 天」。
-	windowLabel: '上一完整自然周',
+	// 口径文案用的是这个标签（「上一个完整统计周」），页面上不许写成「近 7 天」。
+	windowLabel: '上一个完整统计周',
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	matchupMinGames: 200,
@@ -244,8 +244,8 @@ assert.deepEqual(withoutJson.thinking, { type: 'disabled' }, '去掉 JSON 模式
 /**
  * 口径文案不许写成「近 N 天」。
  *
- * STRATZ 不传 `week` 时给的是**上一个完整自然周**，最坏离现在 7~14 天，所以
- * `docs/data-sources.md` 专门加粗禁过这种写法，页面上用的是「上一完整自然周」这个标签
+ * 上游按纪元对齐的 7 天桶切窗（周四 00:00 UTC 为界），我们显式要上一整桶，所以
+ * `docs/data-sources.md` 专门加粗禁过「近 N 天」这种写法，页面上用的是「上一个完整统计周」这个标签
  * （`HERO_META_WINDOW_LABEL`，`draftData` 里叫 `windowLabel`）。这里直接对着源码查：
  * 写成「近 ${windowDays} 天」时看着完全正常，只有懂口径的人才知道它错。
  *
@@ -288,7 +288,7 @@ for (const page of ['heroes.astro', 'heroes/[id].astro']) {
 		.join('\n');
 	assert.ok(!/近 \$\{[^}]*windowDays[^}]*\} 天/.test(code), 'MCP 的口径行不能写成「近 N 天」');
 	assert.ok(!/近 \d+ 天/.test(code), 'MCP 里不该出现「近 N 天」这种写法');
-	assert.ok(!/这 7 天里/.test(code), 'MCP 的跨版本提醒不能写死「这 7 天」：窗口是上一完整自然周，不是最近 7 天');
+	assert.ok(!/这 7 天里/.test(code), 'MCP 的跨版本提醒不能写死「这 7 天」：窗口是上一个完整统计周，不是最近 7 天');
 	assert.match(code, /data\.windowLabel/, 'MCP 的口径行要用数据里带的 windowLabel');
 }
 

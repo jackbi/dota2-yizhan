@@ -38,7 +38,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 	nextName: string;
 };
 
-/** 上一完整自然周的数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
+/** 上一个完整统计周的数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
 const meta = await fetchHeroMeta();
 
 /*
@@ -97,9 +97,9 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 		}
 
 		{/*
-			下面的窗口一律写 `HERO_META_WINDOW_LABEL`（「上一完整自然周」），不写"近 N 天"：
-			STRATZ 不传 week 时给的就是上一个完整自然周，最坏离现在 7~14 天。这是
-			docs/data-sources.md 里明确禁过的一种写法，heroes.astro 用的也是这个标签。
+			下面的窗口一律写 `HERO_META_WINDOW_LABEL`（「上一个完整统计周」），不写"近 N 天"、
+			也不写"自然周"：上游按纪元对齐的 7 天桶切窗（周四 00:00 UTC 为界）。这是
+			docs/data-sources.md 里明确禁过的一类写法，heroes.astro 用的也是这个标签。
 		*/}
 		{
 			meta && stat ? (

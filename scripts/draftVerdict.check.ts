@@ -42,8 +42,8 @@ const data: DraftData = {
 	updatedAt: '2026-09-18T00:00:00.000Z',
 	bracketLabel: '超凡入圣及以上',
 	windowDays: 7,
-	// 口径文案用的是这个标签（例如「上一完整自然周」），页面上不许写成「近 7 天」。
-	windowLabel: '上一完整自然周',
+	// 口径文案用的是这个标签（例如「上一个完整统计周」），页面上不许写成「近 7 天」。
+	windowLabel: '上一个完整统计周',
 	patch: { version: '7.41f', date: '2026-09-15', straddles: false },
 	minPositionMatches: 200,
 	matchupMinGames: 200,
@@ -107,7 +107,7 @@ const base = { data, ourSide: 'radiant' as const, selfTeam: '我方队', foeTeam
 	);
 	// 统计窗口按真实口径写（`windowLabel`），不是「近 N 天」：见 docs/data-sources.md 的禁令。
 	assert.ok(
-		v.notes.some((note) => note.includes('统计窗口是上一完整自然周')),
+		v.notes.some((note) => note.includes('统计窗口是上一个完整统计周')),
 		'口径说明要写清统计窗口，且用 windowLabel 的说法',
 	);
 	assert.ok(!v.notes.some((note) => /近 \d+ 天/.test(note)), '口径说明里不许出现「近 N 天」');

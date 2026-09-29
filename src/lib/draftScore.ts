@@ -727,8 +727,8 @@ export function advise(input: AdviseInput): Advice | null {
 			const matches = entry.matches[position - 1];
 			const reasons = [
 				rate === null
-					// 口径用 `windowLabel`（「上一完整自然周」）而不是「近 N 天」：STRATZ 不传 week 时
-					// 给的是上一个完整自然周，最坏离现在 7~14 天，写成"近 7 天"是错的（见 docs/data-sources.md）。
+					// 口径用 `windowLabel`（「上一个完整统计周」）而不是「近 N 天」：STRATZ 不传 week 时
+					// 给的是上一个完整统计周，最坏离现在 7~14 天，写成"近 7 天"是错的（见 docs/data-sources.md）。
 					? `${position} 号位在${data.windowLabel}没有足够样本，只能按中性估`
 					: `${position} 号位在${data.windowLabel}的胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 				`现在拿：五号位估值 ${pct(ourBase.total / 5)} → ${pct(oursAfter.total / 5)}`,

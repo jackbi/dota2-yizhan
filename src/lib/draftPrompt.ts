@@ -144,8 +144,8 @@ function renderFoe(input: PromptInput, role: PromptRole): string {
  * 版本这一句要怎么写。
  *
  * 带上版本号，是为了让"这批胜率属于什么时候"没有歧义；更关键的是**跨版本要说明白**：
- * 统计窗口是「上一完整自然周」（见 `docs/data-sources.md`：STRATZ 不传 week 时给的就是它，
- * 最坏离现在 7~14 天）。如果新版本正好落在那个窗口里，胜率是新旧两个版本混算的，
+ * 统计窗口是「上一个完整统计周」（上游按纪元对齐的 7 天桶切，见 `metaWindow.ts` 与
+ * `docs/data-sources.md`）。如果新版本正好落在那个窗口里，胜率是新旧两个版本混算的，
  * 拿它当"当前版本强度"会看偏。宁可让建议显得保守，也不要让它把混算的数字当成结论。
  */
 function renderPatch(data: DraftData): string {

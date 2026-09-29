@@ -3,7 +3,7 @@ import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCa
 import { reportSource } from './dataHealth';
 import { LANE_MIN_GAMES, LANE_POSITIONS, buildLaneSlice, type HeroLanes, type LaneData } from './draftLanes';
 import type { HeroMatchups } from './draftMatchup';
-import { dayInWeek, previousWeek } from './metaWindow';
+import { dayInWeek, previousStatWeek, weekAnchorSeconds, type StatWeek } from './metaWindow';
 import { createPace } from './pace';
 import { resolveStratzEndpoint } from './stratzEndpoint';
 import { byStartTime } from './matchSeries.ts';
@@ -55,21 +55,23 @@ const TEAM_MATCHES_TTL_SECONDS = 3600;
 /** 英雄数据的分段：高分局最能反映版本强度。 */
 export const HERO_META_BRACKET = 'DIVINE_IMMORTAL';
 export const HERO_META_BRACKET_LABEL = '超凡入圣及以上';
-/** 英雄数据的统计窗口（天）。`banDay` 会多给几天，按天索引裁进**同一个**自然周（见 `metaWindow`）。 */
+/** 英雄数据的统计窗口长度（天）。窗口不是自然周，定义见 `metaWindow.ts`。 */
 export const HERO_META_WINDOW_DAYS = 7;
 /*
  * 窗口的「人话」说法，页面上直接用它，别再写成「近 N 天」。
  *
- * `heroStats.stats` 不传 `week` 时给的不是滚动 7 天，而是**上一个完整自然周**：实测不传与
- * `week = 现在 - 7 天` 的返回逐行完全一致（都是 695,231 场 / 50.18%），而 `week = 现在`
- * 只有 226 场（当前这周还没走完）。数据最坏情况下离现在有 7~14 天，写「近 7 天」是错的
- * ——这一条是读者拿 STRATZ 与 OpenDota 对照时问出来的。
+ * 上游按 **Unix 纪元对齐的 7 天桶**切窗（周四 00:00 UTC 为界），**不传 `week` 拿到的是当前
+ * 那个还没走完的桶**。我们显式要上一整桶（见 `metaWindow.previousStatWeek`），所以：
+ *
+ * - 页面上不能说「近 7 天」（那是滚动窗口的说法）；
+ * - 也不能说「自然周」（它不是按周一或周日切的）；
+ * - 「上一完整统计周」是准确的：一整桶、且已经走完。
  *
  * 顺带记下另外两个源为什么天然对不上，免得下次又当成 bug 查一遍：STRATZ 自己的趋势页用的是
  * `winWeek` 字段（同一段位下与 `stats` 逐英雄平均差 1.8 个百分点、最大 8 个），OpenDota 的
  * `/heroes/public` 统计的是全部公开对局（含未校准与低分段），人群本身就不一样。
  */
-export const HERO_META_WINDOW_LABEL = '上一完整自然周';
+export const HERO_META_WINDOW_LABEL = '上一个完整统计周';
 
 // ---------------------------------------------------------------- 请求
 
@@ -460,9 +462,9 @@ interface RawBanStat {
 	matchCount?: number | null;
 }
 
-const HERO_STATS_DOCUMENT = `query HeroStats($bracket: [RankBracketBasicEnum]) {
+const HERO_STATS_DOCUMENT = `query HeroStats($bracket: [RankBracketBasicEnum], $week: Long) {
 	heroStats {
-		stats(bracketBasicIds: $bracket, groupByPosition: true) {
+		stats(bracketBasicIds: $bracket, groupByPosition: true, week: $week) {
 			heroId
 			position
 			matchCount
@@ -481,10 +483,22 @@ const HERO_STATS_DOCUMENT = `query HeroStats($bracket: [RankBracketBasicEnum]) {
  * "全部英雄按天分组的禁用数"）。所以这里只当它是"全英雄每日禁用表"来用，并在
  * 解析后校验覆盖的英雄数，万一将来变成真的按 heroId 过滤，就整体放弃禁用数据，
  * 而不是把某个英雄的数字当成所有人的。
+ *
+ * 两个参数上的坑，都实测过：
+ *
+ * - **`day` 是死的**：传 `now`、`now - 10 天`、`now - 14 天`，返回的 10 个日桶一模一样
+ *   （20716~20725）。所以没法"只要某一段"，只能用 `take` 决定要多少天。
+ * - **默认只给 10 天**，而我们的窗口最坏要往前 13 天（上一桶的起点）→ 周四~周日构建时
+ *   窗口头部会没有数据行、禁用数静默少算。`take: 20` 实测能拿满 20 天，留足余量。
+ *
+ * 日桶是 **UTC 日**（`day` 就是"1970-01-01 起的天数"，凌晨那桶明显不满）。
  */
+/** 日桶最多要几天。窗口最远 13 天前，20 天留余量（实测 `take: 20` 返回 20 天）。 */
+const BAN_TAKE_DAYS = 20;
+
 const HERO_BANS_DOCUMENT = `query HeroBans($bracket: [RankBracketBasicEnum], $day: Int!) {
 	heroStats {
-		banDay(heroId: 1, day: $day, bracketBasicIds: $bracket, groupByDay: true) {
+		banDay(heroId: 1, day: $day, bracketBasicIds: $bracket, groupByDay: true, take: ${BAN_TAKE_DAYS}) {
 			heroId
 			day
 			matchCount
@@ -496,7 +510,7 @@ const BAN_COVERAGE_MIN_HEROES = 50;
 
 const POSITION_RE = /^POSITION_([1-5])$/;
 
-function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[]): HeroMeta | null {
+function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[], week: StatWeek): HeroMeta | null {
 	const heroes = new Map<number, HeroMetaEntry>();
 	for (const row of statRows) {
 		if (typeof row.heroId !== 'number') continue;
@@ -525,12 +539,12 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[]): Hero
 	const banHeroes = new Set(banRows.map((row) => row.heroId).filter((id): id is number => typeof id === 'number'));
 	if (banHeroes.size >= BAN_COVERAGE_MIN_HEROES) {
 		/*
-		 * 裁进与出场 / 胜率**同一个**窗口（上一个完整自然周）。
+		 * 裁进与出场 / 胜率**同一个**窗口。
 		 *
-		 * 原先这里是"今天往前 7 天"的滚动窗口，而卡片标签写的是「上一完整自然周」：同一张卡片上
-		 * 两个数字差着一天到一周，读者拿它当同一批数据看。口径统一比多算一天更要紧。
+		 * 这里曾经踩过两次：先是"今天往前 7 天"的滚动窗口（与标签那个窗口差着几天），改成自然周之后
+		 * 又遇上"上游只给 10 天、窗口最远要 13 天"——周四到周日构建时窗口头部没有数据行，禁用数会
+		 * **静默少算**。现在两头都对齐：窗口来自 `metaWindow`，天数由 `take: 20` 保证够用。
 		 */
-		const week = previousWeek(Date.now());
 		for (const row of banRows) {
 			if (typeof row.heroId !== 'number' || typeof row.day !== 'number' || !dayInWeek(row.day, week)) continue;
 			const entry = heroes.get(row.heroId);
@@ -551,15 +565,24 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[]): Hero
 let heroMetaPromise: Promise<HeroMeta | null> | null = null;
 
 /**
- * 上一完整自然周的英雄出场/胜率/禁用（窗口定义与三个消费方见 `metaWindow.ts`）。构建期多个页面共用一次请求。
+ * 上一个完整统计周的英雄出场/胜率/禁用（窗口定义与三个消费方见 `metaWindow.ts`）。构建期多个页面共用一次请求。
  * 拿不到就返回 null，页面整块不展示。
  */
 export function fetchHeroMeta(): Promise<HeroMeta | null> {
 	heroMetaPromise ??= (async () => {
 		const before = networkFetches;
-		const statRows = await cached<RawPositionStat[]>('hero-stats', HERO_META_TTL_SECONDS, async () => {
+		/*
+		 * 窗口先算一次，三处共用（stats 的 `week`、banDay 的裁剪、缓存键）。
+		 *
+		 * 缓存键带上窗口起点：跨过桶边界时旧键里的数据属于上一个桶，不该拿来当这一轮的窗口
+		 * （TTL 只有 6 小时，但边界前后差几小时就会串）。旧键交给 `cachePrune`（180 天）清。
+		 */
+		const week = previousStatWeek(Date.now());
+		const windowKey = String(week.startMs);
+		const statRows = await cached<RawPositionStat[]>(`hero-stats:${windowKey}`, HERO_META_TTL_SECONDS, async () => {
 			const data = await query<{ heroStats: { stats: RawPositionStat[] | null } }>(HERO_STATS_DOCUMENT, {
 				bracket: [HERO_META_BRACKET],
+				week: weekAnchorSeconds(week),
 			});
 			const rows = data?.heroStats?.stats;
 			return rows && rows.length > 0 ? rows : null;
@@ -579,16 +602,18 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 		}
 
 		const banRows =
-			(await cached<RawBanStat[]>('hero-bans', HERO_META_TTL_SECONDS, async () => {
+			(await cached<RawBanStat[]>(`hero-bans:${windowKey}`, HERO_META_TTL_SECONDS, async () => {
 				const data = await query<{ heroStats: { banDay: RawBanStat[] | null } }>(HERO_BANS_DOCUMENT, {
 					bracket: [HERO_META_BRACKET],
+					// `day` 实测不生效（传什么返回的日桶都一样），只起"给个整数"的作用；
+					// 真正的窗口裁剪在 `buildHeroMeta` 里按 UTC 日序号做。
 					day: Math.floor(Date.now() / 1000),
 				});
 				const rows = data?.heroStats?.banDay;
 				return rows && rows.length > 0 ? rows : null;
 			})) ?? [];
 
-		const meta = buildHeroMeta(statRows, banRows);
+		const meta = buildHeroMeta(statRows, banRows, week);
 		if (meta) {
 			await reportSource(
 				'stratz-hero',

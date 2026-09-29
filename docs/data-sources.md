@@ -422,12 +422,17 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 
 ## 英雄胜率的口径
 
-英雄页与 BP 页的上一完整自然周数据来自 STRATZ 的 `heroStats.stats(bracketBasicIds: [DIVINE_IMMORTAL])`
-（见 `src/lib/stratzApi.ts`），口径是**超凡入圣及以上**。
+英雄页与 BP 页的数据来自 STRATZ 的 `heroStats.stats(bracketBasicIds: [DIVINE_IMMORTAL])`
+（见 `src/lib/stratzApi.ts`），口径是**超凡入圣及以上**、窗口是**上一个完整的统计周**
+（`metaWindow.ts` 里算，页面上用 `HERO_META_WINDOW_LABEL`）。
 
-**别把它写成「近 7 天」**：不传 `week` 时 STRATZ 给的是**上一个完整自然周**——实测不传与
-`week = 现在 - 7 天` 的返回逐行完全一致（都是 695,231 场 / 50.18%），而 `week = 现在` 只有 226 场
-（当周还没走完）。数据最坏情况下离现在有 7~14 天，所以页面上用的是 `HERO_META_WINDOW_LABEL`。
+**这个窗口既不是「近 7 天」也不是自然周**，而是上游按 **Unix 纪元对齐的 7 天桶**（1970-01-01 是
+周四，所以边界在周四 00:00 UTC）。2026-09-29 实测：跨过 `2026-09-24T00:00Z` 总场次从 1,763,328
+跳到 1,073,094，按 2 小时步进能把边界夹在 22:13Z 与 00:13Z 之间；同一桶内换任意 `week` 结果一致。
+
+**不传 `week` 拿到的是当前那个还没走完的桶**（那天构建时它只有 5/7 天、1,040,817 场）——仓库里
+曾经写着"不传 = 上一个完整自然周"，那是错的。所以现在显式传一个落在上一桶里的时刻
+（`weekAnchorSeconds`），要一整桶。
 
 和另外两个源对不上属于口径差异，不是算错：STRATZ 自家趋势页走的是 `winWeek` 字段（同一段位下与
 `stats` 逐英雄平均差 1.81 个百分点、最大 8 个），OpenDota 的 `/heroes/public`（实际接口
