@@ -1,6 +1,7 @@
 ---
 import type { EsportsEvent } from '../data/types';
 import { formatMatchTime, formatRange } from '../lib/format';
+import { LEAGUE_TIER_META, SHOWMATCH_META } from '../lib/leagueTier';
 import { EVENT_STATUS_META } from '../lib/statusMeta';
 
 interface Props {
@@ -44,6 +45,18 @@ const hasScore =
 	<h3 class="pr-20 font-display text-xl leading-snug transition group-hover:text-dota-light">{event.name}</h3>
 
 	<div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted">
+		{/*
+			档位放在最前面。它是这一页最"硬"的层级信息：读者扫一眼就知道这届是一线赛事
+			还是小比赛，不用先认识赛事名。表演赛单独标一笔——那种比赛的参赛队是主播队。
+		*/}
+		{event.tier ? (
+			<span class:list={['rounded px-1.5 py-0.5 text-xs font-semibold', LEAGUE_TIER_META[event.tier].cls]}>
+				{LEAGUE_TIER_META[event.tier].label}
+			</span>
+		) : null}
+		{event.showmatch ? (
+			<span class:list={['rounded px-1.5 py-0.5 text-xs font-semibold', SHOWMATCH_META.cls]}>{SHOWMATCH_META.label}</span>
+		) : null}
 		<span class="text-cream">{formatRange(event.startTime, event.endTime)}</span>
 		<span class="text-faint">{event.matches.length} 场比赛</span>
 		{event.teams.length > 0 ? <span class="text-faint">{event.teams.length} 支队伍</span> : null}

@@ -34,6 +34,26 @@ const FILTERS = [
 	{ id: 'upcoming', label: '即将开始', count: countOf('upcoming') },
 	{ id: 'completed', label: '已结束', count: countOf('completed') },
 ] as const;
+
+/**
+ * 档位筛选的三个桶。
+ *
+ * 没有档位的（Liquipedia 没标、或者那一页没抓到）和 T3/T4 一起归到「其他」——
+ * 对读者来说这两个的取舍是一样的：都不是一线赛事。把"没档位"单独列一个桶会让人以为
+ * 那是第四种赛事，其实只是我们没查到。
+ */
+function tierBucket(tier: EsportsEvent['tier']): string {
+	return tier === 1 ? 't1' : tier === 2 ? 't2' : 'other';
+}
+
+const countTier = (bucket: string) => events.filter((event) => tierBucket(event.tier) === bucket).length;
+
+const TIER_FILTERS = [
+	{ id: 'all', label: '全部档位', count: events.length },
+	{ id: 't1', label: 'T1', count: countTier('t1') },
+	{ id: 't2', label: 'T2', count: countTier('t2') },
+	{ id: 'other', label: '其他', count: countTier('other'), hint: 'T3 / T4、表演赛，以及 Liquipedia 没有定级的' },
+] as const;
 ---
 
 <Layout
@@ -111,12 +131,33 @@ const FILTERS = [
 			}
 		</div>
 
+		{/*
+			档位筛选与状态筛选是「与」的关系。两排各自显示自己那一维的数量——组合之后可能是 0，
+			下面的空提示会接住；要算组合数就得在构建期把两个维度的叉乘都渲染一遍，不值当。
+		*/}
+		<div id="tourney-tier-tabs" class="mb-8 flex flex-wrap gap-2" role="group" aria-label="按档位筛选">
+			{
+				TIER_FILTERS.map((f) => (
+					<button
+						type="button"
+						data-tier={f.id}
+						title={'hint' in f ? f.hint : undefined}
+						class="rounded-lg border border-line px-4 py-2 text-sm font-medium transition aria-pressed:border-dota aria-pressed:bg-dota/15 aria-pressed:text-dota-light"
+						aria-pressed={f.id === 'all' ? 'true' : 'false'}
+					>
+						{f.label}
+						<span class="ml-1 text-xs text-faint">{f.count}</span>
+					</button>
+				))
+			}
+		</div>
+
 		{
 			events.length > 0 ? (
 				<>
 					<div id="tourney-list" class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
 						{events.map((event) => (
-							<div data-status={event.status} class="tourney-card">
+							<div data-status={event.status} data-tier={tierBucket(event.tier)} class="tourney-card">
 								<TournamentCard event={event} now={now} />
 							</div>
 						))}
@@ -138,25 +179,45 @@ const FILTERS = [
 <script>
 	(() => {
 		const tabs = document.getElementById('tourney-tabs');
+		const tierTabs = document.getElementById('tourney-tier-tabs');
 		const list = document.getElementById('tourney-list');
 		const empty = document.getElementById('tourney-empty');
 		if (!tabs || !list) return;
 
 		const cards = Array.from(list.querySelectorAll<HTMLElement>('.tourney-card'));
+		let status = 'all';
+		let tier = 'all';
+
+		/** 两排筛选是「与」的关系，所以统一在这里算一次，谁变了都走这里。 */
+		const apply = (): void => {
+			let visible = 0;
+			cards.forEach((card) => {
+				const show = (status === 'all' || card.dataset.status === status) && (tier === 'all' || card.dataset.tier === tier);
+				card.hidden = !show;
+				if (show) visible++;
+			});
+			if (empty) empty.hidden = visible > 0;
+		};
+
+		/** 高亮样式由 aria-pressed: 变体驱动，脚本只维护语义状态。 */
+		const pick = (group: HTMLElement, button: HTMLButtonElement): void => {
+			group.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+			button.setAttribute('aria-pressed', 'true');
+		};
+
 		tabs.querySelectorAll<HTMLButtonElement>('button').forEach((btn) => {
 			btn.addEventListener('click', () => {
-				const status = btn.dataset.status!;
-				// 高亮样式由 aria-pressed: 变体驱动，脚本只维护语义状态。
-				tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', 'false'));
-				btn.setAttribute('aria-pressed', 'true');
+				status = btn.dataset.status!;
+				pick(tabs, btn);
+				apply();
+			});
+		});
 
-				let visible = 0;
-				cards.forEach((card) => {
-					const show = status === 'all' || card.dataset.status === status;
-					card.hidden = !show;
-					if (show) visible++;
-				});
-				if (empty) empty.hidden = visible > 0;
+		tierTabs?.querySelectorAll<HTMLButtonElement>('button[data-tier]').forEach((btn) => {
+			btn.addEventListener('click', () => {
+				tier = btn.dataset.tier ?? 'all';
+				pick(tierTabs, btn);
+				apply();
 			});
 		});
 	})();
