@@ -10,7 +10,7 @@
  * Node 下跑，三边都要能 import。
  */
 
-import type { ChatMessage, RoomState } from './partyLogic';
+import { isValidCode, type ChatMessage, type RoomState } from './partyLogic.ts';
 
 /** 大厅里一张房间卡片的数据。 */
 export type LobbyRoom = {
@@ -238,23 +238,28 @@ export function decodeLobbyMessage(raw: string): LobbyMessage | null {
 /** 房间的 HTTP 路径前缀。大厅是 `/api/party/rooms`，不在这个前缀下。 */
 export const ROOM_PATH_PREFIX = '/api/party/room/';
 
-/** 房间码的形状：4–8 位大写字母数字。 */
-const ROOM_CODE_RE = /^[A-Z0-9]{4,8}$/;
-
 /**
  * 从 `/api/party/room/<房间码>` 里取出房间码；路径不在前缀下、或房间码形状不对时返回 null。
  *
  * 单独抽出来是因为它有一个**会抛异常的入口**：`decodeURIComponent` 遇到坏的百分号编码
  * （`/api/party/room/%`，手打或爬虫扫出来的）会抛 URIError。放在 Worker 的路由里那段
  * try/catch 没法自检，而它错了的表现是整个请求 500——本来只是"房间码不对"。
+ *
+ * **判据必须与房间 DO 完全一致**（`partyLogic.isValidCode`：恰好 5 位、只含字母表里的字符）。
+ * 这里原先自己写了个宽松的 4–8 位正则、再把原串当 DO 名去取，而 DO 收到后会 `normalizeCode`
+ * 截成 5 位——于是 `/ABCDE0` 与 `/ABCDE` 是两个不同的 DO，却都自称房间 ABCDE：前者无需鉴权
+ * 就能覆盖后者在大厅的卡片，过期时还会把它删掉。宽松判据在这里没有任何好处。
  */
 export function parseRoomPath(pathname: string): string | null {
 	if (!pathname.startsWith(ROOM_PATH_PREFIX)) return null;
-	let code: string;
+	let raw: string;
 	try {
-		code = decodeURIComponent(pathname.slice(ROOM_PATH_PREFIX.length)).toUpperCase();
+		raw = decodeURIComponent(pathname.slice(ROOM_PATH_PREFIX.length));
 	} catch {
 		return null;
 	}
-	return ROOM_CODE_RE.test(code) ? code : null;
+	// 只做「大小写 + 首尾空白」这种无损纠正：手抄会丢掉大小写、复制会带上空格。
+	// 其余一律拒绝——过滤掉非法字符会造出别名（`ABC-DE` 悄悄变成 `ABCDE`），那正是上面那个坑。
+	const code = raw.trim().toUpperCase();
+	return isValidCode(code) ? code : null;
 }

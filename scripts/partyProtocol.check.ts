@@ -145,10 +145,32 @@ ok('chat：空/非字符串被拒，超长裁剪');
 
 // 房间码从路径里取：这一层原先 inline 在 Worker 的路由里，坏百分号编码会让整个请求 500
 {
-	assert.equal(parseRoomPath('/api/party/room/abc12'), 'ABC12', '小写要抬成大写（房间码在 URL 里人手打过）');
-	assert.equal(parseRoomPath('/api/party/room/ABCD1234'), 'ABCD1234');
+	assert.equal(parseRoomPath('/api/party/room/abcde'), 'ABCDE', '小写要抬成大写（房间码在 URL 里人手打过）');
+	assert.equal(parseRoomPath('/api/party/room/%20ABCDE%20'), 'ABCDE', '复制来的地址带空格，也算无损纠正');
 	assert.equal(parseRoomPath('/api/party/room/%41%42%43%44%45'), 'ABCDE', '百分号编码是合法路径，要还原');
 	ok('房间码：正常路径取得到，大小写与百分号编码都归一');
+}
+
+{
+	// 判据必须与房间 DO 完全一致（`partyLogic.isValidCode`：恰好 5 位、只含字母表内的字符）。
+	// 宽松判据会造出别名：`/ABCDE0` 与 `/ABCDE` 是两个 DO，却都自称房间 ABCDE，
+	// 于是前者无需鉴权就能顶掉后者在大厅的卡片。
+	for (const path of [
+		'/api/party/room/ABCDE0',
+		'/api/party/room/ABCDEF',
+		'/api/party/room/ABCD1234',
+		'/api/party/room/ABC',
+		'/api/party/room/ABCD',
+		'/api/party/room/ABCDEFGHI',
+		'/api/party/room/ABCD1',
+		'/api/party/room/0BCDE',
+		'/api/party/room/ILOVE',
+		'/api/party/room/AB DE',
+		'/api/party/room/AB-DE',
+	]) {
+		assert.equal(parseRoomPath(path), null, `${path} 不是规范房间码，必须拒掉（否则会与另一个 DO 撞名）`);
+	}
+	ok('房间码：多一位 / 少一位 / 字母表外的字符一律拒绝');
 }
 
 {
@@ -159,15 +181,12 @@ ok('chat：空/非字符串被拒，超长裁剪');
 		'/api/party/room/%zz',
 		'/api/party/room/%E4%B8%AD%E6%96%87',
 		'/api/party/room/',
-		'/api/party/room/ABC',
-		'/api/party/room/ABCDEFGHI',
-		'/api/party/room/AB-CD',
 		'/api/party/rooms',
 		'/api/party/roomx/ABCDE',
 	]) {
 		assert.equal(parseRoomPath(path), null, `${path} 应当按"房间码不对"处理`);
 	}
-	ok('房间码：坏编码 / 长度不对 / 不在前缀下都返回 null，不抛');
+	ok('房间码：坏编码 / 前缀不对都返回 null，不抛');
 }
 
 console.log(`partyProtocol 全部断言通过（${cases} 组）`);
