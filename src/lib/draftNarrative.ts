@@ -31,12 +31,16 @@ export interface OpponentMoveInput {
 	foePicks: number | null;
 	windowDays: number;
 	/**
-	 * 落完这一手之后，出招方还剩几禁几选；拿不到就传 null。
+	 * 出招方**这一手还没落之前**还剩几禁几选（含当前这一手）；拿不到就传 null。
 	 *
 	 * 替对面出招的日志行原先只有"为什么是它"，读者不知道这是第几轮、后面还有几手——
-	 * 而这几个数字就在 BP 顺序表里（`draftOrder.snapshot().remaining`），白拿的信息。
+	 * 而这几个数字就在 BP 顺序表里（`draftOrder.snapshot().remaining`，它按"已记录的手数"
+	 * 扣减，所以落子前读到的数**含**当前这一手），白拿的信息。
+	 *
+	 * 句子写的是"落完这手还剩"，所以扣减在这里做：调用方直接传快照里的原值就行，
+	 * 免得每个调用点各减一次、减错一次（上一版就是忘了减，数字恒多 1）。
 	 */
-	remaining?: { bans: number; picks: number } | null;
+	remainingBefore?: { bans: number; picks: number } | null;
 }
 
 /**
@@ -55,7 +59,12 @@ export function opponentMoveReason(input: OpponentMoveInput): string {
 		: '该号位样本不足，只能按中性估';
 	const head = input.action === 'ban' ? `它是 ${input.position} 号位上的一个高点（${rateText}）` : `打 ${input.position} 号位（${rateText}）`;
 	const parts = [head];
-	if (input.remaining) parts.push(`落完这手还剩 ${input.remaining.bans} 禁 ${input.remaining.picks} 选`);
+	if (input.remainingBefore) {
+		// 这一手落下之后：当前 action 的那一项减 1（快照给的是含当前手的数）。
+		const bans = input.remainingBefore.bans - (input.action === 'ban' ? 1 : 0);
+		const picks = input.remainingBefore.picks - (input.action === 'pick' ? 1 : 0);
+		parts.push(`落完这手还剩 ${Math.max(0, bans)} 禁 ${Math.max(0, picks)} 选`);
+	}
 	if (input.foePicks !== null) parts.push(`它近 ${input.windowDays} 天拿过 ${input.foePicks} 场`);
 	return parts.join('，');
 }

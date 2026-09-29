@@ -89,9 +89,18 @@ assert.ok(familiar.includes('近 30 天拿过 4 场'), '有熟手数据时要带
 const pickReason = opponentMoveReason({ action: 'pick', position: 2, rate: 0.5, hasSample: true, foePicks: null, windowDays: 30 });
 assert.match(pickReason, /^打 2 号位/, '挑选是出招方自己的号位，可以直接说"打几号位"');
 
-// 还剩几禁几选：数字在 BP 顺序表里白拿着，日志行原先一个字都不说，读者不知道这是第几轮。
-const withLeft = opponentMoveReason({ action: 'ban', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30, remaining: { bans: 3, picks: 5 } });
-assert.ok(withLeft.includes('落完这手还剩 3 禁 5 选'), `要说出后面还有几手：${withLeft}`);
+/*
+ * 还剩几禁几选：数字在 BP 顺序表里白拿着，日志行原先一个字都不说。
+ *
+ * 入参是**落子前**的快照（含当前这一手），句子说的是"落完这手还剩"——所以这一手对应的那项
+ * 要减 1。上一版忘了减：第 24 手（全局最后一选）会印出"还剩 0 禁 1 选"，而 BP 已经结束。
+ */
+const banLeft = opponentMoveReason({ action: 'ban', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30, remainingBefore: { bans: 3, picks: 5 } });
+assert.ok(banLeft.includes('落完这手还剩 2 禁 5 选'), `禁用这一手之后禁数要减 1：${banLeft}`);
+const pickLeft = opponentMoveReason({ action: 'pick', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30, remainingBefore: { bans: 0, picks: 1 } });
+assert.ok(pickLeft.includes('落完这手还剩 0 禁 0 选'), `最后一手落完不该还剩 1 选：${pickLeft}`);
+const floorAtZero = opponentMoveReason({ action: 'pick', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30, remainingBefore: { bans: 0, picks: 0 } });
+assert.ok(floorAtZero.includes('还剩 0 禁 0 选'), '数字不该变成负数');
 const withoutLeft = opponentMoveReason({ action: 'ban', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30 });
 assert.ok(!withoutLeft.includes('还剩'), '没有这个信息就别提，别留半截句子');
 

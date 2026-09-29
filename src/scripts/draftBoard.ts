@@ -1137,7 +1137,8 @@ if (data) {
 		 */
 		function localMoveReason(candidate: AdviceCandidate, action: 'ban' | 'pick'): string {
 			const familiar = foeHeroOf(foeForm, candidate.heroId);
-			// 落子前那一手的 owner 就是对面，`remaining` 里的数字是它这一手还没用掉的部分。
+			// 落子前那一手的 owner 就是对面。快照里的数字**含当前这一手**，
+			// "落完这手还剩" 的扣减在 opponentMoveReason 里做（那一步能自检）。
 			const state = snapshotNow();
 			return opponentMoveReason({
 				action,
@@ -1148,7 +1149,7 @@ if (data) {
 				// 熟悉度那一栏却没有他」这种对不上的情况。
 				foePicks: familiar && familiar.picks >= MIN_PICKS ? familiar.picks : null,
 				windowDays: foeForm?.windowDays ?? 0,
-				remaining: state.owner ? state.remaining[state.owner] : null,
+				remainingBefore: state.owner ? state.remaining[state.owner] : null,
 			});
 		}
 
