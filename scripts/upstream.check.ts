@@ -16,9 +16,11 @@ import { readFileSync, readdirSync } from 'node:fs';
  *    构建留下的半张 JPG 会被当成已有缓存，还会被拷进 `dist/`，变成一张永远修不好的破图。
  * 3. **取数助手要把正文读完再清超时。** 拿到 `Response` 只代表响应头到了，正文还得下载；
  *    在 `finally` 里立刻 `clearTimeout` 等于超时只护住了响应头，正文可以无限期挂着。
- * 4. **0 不是时间戳。** OpenDota 的进行中比赛会给 `activate_time: 0`，而 `??` 只挡 null/undefined；
- *    `new Date(0)` 是合法的 1970-01-01，卡片上就会多出一个看着像真日期的假信息。取数侧要兜底，
- *    展示侧也要有守卫（同一个值在 `draft.astro` 里早就有守卫）。
+ * 4. **假时间：0 不是时间戳，时刻也不能各用各的时区。** OpenDota 的进行中比赛会给
+ *    `activate_time: 0`，而 `??` 只挡 null/undefined；`new Date(0)` 是合法的 1970-01-01，
+ *    卡片上就会多出一个看着像真日期的假信息。取数侧要兜底，展示侧也要有守卫
+ *    （同一个值在 `draft.astro` 里早就有守卫）。时区差 8 小时是同一族：印出来的时间照样
+ *    看着像真的，只是不对。
  * 5. **退回旧缓存要有年龄上限。** 直播状态的缓存文件是上一次构建留下的，可能已经好几天；
  *    见到文件就用，页面上就是一个绿点写着「直播中」。开播状态按分钟变，这条要么给上限、
  *    要么就得说清这份快照是什么时候的。
@@ -189,7 +191,7 @@ const reddit = lib('redditApi.ts');
 assert.ok(reddit.includes('return await response.text()'), 'redditApi 的取数助手要在超时窗口内读完正文，不能把 Response 交给调用方');
 assert.ok(!/Promise<Response \| null>/.test(reddit), '取数助手不该返回 Response：正文下载会跑到超时之外');
 
-// ---------------------------------------------------------------- 4. 0 不是时间戳
+// ---------------------------------------------------------------- 4. 假时间：0 不是时间戳，时刻也不能各用各的时区
 
 const tournaments = lib('tournamentsApi.ts');
 assert.ok(
@@ -221,6 +223,22 @@ assert.match(
 	reddit,
 	/date: post\.createdAt > 0 \? new Date\(post\.createdAt \* 1000\)\.toISOString\(\)\.slice\(0, 10\) : '时间待定'/,
 	'Reddit 卡片要守卫 createdAt=0：否则列表上会印出 1970-01-01',
+);
+
+/*
+ * 同一族还有一条**不是 0、而是差 8 小时**的兄弟路径：`steamPlayers` 退回历史最后一个点时，
+ * 原先自己拿 `toISOString()` 印时刻——那是 UTC，比全站（`format.ts` 里的 `Asia/Shanghai`）早八小时。
+ * 这条只进构建日志，页面上看不出来，所以更没人会注意到；但看日志的人会据此判断"这数据怎么是
+ * 六个小时前的"。时刻的口径只有一处，就该走那一处。
+ */
+const players = lib('steamPlayers.ts');
+assert.ok(
+	players.includes('formatDay(') && players.includes('formatClock('),
+	'steamPlayers 的时刻要走 format.ts 的东八区口径',
+);
+assert.ok(
+	!/toISOString\(\)\.slice\(0, 16\)/.test(players),
+	'steamPlayers 不能拿 toISOString 当本地时刻：那比页面上的钟点早 8 小时',
 );
 
 // ---------------------------------------------------------------- 5. 退回旧缓存要有年龄上限

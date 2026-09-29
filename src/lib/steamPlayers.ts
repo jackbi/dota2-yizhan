@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { cacheFile as cachePath, readRawJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
+import { formatClock, formatDay } from './format';
 
 /**
  * Dota 2 的在线人数，以及我们自己记下来的趋势。
@@ -189,6 +190,14 @@ async function load(): Promise<PlayerSnapshot | null> {
 			}
 		: null;
 
+	/**
+	 * 退回历史最后一个点时，把它的时刻按**东八区**写出来。
+	 *
+	 * 这里原先用 `toISOString()`，比页面上的口径早 8 小时：同一份数据在构建日志和页面上是两个钟点，
+	 * 对日志的人来说就是"这数据怎么是六个小时前的"。
+	 */
+	const shownAt = shown && shown.at > 0 ? `${formatDay(shown.at)} ${formatClock(shown.at)}` : '-';
+
 	await reportSource(
 		'steam-players',
 		'Dota 2 在线人数',
@@ -197,7 +206,7 @@ async function load(): Promise<PlayerSnapshot | null> {
 			? '官方接口与本地历史都没有数据'
 			: players !== null
 				? `当前 ${players.toLocaleString('en-US')}${top ? `，24 小时峰值 ${top.peak.toLocaleString('en-US')}，全站第 ${top.rank}` : ''}，历史 ${points.length} 个点`
-				: `官方接口没通，退回历史最后一个点（${shown ? new Date(shown.at * 1000).toISOString().slice(0, 16).replace('T', ' ') : '-'}）`,
+				: `官方接口没通，退回历史最后一个点（${shownAt}）`,
 	);
 	return snapshot;
 }
