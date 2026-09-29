@@ -108,6 +108,14 @@ assert.ok(
 	'比赛卡片要守卫 startTime=0：否则 datetime 会印出 1970-01-01',
 );
 assert.ok(matchRow.includes('时间待定'), '时间不可用时要有替代文案');
+// 光在展示层堵一处不够：同一个 0 会流到记分板、赛程卡、比赛列表。守卫放在格式化函数里，
+// 谁调都拦得住。
+const format = lib('format.ts');
+assert.match(
+	format,
+	/export function formatMatchTime\(unix: number, nowSec: number\): string \{\s*if \(!Number\.isFinite\(unix\) \|\| unix <= 0\) return '时间待定';/,
+	'formatMatchTime 要自己守卫 0/NaN：不然每个漏写的调用点都会印出 1970-01-01',
+);
 
 // ---------------------------------------------------------------- 5. 退回旧缓存要有年龄上限
 

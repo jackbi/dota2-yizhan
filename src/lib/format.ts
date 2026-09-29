@@ -90,8 +90,16 @@ export function formatRelativeDay(unix: number, nowSec: number): string {
 	return formatMonthDay(unix);
 }
 
-/** 今天 20:30 / 昨天 20:30 / 09.12 20:30。`unix` 与 `nowSec` 均为 Unix 秒。 */
+/**
+ * 今天 20:30 / 昨天 20:30 / 09.12 20:30。`unix` 与 `nowSec` 均为 Unix 秒。
+ *
+ * `unix` 不是正数时返回「时间待定」：OpenDota 的进行中比赛会给 `activate_time: 0`，
+ * 而 `new Date(0)` 是合法的 1970-01-01——不拦的话卡片上就多出一个看着像真日期的假信息。
+ * 守卫放在这里、而不是每个调用点：同一批数据会流到记分板、赛程卡、比赛列表好几处，
+ * 漏一处就是一处假日期（上游那次只在 `MatchRow` 上堵住了，别处照样印）。
+ */
 export function formatMatchTime(unix: number, nowSec: number): string {
+	if (!Number.isFinite(unix) || unix <= 0) return '时间待定';
 	return `${formatRelativeDay(unix, nowSec)} ${formatClock(unix)}`;
 }
 
