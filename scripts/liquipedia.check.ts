@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parseBracketMatches, parseLeagueTier, parseMatches } from '../src/lib/liquipediaParse.ts';
+import { parseBracketMatches, parseLeagueTier, parseMatches, parseTeamRoster } from '../src/lib/liquipediaParse.ts';
 
 /**
  * Liquipedia 赛程解析的自检。
@@ -86,4 +86,85 @@ assert.equal(parseLeagueTier(TIER_ABSENT), undefined, '没有那一行就是没�
 // `title="Tier 1 Tournaments"` 是属性，去掉标签之后不该被当成档位文字。
 assert.equal(parseLeagueTier('<div>Liquipedia Tier:</div><div><a title="Tier 1 Tournaments">Misc</a></div>'), undefined);
 
-console.log('liquipedia.check 通过：赛程解析与档位解析');
+/*
+ * 战队名单。夹具照抄 Team Spirit 与 Team Liquid 两页的实测结构，
+ * 三段各自对应一个必须成立的规则：离队整块不要、教练组单独归、替补在注释外时才认。
+ */
+const TEAM_PAGE = `
+==Players of Team Spirit==
+===Active Roster===
+{{Squad|status=active
+|{{Person|flag=ua|id=Yatoro|name=Illya Mulyarchuk|position=1|joindate=2020-12-19<ref name="ts 20201219"/>}}
+|{{Person|flag=ru|id=Larl|name=Denis Sigitov|position=2|joindate=2022-12-08}}
+|{{Person|flag=ru|id=not me|name=Alexey Kosmynin|position=5|captain=yes|joindate=2026-05-12}}
+}}
+===Coaching Staff===
+{{Squad|type=staff|status=active
+|{{Person|flag=ba|id=MiLAN|name=Milan Kozomara|role=Coach|joindate=2026-06-20}}
+}}
+{{box|end}}<!--
+{{stand-ins table|
+}}-->
+===Inactive Roster===
+{{Squad|status=inactive
+|{{Person|flag=ru|id=Collapse|name=Magomed Khalilov|position=3|joindate=2020-12-19|inactivedate=2026-09-21}}
+}}
+`;
+
+const spirit = parseTeamRoster(TEAM_PAGE);
+assert.deepEqual(
+	spirit.players.map((p) => [p.nick, p.position]),
+	[
+		['Yatoro', 1],
+		['Larl', 2],
+		['not me', 5],
+	],
+	'现役按号位排；昵称里的空格要保留',
+);
+assert.equal(spirit.players[0]?.joined, '2020-12-19', '`<ref>` 要从加入日期里去掉');
+assert.equal(spirit.players[2]?.captain, true, 'captain=yes 要读出来');
+assert.equal(spirit.players[0]?.realName, 'Illya Mulyarchuk');
+assert.deepEqual(
+	spirit.staff.map((s) => [s.nick, s.role]),
+	[['MiLAN', 'Coach']],
+	'`type=staff` 归教练组，不要混进选手',
+);
+assert.equal(
+	spirit.players.some((p) => p.nick === 'Collapse'),
+	false,
+	'`status=inactive` 是离队名单，一个人都不该进来',
+);
+assert.deepEqual(spirit.standins, [], '被注释掉的替补表不算数');
+
+/** Team Liquid 那种：替补表是活的，而且 `tournament=` 里嵌了模板、后面还跟着内链。 */
+const LIQUID_PAGE = `
+===Active Roster===
+{{Squad|status=active
+|{{Person|flag=se|id=miCKe|name=Michael Vu|position=1|joindate=2019-10-02}}
+|{{Person|flag=se|id=Boxi|name=Samuel Svahn|position=4|joindate=2019-10-02}}
+}}
+{{stand-ins table|
+{{stand-in|flag=my|id=MidOne|name=Yeik Nai Zheng|tournament={{LeagueIconSmall/blast slam|link=BLAST/SLAM/8|name=BLAST SLAM VIII}} [[BLAST/SLAM/8|BLAST SLAM VIII]]}}
+}}
+<!--
+===Inactive Roster===
+{{Squad|status=inactive
+|{{Person|flag=se|id=Insania|name=Aydin Sarkohi|position=5|inactivedate=2026-09-20}}
+}}
+-->
+`;
+
+const liquid = parseTeamRoster(LIQUID_PAGE);
+assert.deepEqual(liquid.players.map((p) => p.nick), ['miCKe', 'Boxi']);
+assert.deepEqual(
+	liquid.standins.map((s) => [s.nick, s.realName]),
+	[['MidOne', 'Yeik Nai Zheng']],
+	'替补表里的 `tournament=` 嵌了模板、又跟了一条内链，参数切割要能扛住',
+);
+assert.equal(
+	liquid.players.some((p) => p.nick === 'Insania'),
+	false,
+	'整段被注释掉的离队名单同样不该进来',
+);
+
+console.log('liquipedia.check 通过：赛程解析、档位解析与战队名单');

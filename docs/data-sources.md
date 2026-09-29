@@ -448,6 +448,40 @@ PARIVISION 的 1507。别再往那个方向试。
 档位缓存一周（`.cache/liquipedia/tiers.json`）：Liquipedia 定档之后就不动了。取不到档位的
 赛事**不写缓存**，下一轮会重试。
 
+### 战队名单：换掉 OpenDota 的「历史全量」
+
+`/teams/<队>` 的人员名单原来取 OpenDota 的 `/teams/<id>/players`，而那个接口给的是**历史全量**：
+实测 Team Liquid 名下同时有现役的 miCKe、Boxi、tOfu，也有几年前的 Miracle-、GH、kky，
+连教练 Jabbz 都被标成「在队」——页面上就是「名单不完整、又混着离队的人」。现在改用 Liquipedia
+战队页的 wikitext，解析在 `parseTeamRoster`（`scripts/liquipedia.check.ts` 守着）。
+
+取数走 `action=query`（轻接口）加 `titles=` 批量：一次 50 个标题，几十支队两批就取完，
+之后 12 小时吃缓存（`.cache/liquipedia/rosters.json`）。按队逐个抓会是几十个请求，
+而条款要求低频调用。
+
+页面结构（实测 Team Spirit / Team Liquid）：现役是 `{{Squad|status=active}}`，教练组是
+`{{Squad|type=staff|status=active}}`，离队整块是 `status=inactive` 或 `status=former`
+（NAVI 一页 33 个 former Squad、OG 24 个）。判据用模板参数而不是章节标题——标题会变、会缺席，
+参数不会。四个坑：
+
+- **`{{stand-in}}` 到处都有，历史段里最多**。页尾的 `===Former===` 段塞满了历年的替补记录
+  （实测 OG 27 条，其中一个人出现 5 次），照单全收就会变成「替补：Ceb、Ceb、Ceb…」。
+  所以先按「现役那一段」把文本切掉，边界认 `former` / `inactive` 标题与对应的 Squad。
+- **页面会用 HTML 注释「停用」整段模板**（Team Spirit 的替补表就写在注释里），解析前先去注释。
+- **模板要按大括号配对读，不能上非贪婪正则**：`{{Squad|…{{Person|…}}…}}` 里第一个 `}}`
+  关掉的是 `Person`，非贪婪会把 `Squad` 截断在第一个人之后。
+- **队标取名单要靠页面标题，不能拿队名猜**。`Xtreme Gaming` 的队标文件叫
+  `Xtreme_Gaming_%28China%29_allmode.png`，照它猜标题会查不到——标题要从对阵页里那条队伍链接的
+  `href` 取（`/dota2/Xtreme_Gaming`）。
+
+**另有 24 支队伍没有名单，那不是抓失败**：那些队在 Liquipedia 上根本没有页面（YBN Team、
+Team Kinetix 这类主播/业余队，赛程页里是红链）。页面照常生成，只是显示「暂无名单」。
+
+> **给解析出来的对象加字段，必须同时把 `liquipediaApi.ts` 的 `CACHE_VERSION` 加一。** 缓存里存的
+> 是**解析后**的对象，老缓存不会自己长出字段：给队伍加 `wiki`（取名单要用它）那次忘了升版本，
+> 那一轮构建吃到旧缓存，全站队伍一个名单都没有，而构建汇总还写着「联网抓取」。同一个坑
+> `roomList.ts` 里踩过。
+
 ## 对阵页的阵容：按小局取
 
 日历上的一条是**系列**（BO3/BO5），而 Valve 的每个比赛 id 只对应其中**一局**。所以对阵页

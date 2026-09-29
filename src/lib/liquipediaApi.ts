@@ -1,8 +1,8 @@
 import path from 'node:path';
 import type { EsportsMatch } from '../data/types';
 import { readCacheJson, writeCacheFile } from './buildCache';
-import type { LeagueTierInfo } from './liquipediaParse';
-import { eventPathOf, parseBracketMatches, parseLeagueTier, parseMatches } from './liquipediaParse';
+import type { LeagueTierInfo, TeamRoster } from './liquipediaParse';
+import { eventPathOf, parseBracketMatches, parseLeagueTier, parseMatches, parseTeamRoster } from './liquipediaParse';
 
 /**
  * Liquipedia 赛事日历（MediaWiki `action=parse`）。
@@ -40,7 +40,18 @@ const CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'matches.jso
 const TTL_SECONDS = 30 * 60;
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 
+/**
+ * 解析结果的缓存版本。**给解析出来的对象加字段就要加一。**
+ *
+ * 缓存里存的是**解析后**的 `EsportsMatch`，老缓存不会自己长出字段：给队伍加 `wiki`
+ * （战队页取名单要用它）那次忘了升版本，于是那一轮构建吃到旧缓存，全站队伍都拿不到名单，
+ * 而构建汇总还写着「联网抓取」——看着像上游的问题，实际是拿了一份旧形状的数据。
+ * 同一个坑 `roomList.ts` 里踩过，处理办法也一样：版本对不上就当没有。
+ */
+const CACHE_VERSION = 2;
+
 interface CacheEntry {
+	v?: number;
 	at: number;
 	value: EsportsMatch[];
 }
@@ -48,13 +59,13 @@ interface CacheEntry {
 async function readCache(): Promise<CacheEntry | null> {
 	const hit = await readCacheJson<CacheEntry>(CACHE_FILE, (value) => {
 		const entry = value as CacheEntry;
-		return typeof entry?.at === 'number' && Array.isArray(entry.value);
+		return entry?.v === CACHE_VERSION && typeof entry.at === 'number' && Array.isArray(entry.value);
 	});
 	return hit?.value ?? null;
 }
 
 function writeCache(value: EsportsMatch[]): Promise<void> {
-	return writeCacheFile(CACHE_FILE, JSON.stringify({ at: Date.now(), value }));
+	return writeCacheFile(CACHE_FILE, JSON.stringify({ v: CACHE_VERSION, at: Date.now(), value }));
 }
 
 /** 解析一个页面。`page` 只由站内自己拼出来的路径传入（赛事页补全见下），不是用户输入。 */
@@ -118,6 +129,7 @@ const MAX_EVENT_PAGES = 8;
 const EVENT_PAGE_GAP_MS = 1200;
 
 interface EventCacheEntry {
+	v?: number;
 	at: number;
 	matches: EsportsMatch[];
 }
@@ -126,7 +138,9 @@ type EventCache = Record<string, EventCacheEntry>;
 
 async function readEventCache(): Promise<EventCache> {
 	const hit = await readCacheJson<EventCache>(EVENT_CACHE_FILE, (value) => typeof value === 'object' && value !== null);
-	return hit?.value ?? {};
+	if (!hit) return {};
+	// 形状变过的条目当没有（见 `CACHE_VERSION`）：老条目里的对阵没有 `wiki` 字段。
+	return Object.fromEntries(Object.entries(hit.value).filter(([, entry]) => entry?.v === CACHE_VERSION));
 }
 
 function writeEventCache(cache: EventCache): Promise<void> {
@@ -189,7 +203,7 @@ async function loadEventMatches(pagePaths: string[]): Promise<EsportsMatch[]> {
 			carry();
 			continue;
 		}
-		next[pagePath] = { at: Date.now(), matches };
+			next[pagePath] = { v: CACHE_VERSION, at: Date.now(), matches };
 		out.push(...matches);
 	}
 
@@ -216,12 +230,13 @@ const TIER_CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'tiers.
  */
 const TIER_TTL_SECONDS = 7 * 24 * 3600;
 /**
- * 档位请求之间的间隔。**刻意比 `EVENT_PAGE_GAP_MS`（1.2s）长**：两条流各自节流，
- * 赛事页补全那批刚跑完，这边紧接着又是一串，对方看到的是两批加起来的频率。
- * 第一次跑就中过一招——5 个赛事里有 1 个在这一条流上没拿到页面（路径在输入里、缓存里没有），
- * 赛事页上那届于是整轮没有档位徽章。
+ * 「附加信息」那几条流的请求间隔：档位、战队名单。
+ *
+ * **刻意比 `EVENT_PAGE_GAP_MS`（1.2s）长**：每条流各自节流，赛事页补全那批刚跑完、
+ * 这边紧接着又是一串，对方看到的是几批加起来的频率。第一次跑就中过一招——5 个赛事的档位
+ * 请求里 1 个没拿到页面（路径在输入里、缓存里没有），赛事页上那届于是整轮没有档位徽章。
  */
-const TIER_PAGE_GAP_MS = 2000;
+const SLOW_PAGE_GAP_MS = 2000;
 /**
  * 取不到页面时再试一次。
  *
@@ -231,6 +246,7 @@ const TIER_PAGE_GAP_MS = 2000;
 const TIER_FETCH_ATTEMPTS = 2;
 
 interface TierCacheEntry {
+	v?: number;
 	at: number;
 	/** 取到了页面、但页面上没有档位时也记一笔，免得每轮都白问一次。 */
 	tier?: LeagueTierInfo;
@@ -240,7 +256,8 @@ type TierCache = Record<string, TierCacheEntry>;
 
 async function readTierCache(): Promise<TierCache> {
 	const hit = await readCacheJson<TierCache>(TIER_CACHE_FILE, (value) => typeof value === 'object' && value !== null);
-	return hit?.value ?? {};
+	if (!hit) return {};
+	return Object.fromEntries(Object.entries(hit.value).filter(([, entry]) => entry?.v === CACHE_VERSION));
 }
 
 function writeTierCache(cache: TierCache): Promise<void> {
@@ -288,7 +305,7 @@ async function loadEventTiers(pagePaths: string[]): Promise<Map<string, LeagueTi
 		let html: string | null = null;
 		for (let attempt = 0; attempt < TIER_FETCH_ATTEMPTS && !html; attempt += 1) {
 			// 第一次请求起就等（`fetched` 计数跨赛事累加），重试也照等。
-			if (fetched > 0) await sleep(TIER_PAGE_GAP_MS);
+			if (fetched > 0) await sleep(SLOW_PAGE_GAP_MS);
 			fetched += 1;
 			html = await fetchPage(root);
 		}
@@ -297,10 +314,158 @@ async function loadEventTiers(pagePaths: string[]): Promise<Map<string, LeagueTi
 			continue;
 		}
 		const tier = parseLeagueTier(html);
-		next[root] = { at: Date.now(), tier };
+		next[root] = { v: CACHE_VERSION, at: Date.now(), tier };
 		if (tier) out.set(root, tier);
 	}
 
 	await writeTierCache(next);
+	return out;
+}
+
+/*
+ * ---- 战队名单 --------------------------------------------------------------------
+ *
+ * 现役五人 + 替补 + 教练组，来自各队战队页的 wikitext（解析见 `parseTeamRoster`）。
+ *
+ * 为什么不用 OpenDota 的 `/teams/<id>/players`：那个接口给的是**历史全量**——实测 Team Liquid
+ * 名下同时有现役的 miCKe、Boxi、tOfu，也有几年前的 Miracle-、GH、kky，连教练 Jabbz 都被
+ * 标成"在队"。页面上看着就是"名单不完整、又混着离队的人"。Liquipedia 的名单是人工维护的。
+ *
+ * 取数用 `action=query`（轻接口）而不是 `action=parse`（重接口），并且**一次带 50 个标题**：
+ * 整个站点几十支队伍两批就取完，一轮构建最多两个请求，之后 12 小时都吃缓存。
+ * Liquipedia 的 API 条款要求低频调用，这条比按队逐个抓省得多。
+ */
+
+const ROSTER_CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'rosters.json');
+/** 名单只在转会期变，12 小时足够；站点每 30 分钟重建一次，绝大多数轮次是零请求。 */
+const ROSTER_TTL_SECONDS = 12 * 3600;
+/** MediaWiki 的 `titles=` 一次上限 50。 */
+const ROSTER_BATCH = 50;
+
+interface RosterCacheEntry {
+	v?: number;
+	at: number;
+	/** 取到页面但没有名单时也记一笔，免得每轮都白问。 */
+	roster?: TeamRoster;
+}
+
+type RosterCache = Record<string, RosterCacheEntry>;
+
+async function readRosterCache(): Promise<RosterCache> {
+	const hit = await readCacheJson<RosterCache>(ROSTER_CACHE_FILE, (value) => typeof value === 'object' && value !== null);
+	if (!hit) return {};
+	return Object.fromEntries(Object.entries(hit.value).filter(([, entry]) => entry?.v === CACHE_VERSION));
+}
+
+function writeRosterCache(cache: RosterCache): Promise<void> {
+	return writeCacheFile(ROSTER_CACHE_FILE, JSON.stringify(cache));
+}
+
+interface WikitextQuery {
+	query?: {
+		/** 标题是重定向时，MediaWiki 会给出 from → to。 */
+		redirects?: { from: string; to: string }[];
+		pages?: { title: string; missing?: boolean; revisions?: { slots?: { main?: { content?: string } } }[] }[];
+	};
+	error?: unknown;
+}
+
+/** 比较标题时忽略下划线、大小写与多余空白——我们手里的路径和返回的标题写法不一定一样。 */
+const titleKey = (title: string): string => title.replace(/_/g, ' ').trim().toLowerCase();
+
+/**
+ * 批量取 wikitext，返回 `请求用的标题 → 正文`。
+ *
+ * 返回 null 表示这一批**整批失败**（网络/上游抖动），调用方据此退回过期缓存；
+ * 请求成功但某个标题不存在，则不会出现在返回值里——那是"这支队没被收录"，不是故障。
+ */
+async function fetchWikitext(titles: string[]): Promise<Map<string, string> | null> {
+	const url = `${API}?action=query&format=json&formatversion=2&prop=revisions&rvprop=content&rvslots=main&titles=${encodeURIComponent(titles.join('|'))}`;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 45_000);
+	try {
+		const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' } });
+		if (!res.ok) return null;
+		const body = (await res.json()) as WikitextQuery;
+		if (body.error || !body.query) return null;
+
+		const redirects = new Map((body.query.redirects ?? []).map((item) => [titleKey(item.from), item.to]));
+		const pages = new Map((body.query.pages ?? []).map((page) => [titleKey(page.title), page]));
+		const out = new Map<string, string>();
+		for (const title of titles) {
+			const finalTitle = redirects.get(titleKey(title)) ?? title;
+			const content = pages.get(titleKey(finalTitle))?.revisions?.[0]?.slots?.main?.content;
+			if (typeof content === 'string' && content.length > 0) out.set(title, content);
+		}
+		return out;
+	} catch {
+		return null;
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+let teamRostersPromise: Promise<Map<string, TeamRoster>> | null = null;
+
+/**
+ * 战队名单，键是**Liquipedia 页面标题**（`Team_Liquid`，取自对阵页里那条队伍链接的 href）。
+ * 页面上没有名单、或页面不存在时不会出现在返回值里。
+ */
+export function fetchLiquipediaTeamRosters(wikiPaths: string[]): Promise<Map<string, TeamRoster>> {
+	teamRostersPromise ??= loadTeamRosters(wikiPaths);
+	return teamRostersPromise;
+}
+
+async function loadTeamRosters(wikiPaths: string[]): Promise<Map<string, TeamRoster>> {
+	const wanted = [...new Set(wikiPaths.map((page) => page.trim()).filter(Boolean))];
+	const out = new Map<string, TeamRoster>();
+	if (wanted.length === 0) return out;
+
+	const cache = await readRosterCache();
+	const next: RosterCache = {};
+	const stale: string[] = [];
+	for (const page of wanted) {
+		const hit = cache[page];
+		if (hit && Date.now() - hit.at < ROSTER_TTL_SECONDS * 1000) {
+			next[page] = hit;
+			if (hit.roster) out.set(page, hit.roster);
+			continue;
+		}
+		stale.push(page);
+	}
+
+	/** 拿不到新的就退旧的：过期名单也比空着强，而且不写回 `at`，下一轮还会再试。 */
+	const carry = (page: string): void => {
+		const hit = cache[page];
+		if (!hit) return;
+		next[page] = hit;
+		if (hit.roster) out.set(page, hit.roster);
+	};
+
+	if (OFFLINE) {
+		for (const page of stale) carry(page);
+	} else {
+		let fetched = 0;
+		for (let i = 0; i < stale.length; i += ROSTER_BATCH) {
+			const batch = stale.slice(i, i + ROSTER_BATCH);
+			if (fetched > 0) await sleep(SLOW_PAGE_GAP_MS);
+			fetched += 1;
+
+			const pages = await fetchWikitext(batch);
+			if (!pages) {
+				for (const page of batch) carry(page);
+				continue;
+			}
+			for (const page of batch) {
+				const wikitext = pages.get(page);
+				// 页面不存在（`missing`）也写一笔：那是"Liquipedia 没收录这支队"，不是这一轮的故障。
+				const roster = wikitext ? parseTeamRoster(wikitext) : undefined;
+				next[page] = { v: CACHE_VERSION, at: Date.now(), roster };
+				if (roster) out.set(page, roster);
+			}
+		}
+	}
+
+	await writeRosterCache(next);
 	return out;
 }

@@ -1,9 +1,8 @@
 ---
 import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
+import RosterMemberCard from '../../components/RosterMemberCard.astro';
 import { formatRange } from '../../lib/format';
-import type { TeamRoster } from '../../lib/opendota';
-import { loadTeamRoster } from '../../lib/opendota';
 import { EVENT_STATUS_META } from '../../lib/statusMeta';
 import type { TeamDetail } from '../../lib/tournamentIndex';
 import { getTournamentIndex } from '../../lib/tournamentIndex';
@@ -11,13 +10,10 @@ import { isPathSegment } from '../../lib/routeSlug';
 
 interface Props {
 	team: TeamDetail;
-	/** OpenDota 的队员名单；该队未被收录时为 null。 */
-	roster: TeamRoster | null;
 }
 
 export async function getStaticPaths() {
 	const index = await getTournamentIndex();
-	// 串行取阵容：限速是按请求间隔做的，并发会把间隔打乱。
 	const paths = [];
 	for (const team of index.teams.values()) {
 		/*
@@ -32,14 +28,38 @@ export async function getStaticPaths() {
 		}
 		paths.push({
 			params: { id: team.id },
-			props: { team, roster: await loadTeamRoster({ id: team.id, name: team.name, logo: team.logo }) },
+			props: { team },
 		});
 	}
 	return paths;
 }
 
-const { team, roster } = Astro.props;
+/*
+ * 名单（现役 / 替补 / 教练组）已经在索引里取好了，见 `tournamentIndex` 里的
+ * `fetchLiquipediaTeamRosters`。这里不再按队逐个去要——那会变成几十个请求，
+ * 而 Liquipedia 的条款要求低频调用。
+ */
+const { team } = Astro.props;
+const roster = team.roster;
 const now = Math.floor(Date.now() / 1000);
+
+/** 号位按国内习惯说。 */
+const POSITION_LABEL: Record<number, string> = { 1: '一号位', 2: '二号位', 3: '三号位', 4: '四号位', 5: '五号位' };
+/** 教练组的角色名翻一下；认不出的原样留着——宁可页面上留英文，也别编一个不存在的头衔。 */
+const ROLE_LABEL: Record<string, string> = {
+	coach: '教练',
+	'head coach': '主教练',
+	analyst: '分析师',
+	manager: '经理',
+	'team manager': '领队',
+};
+function roleLabel(role: string): string {
+	return role
+		.split('/')
+		.map((part) => ROLE_LABEL[part.trim().toLowerCase()] ?? part.trim())
+		.filter(Boolean)
+		.join('/');
+}
 
 /** 未打完的对阵（进行中/未开赛/延期）按开赛时间升序，先看最近的。 */
 const scheduled = team.matches.filter((m) => m.status !== 'completed').sort((a, b) => a.startTime - b.startTime);
@@ -110,43 +130,63 @@ function initial(name: string): string {
 		</div>
 
 		{
-			roster ? (
+			roster && (roster.players.length > 0 || roster.standins.length > 0 || roster.staff.length > 0) ? (
 				<section class="mt-10">
 					<div class="flex flex-wrap items-baseline justify-between gap-2">
-						<h2 class="font-display text-xl">队员名单</h2>
-						<a
-							href={`https://www.opendota.com/teams/${roster.teamId}`}
-							target="_blank"
-							rel="noopener noreferrer"
-							class="text-xs text-faint transition hover:text-gold"
-						>
-							数据来自 OpenDota ↗
-						</a>
+						<h2 class="font-display text-xl">人员名单</h2>
+						{
+							team.wiki ? (
+								<a
+									href={`https://liquipedia.net/dota2/${team.wiki}`}
+									target="_blank"
+									rel="noopener noreferrer"
+									class="text-xs text-faint transition hover:text-gold"
+								>
+									名单来自 Liquipedia ↗
+								</a>
+							) : null
+						}
 					</div>
-					<div class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-						{roster.members.map((member) => (
-							<div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-								<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
-									{initial(member.name)}
-								</span>
-								<span class="min-w-0 flex-1">
-									<span class="flex items-center gap-1.5">
-										<span class="min-w-0 truncate text-sm text-cream">{member.name}</span>
-										{member.isCurrent ? (
-											<span class="shrink-0 rounded bg-dota/15 px-1.5 py-0.5 text-[10px] text-dota-light">在队</span>
-										) : null}
-									</span>
-									<span class="mt-0.5 block text-xs text-faint">
-										{member.games} 场 · 胜率 {member.games > 0 ? Math.round((member.wins / member.games) * 100) : 0}%
-									</span>
-								</span>
+
+					{
+						roster.players.length > 0 ? (
+							<div class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+								{roster.players.map((member) => (
+									<RosterMemberCard member={member} badge={POSITION_LABEL[member.position ?? 0] ?? '位置待定'} />
+								))}
 							</div>
-						))}
-					</div>
+						) : null
+					}
+
+					{
+						roster.standins.length > 0 ? (
+							<>
+								<h3 class="mt-6 text-sm font-semibold text-muted">替补</h3>
+								<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+									{roster.standins.map((member) => (
+										<RosterMemberCard member={member} badge="替补" />
+									))}
+								</div>
+							</>
+						) : null
+					}
+
+					{
+						roster.staff.length > 0 ? (
+							<>
+								<h3 class="mt-6 text-sm font-semibold text-muted">教练组</h3>
+								<div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+									{roster.staff.map((member) => (
+										<RosterMemberCard member={member} badge={member.role ? roleLabel(member.role) : '教练组'} />
+									))}
+								</div>
+							</>
+						) : null
+					}
 				</section>
 			) : (
 				<p class="mt-10 border-t border-line pt-6 text-xs text-faint">
-					该队暂无队员数据：只有被 OpenDota 收录的职业队伍才能提供阵容。
+					该队暂无人员名单：队标与名单都取自 Liquipedia，只有被它收录的队伍才有维护好的现役名单。
 				</p>
 			)
 		}

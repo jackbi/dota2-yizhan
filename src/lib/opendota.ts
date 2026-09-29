@@ -5,7 +5,11 @@ import { fetchHeroListCached } from './heroList';
 import { createPace } from './pace';
 
 /**
- * OpenDota 数据层：队伍解析、阵容名单，以及比赛候选与明细。
+ * OpenDota 数据层：队伍解析，以及比赛候选与明细。
+ *
+ * **不再提供战队名单**：`/teams/<id>/players` 给的是历史全量（现役与几年前的队员混在一起，
+ * 教练也在里头），战队页的名单改由 Liquipedia 战队页提供（见 `liquipediaApi` 与
+ * `parseTeamRoster`）。这里留下的 `resolveTeam` 仍然给阵容分析页认队伍用。
  *
  * 为什么是"尽力而为"：
  * - 赛事日历来自 Liquipedia，只有赛程没有阵容/英雄，队伍与比赛只能按"队名/队标 + 开赛时间"推断；
@@ -115,22 +119,6 @@ async function cachedDerived<TRaw, TValue>(
 }
 
 const norm = (value: string): string => value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]/g, '');
-
-// ---------------------------------------------------------------- 对外类型
-
-export interface TeamMember {
-	accountId: number;
-	name: string;
-	games: number;
-	wins: number;
-	isCurrent: boolean;
-}
-
-export interface TeamRoster {
-	teamId: number;
-	name: string;
-	members: TeamMember[];
-}
 
 // ---------------------------------------------------------------- 英雄
 
@@ -316,35 +304,6 @@ export async function resolveTeam(team: TeamRef): Promise<OdTeam | null> {
 export async function getTeamNameIndex(): Promise<[string, number][]> {
 	const index = await getTeamIndex();
 	return [...index].map(([key, team]) => [key, team.team_id]);
-}
-
-// ---------------------------------------------------------------- 队员名单
-
-interface OdMember {
-	account_id: number;
-	name: string | null;
-	games_played: number;
-	wins: number;
-	is_current_team_member: boolean;
-}
-
-/** 取队伍当前阵容；OpenDota 不认识这支队伍时返回 null。 */
-export async function loadTeamRoster(team: TeamRef): Promise<TeamRoster | null> {
-	if (OFFLINE) return null;
-	const od = await resolveTeam(team);
-	if (!od) return null;
-	const players = (await cachedJson<OdMember[]>(`roster-${od.team_id}`, `${API}/teams/${od.team_id}/players`, DAY_SECONDS)) ?? [];
-	const members = players
-		.filter((player) => player.name)
-		.map((player) => ({
-			accountId: player.account_id,
-			name: player.name as string,
-			games: player.games_played ?? 0,
-			wins: player.wins ?? 0,
-			isCurrent: Boolean(player.is_current_team_member),
-		}))
-		.sort((a, b) => Number(b.isCurrent) - Number(a.isCurrent) || b.games - a.games);
-	return members.length > 0 ? { teamId: od.team_id, name: od.name ?? team.name, members } : null;
 }
 
 // ---------------------------------------------------------------- 比赛英雄

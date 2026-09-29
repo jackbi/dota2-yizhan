@@ -186,6 +186,8 @@ export interface TeamRef {
 	id: string;
 	name: string;
 	logo?: string;
+	/** Liquipedia 页面标题（`Team_Liquid`）。队标、名单都要按它去取，不能拿队名猜。 */
+	wiki?: string;
 	score?: number;
 }
 

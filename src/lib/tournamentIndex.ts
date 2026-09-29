@@ -1,4 +1,6 @@
 import type { EsportsEvent, EsportsMatch, LeagueTier, MatchStatus, TeamRef } from '../data/types';
+import type { TeamRoster } from './liquipediaParse';
+import { fetchLiquipediaTeamRosters } from './liquipediaApi';
 import { getTournaments } from './tournamentsApi';
 
 /**
@@ -24,6 +26,10 @@ export interface TeamDetail {
 	id: string;
 	name: string;
 	logo?: string;
+	/** Liquipedia 页面标题；取名单要用它。OpenDota 兜底来的队伍没有。 */
+	wiki?: string;
+	/** 现役名单；取不到时缺省，页面显示"暂无名单"。 */
+	roster?: TeamRoster;
 	/** 已完赛对阵中的胜/负场次；延期与未开赛不计入。 */
 	wins: number;
 	losses: number;
@@ -50,10 +56,11 @@ async function buildIndex(): Promise<TournamentIndex> {
 	const touchTeam = (team: TeamRef, event?: TeamEventRef): TeamDetail => {
 		let entry = teams.get(team.id);
 		if (!entry) {
-			entry = { id: team.id, name: team.name, logo: team.logo, wins: 0, losses: 0, matches: [], events: [] };
+			entry = { id: team.id, name: team.name, logo: team.logo, wiki: team.wiki, wins: 0, losses: 0, matches: [], events: [] };
 			teams.set(team.id, entry);
 		}
 		if (!entry.logo && team.logo) entry.logo = team.logo;
+		if (!entry.wiki && team.wiki) entry.wiki = team.wiki;
 		if (event && !entry.events.some((e) => e.id === event.id)) entry.events.push(event);
 		return entry;
 	};
@@ -98,6 +105,18 @@ async function buildIndex(): Promise<TournamentIndex> {
 	for (const team of teams.values()) {
 		team.matches.sort((a, b) => b.startTime - a.startTime);
 		team.events.sort((a, b) => b.startTime - a.startTime);
+	}
+
+	/*
+	 * 战队名单：**一次取全**。`fetchLiquipediaTeamRosters` 内部按 50 个标题一批请求，
+	 * 几十支队两批就够；每支队各取一次会变成几十个请求，而 Liquipedia 的条款要求低频调用。
+	 * 拿不到（页面没收录、或这一轮上游抖动）就是没有名单，页面照常渲染。
+	 */
+	const rosters = await fetchLiquipediaTeamRosters(
+		[...teams.values()].map((team) => team.wiki).filter((wiki): wiki is string => !!wiki),
+	);
+	for (const team of teams.values()) {
+		if (team.wiki) team.roster = rosters.get(team.wiki);
 	}
 
 	return {
