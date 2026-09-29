@@ -45,6 +45,14 @@ assert.match(header, /aria-label="开源仓库"/, '图标态要能被读屏念�
 assert.match(header, /aria-label="AI 设置"/, '图标态要能被读屏念出来（aria-label）');
 assert.match(header, /title="[^"]*源码[^"]*"/, '图标态要有 title 提示');
 
+/*
+ * **两个入口都只留图标**：右侧这一组后面还有登录入口，加上文字会把中间那排导航挤到换行
+ * （`justify-between` 下最先被牺牲的就是它们）。所以这里钉住"没有可见文字"，名字只走
+ * aria-label 与 title——少了那两样，图标就成了一个没有名字的链接。
+ */
+assert.ok(!/>\s*开源仓库\s*</.test(header), '开源仓库只留图标：文字会把导航挤换行');
+assert.ok(!/>\s*AI 设置\s*</.test(header), 'AI 设置只留图标：文字会把导航挤换行');
+
 // 站在 /settings 上时它要能高亮，否则读者不知道自己在这一页。
 assert.match(header, /aria-current=\{isActive\('\/settings'\)/, 'AI 设置要以当前页高亮');
 
