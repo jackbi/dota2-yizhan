@@ -446,8 +446,11 @@ export interface HeroPositionStat {
 export interface HeroMetaEntry {
 	matches: number;
 	wins: number;
-	/** 被禁用场次，数据不可用时为 0。 */
-	bans: number;
+	/**
+	 * 被禁用场次。**整段覆盖不全时是 `null`**——这一列宁可显示「没有数据」，
+	 * 也不要印一个 0：0 是"这一周真的没人禁它"这个正常数字的样子。
+	 */
+	bans: number | null;
 	positions: HeroPositionStat[];
 }
 
@@ -529,7 +532,7 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[], week:
 		if (typeof row.heroId !== 'number') continue;
 		let entry = heroes.get(row.heroId);
 		if (!entry) {
-			entry = { matches: 0, wins: 0, bans: 0, positions: [] };
+			entry = { matches: 0, wins: 0, bans: null, positions: [] };
 			heroes.set(row.heroId, entry);
 		}
 		const matches = row.matchCount ?? 0;
@@ -554,8 +557,11 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[], week:
 	 * 覆盖性先验一遍，不能只靠 `take: 20` 这个字面量。
 	 *
 	 * `take` 一旦被上游忽略、或者那边改了排序，窗口里就会缺几天——而累加本身是静默的：
-	 * 缺哪儿少哪儿，页面上只表现为禁用数偏小，没有任何报错。缺一天就整块不算：
-	 * 宁可这一列没有数字，也不要给一个看着正常的少算值。
+	 * 缺哪儿少哪儿，页面上只表现为禁用数偏小，没有任何报错。
+	 *
+	 * 缺一天就整块不算：这一列宁可不给数字，也不要给一个看着正常的少算值。而「不给数字」
+	 * 必须是 `null`、由页面渲染成「—」——**不能是 0**：0 正好是"这一周真的没人禁它"的样子，
+	 * 印出去比偏小的数字还像真的（英雄页原先就是这么印的）。
 	 */
 	const banDays = banRows.map((row) => row.day).filter((day): day is number => typeof day === 'number');
 
@@ -570,7 +576,7 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[], week:
 		for (const row of banRows) {
 			if (typeof row.heroId !== 'number' || typeof row.day !== 'number' || !dayInWeek(row.day, week)) continue;
 			const entry = heroes.get(row.heroId);
-			if (entry) entry.bans += row.matchCount ?? 0;
+			if (entry) entry.bans = (entry.bans ?? 0) + (row.matchCount ?? 0);
 		}
 	}
 

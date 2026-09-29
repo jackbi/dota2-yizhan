@@ -161,7 +161,23 @@ const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 		/banHeroes\.size >= BAN_COVERAGE_MIN_HEROES && daysCoverWeek\(banDays, week\)/,
 		'累加被禁用数之前要先确认日桶盖满了整个窗口',
 	);
-	ok('被禁用数：日桶必须盖满窗口，缺一天就整块不算');
+
+	/*
+	 * 「整块不算」必须落到 `null`（页面渲染成「—」），不能是 0。
+	 *
+	 * 原先初值是 `bans: 0`、英雄页又无条件渲染，于是覆盖不足时全站 127 个英雄页会印
+	 * 「被禁用 0」——而 0 正好是"这一周真的没人禁它"的样子，比它要修的"偏小值"还像真的。
+	 */
+	assert.match(stratz, /bans: number \| null/, '禁用数要能表示"没有数据"（null）');
+	assert.match(stratz, /bans: null, positions: \[\] \}/, '初值必须是 null 而不是 0');
+	assert.match(stratz, /entry\.bans = \(entry\.bans \?\? 0\) \+ /, '累加只在覆盖完整时进行，从 null 起算');
+	const heroPage = readFileSync(new URL('../src/pages/heroes/[id].astro', import.meta.url), 'utf8');
+	assert.match(
+		heroPage,
+		/stat\.bans == null \? '—' : stat\.bans\.toLocaleString\('zh-CN'\)/,
+		'英雄页渲染禁用数时要区分"没有数据"与 0',
+	);
+	ok('被禁用数：日桶必须盖满窗口，缺一天就整块不算（页面渲染「—」）');
 }
 
 console.log(`metaWindow 全部断言通过（${cases} 组）`);
