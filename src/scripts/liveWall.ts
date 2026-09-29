@@ -391,9 +391,10 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 						${
 							/*
 							 * 构建期给的那句说明（旧快照有多旧、平台关了播放…）在**挑房间**这一步最要紧，
-							 * 所以列表行也画一条。格子里那份挂在待播遮罩上，开播后会被移除（那时已经在看画面了）。
+							 * 所以列表行也画一条。不截断：它是"这个绿点是旧快照/已关播"的唯一信号，
+							 * 窄栏里被截掉之后，只有悬停 `title` 才看得到全——触屏上等于没有。
 							 */
-							r.note ? `<span class="block truncate text-[11px] text-gold/80" title="${esc(r.note)}">${esc(r.note)}</span>` : ''
+							r.note ? `<span class="block text-[11px] leading-snug text-gold/80" title="${esc(r.note)}">${esc(r.note)}</span>` : ''
 						}
 					</span>
 					${
@@ -494,13 +495,16 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 					<span class="tile-hint px-3 text-center text-[11px] leading-relaxed text-faint">
 						点开才会加载直播间画面${r.live ? '' : '（榜单房间，抓取时在播）'}
 					</span>
-					${
-						// 构建期给的那句说明（旧快照有多旧、平台关了播放…）：格子这里画在待播遮罩上
-						// （点播放遮罩会被移除，那时已经在看画面了），左列表行另有一处常驻的。
-						r.note ? `<span class="px-3 text-center text-[11px] leading-relaxed text-gold/80">${esc(r.note)}</span>` : ''
-					}
 				</div>
 			</div>
+			${
+				/*
+				 * 构建期给的那句说明（旧快照有多旧、平台关了播放…）**不能画在待播遮罩里**：
+				 * 点播放时那一层会被整个移除，说明跟着消失；而沉浸模式下左列表被面板盖住，
+				 * 画面上就再也没有任何提示了。所以挂在遮罩外面，作为格子自己的一条常驻横幅。
+				 */
+				r.note ? `<div class="tile-note border-t border-gold/20 bg-gold/10 px-2 py-1 text-[11px] leading-snug text-gold/90">${esc(r.note)}</div>` : ''
+			}
 			${cropControl(r, index)}
 			${huya ? '' : openLink('absolute bottom-2 right-2 z-10 rounded-md bg-dota/90 px-2 py-1 text-[11px] font-medium text-white backdrop-blur transition hover:bg-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold')}
 		</div>`;

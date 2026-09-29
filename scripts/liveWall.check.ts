@@ -33,7 +33,7 @@ const ok = (label: string): void => {
 	ok('note 从构建期传到客户端');
 }
 
-// 2. 列表行（挑房间的地方）与格子（待播时的遮罩）各画一处，且都转义
+// 2. 列表行（挑房间的地方）与格子各画一处，且都转义；格子里那处要**常驻**
 {
 	const noteLines = wall.split('\n').filter((line) => line.includes('r.note'));
 	assert.ok(noteLines.length >= 2, `note 至少要在列表行与格子里各画一处，现在只有 ${noteLines.length} 处`);
@@ -41,7 +41,24 @@ const ok = (label: string): void => {
 		assert.ok(line.includes('esc(r.note)'), `note 要转义（内容来自上游）：${line.trim()}`);
 	}
 	assert.match(wall, /title="\$\{esc\(r\.note\)\}"/, '列表行那条要带 title，截断之后还能悬停看全');
-	ok('列表行与格子各画一处，且都转义');
+
+	/*
+	 * 格子那处必须画在**待播遮罩之外**。
+	 *
+	 * 点播放时 `tile.querySelector('.tile-idle')?.remove()` 会把整层遮罩拆掉——说明挂在里面就
+	 * 跟着没了。沉浸模式下 `#wall-panel` 是 fixed/inset:0，直接把左列表盖住，画面上于是再也没有
+	 * 任何提示（"这个绿点是旧快照"、"平台已经关了播放"全看不到了）。
+	 */
+	const idleStart = wall.indexOf('class="tile-idle');
+	assert.ok(idleStart > 0, '没找到待播遮罩，解析多半坏了');
+	// 遮罩外面那层 `.tile-body` 收口在 3 个 tab 的 `</div>`，先出现的就是它。
+	const idleEnd = wall.indexOf('\n\t\t\t</div>', idleStart);
+	const idleBlock = wall.slice(idleStart, idleEnd);
+	assert.ok(idleBlock.length > 0 && idleBlock.length < 3000, '没切出待播遮罩块，解析多半坏了');
+	assert.ok(!idleBlock.includes('r.note'), '说明不能画在待播遮罩里：点播放时遮罩被整体移除，说明跟着消失');
+	assert.ok(wall.slice(idleEnd).includes('r.note'), '格子里的说明要在遮罩之外常驻');
+	assert.match(wall, /class="tile-note[^"]*"/, '格子里的说明要有一个自己的常驻元素');
+	ok('列表行与格子各画一处、都转义，且格子那处不随遮罩消失');
 }
 
 // 3. 首页那条（SSR，走 LiveCard）也不能只给绿点
