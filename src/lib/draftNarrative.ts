@@ -30,6 +30,13 @@ export interface OpponentMoveInput {
 	/** 这个英雄在它近期比赛里的出场次数；够不上熟手传 null。 */
 	foePicks: number | null;
 	windowDays: number;
+	/**
+	 * 落完这一手之后，出招方还剩几禁几选；拿不到就传 null。
+	 *
+	 * 替对面出招的日志行原先只有"为什么是它"，读者不知道这是第几轮、后面还有几手——
+	 * 而这几个数字就在 BP 顺序表里（`draftOrder.snapshot().remaining`），白拿的信息。
+	 */
+	remaining?: { bans: number; picks: number } | null;
 }
 
 /**
@@ -47,6 +54,8 @@ export function opponentMoveReason(input: OpponentMoveInput): string {
 		? `该号位近期胜率 ${(input.rate * 100).toFixed(1)}%`
 		: '该号位样本不足，只能按中性估';
 	const head = input.action === 'ban' ? `它是 ${input.position} 号位上的一个高点（${rateText}）` : `打 ${input.position} 号位（${rateText}）`;
-	if (input.foePicks === null) return head;
-	return `${head}，它近 ${input.windowDays} 天拿过 ${input.foePicks} 场`;
+	const parts = [head];
+	if (input.remaining) parts.push(`落完这手还剩 ${input.remaining.bans} 禁 ${input.remaining.picks} 选`);
+	if (input.foePicks !== null) parts.push(`它近 ${input.windowDays} 天拿过 ${input.foePicks} 场`);
+	return parts.join('，');
 }

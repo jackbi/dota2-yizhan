@@ -89,6 +89,12 @@ assert.ok(familiar.includes('近 30 天拿过 4 场'), '有熟手数据时要带
 const pickReason = opponentMoveReason({ action: 'pick', position: 2, rate: 0.5, hasSample: true, foePicks: null, windowDays: 30 });
 assert.match(pickReason, /^打 2 号位/, '挑选是出招方自己的号位，可以直接说"打几号位"');
 
+// 还剩几禁几选：数字在 BP 顺序表里白拿着，日志行原先一个字都不说，读者不知道这是第几轮。
+const withLeft = opponentMoveReason({ action: 'ban', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30, remaining: { bans: 3, picks: 5 } });
+assert.ok(withLeft.includes('落完这手还剩 3 禁 5 选'), `要说出后面还有几手：${withLeft}`);
+const withoutLeft = opponentMoveReason({ action: 'ban', position: 5, rate: 0.551, hasSample: true, foePicks: null, windowDays: 30 });
+assert.ok(!withoutLeft.includes('还剩'), '没有这个信息就别提，别留半截句子');
+
 // 没有样本时不能把中性估值说成实测胜率。
 const noSample = opponentMoveReason({ action: 'pick', position: 3, rate: 0.5, hasSample: false, foePicks: null, windowDays: 30 });
 assert.ok(noSample.includes('样本不足'), '没有样本要直说，不能报一个中性值当胜率');
