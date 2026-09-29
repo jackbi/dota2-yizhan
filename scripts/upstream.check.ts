@@ -5,9 +5,12 @@ import { readFileSync, readdirSync } from 'node:fs';
  * 上游给的东西不能直接信。五条不变量，共同点是**坏了不报错**：页面看着一切正常，只是慢、
  * 或者某张图永远是破的、某个日期永远印着 1970。每一条都对应一个真实踩过的坑：
  *
- * 1. **`src/lib` 里每个 fetch 都要能超时。** 上游挂起时，没有超时的取数会把整轮构建拖到平台
- *    的 30 分钟上限，而在浏览器里就是把那颗按钮永远挂在"加载中"。这条以前只有 `itemApi`
- *    一处例外，补齐之后它可以当不变量用。
+ * 1. **每个对外的 fetch 都要能超时。** 上游挂起时，没有超时的取数会把整轮构建拖到平台的
+ *    30 分钟上限，而在浏览器里就是把那颗按钮永远挂在"加载中"、在 MCP 里就是一次工具调用
+ *    永远不返回。这条以前只有 `itemApi` 一处例外，补齐之后它可以当不变量用。
+ *    计数按**调用点**来：原先只问"这份文件里有没有 signal"，往一个已经有 signal 的文件里
+ *    再加一个裸 fetch 是查不出来的。`src/worker` 与 `mcp` 里那种 DO / 内部调用（`.fetch(`）
+ *    不算——它们是本机 RPC，没有超时语义；只数字面量 `fetch('https://…')`。
  * 2. **图片缓存必须原子写**（先临时文件再 rename）。图片的命中判定是 `fs.access`：一个被 kill 掉的
  *    构建留下的半张 JPG 会被当成已有缓存，还会被拷进 `dist/`，变成一张永远修不好的破图。
  * 3. **取数助手要把正文读完再清超时。** 拿到 `Response` 只代表响应头到了，正文还得下载；
@@ -41,19 +44,42 @@ const lib = (name: string): string => stripComments(readFileSync(new URL(name, l
 
 const files = readdirSync(libDir).filter((name) => name.endsWith('.ts'));
 const withFetch: string[] = [];
+
+const countFetches = (source: string): number => (source.match(/\bfetch\(/g) ?? []).length;
+const countSignals = (source: string): number => (source.match(/\bsignal\s*:/g) ?? []).length;
+/** 只看对外的字面量地址；`.fetch(`（DO 内部 RPC）不算。 */
+const externalFetchRe = /(?<![.\w])fetch\(\s*[`'"]https:\/\//g;
+
 for (const name of files) {
 	const source = readFileSync(new URL(name, libDir), 'utf8');
 	if (!/\bfetch\(/.test(source)) continue;
 	withFetch.push(name);
-	// 粗粒度：只问「这份文件里有没有任何 signal」。它挡的是「新写一个裸 fetch」，不去解析
-	// 每一次调用——按调用点判断得引 AST，而这个仓库没有那套工具链。
-	assert.match(
-		stripComments(source),
-		/signal/,
-		`${name} 里有 fetch 但没有任何 signal：上游挂起会把它挂死（要么加 AbortSignal.timeout，要么走带超时的公共底座）`,
+	const code = stripComments(source);
+	const fetches = countFetches(code);
+	const signals = countSignals(code);
+	assert.ok(
+		signals >= fetches,
+		`${name} 里有 ${fetches} 处 fetch 但只有 ${signals} 处 signal：上游挂起会把它挂死（要么加 AbortSignal.timeout，要么走带超时的公共底座）`,
 	);
 }
 assert.ok(withFetch.length >= 10, `只扫到 ${withFetch.length} 个取数文件，解析多半坏了`);
+
+// 同一把尺子量 worker 与 MCP：它们也会打外部接口（GitHub dispatch、站点的 json 接口）。
+for (const [label, dir, ext] of [
+	['src/worker', new URL('../src/worker/', import.meta.url), '.ts'],
+	['mcp', new URL('../mcp/', import.meta.url), '.mjs'],
+] as const) {
+	for (const name of readdirSync(dir).filter((file) => file.endsWith(ext))) {
+		const code = stripComments(readFileSync(new URL(name, dir), 'utf8'));
+		const external = (code.match(externalFetchRe) ?? []).length;
+		if (external === 0) continue;
+		const signals = countSignals(code);
+		assert.ok(
+			signals >= external,
+			`${label}/${name} 有 ${external} 处对外 fetch 但只有 ${signals} 处 signal：外层挂住时调用会一直等下去`,
+		);
+	}
+}
 
 // ---------------------------------------------------------------- 2. 图片缓存原子写
 
