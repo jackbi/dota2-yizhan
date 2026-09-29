@@ -221,5 +221,15 @@ assert.ok(unknownExits.length >= 3, `只找到 ${unknownExits.length} 处 unknow
 for (const exit of unknownExits) {
 	assert.equal(exit[1], 'none', `unknownStatus 的出口只能标 'none'（现在是 '${exit[1]}'）：状态未知不能记成联网抓取`);
 }
+/*
+ * 还有一条形状不同的兄弟出口：主解析路径**成功解析**、但平台给的 `show_status` 是没见过的值，
+ * 于是 `parseDouyu` / `parseHuya` 把它映成 `unknown`。它 return 的是 `{ status, source }`，
+ * 上面那条按字面量匹配的断言抓不到——漏掉它，"状态未知算成联网抓取"就会只修一半。
+ */
+assert.match(
+	live,
+	/source: parsed\.state === 'unknown' \? 'none' : 'network'/,
+	'主解析出口认不出状态时也要按"没取到"记，不能标成联网抓取',
+);
 
 console.log(`upstream.check 通过（扫了 ${withFetch.length} 个取数文件）`);

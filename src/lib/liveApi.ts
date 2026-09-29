@@ -228,7 +228,10 @@ function unknownStatus(note: string): LiveStatus {
  */
 interface LoadedRoom {
 	status: LiveStatus;
-	/** `none` = 既没联网拿到、也没有缓存可用（离线构建且没有缓存、上游没响应且没有缓存）。 */
+	/**
+	 * `none` = **没拿到开播状态**：没联网（离线构建、平台不支持、上游没响应），
+	 * 或者联网拿到了回应但认不出状态。判据是"有没有拿到状态"，不是"有没有发请求"。
+	 */
 	source: RoomSource;
 }
 
@@ -287,7 +290,12 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
 				fetchedAt: new Date().toISOString(),
 			};
 			await writeCache(file, status);
-			return { status, source: 'network' };
+			/*
+			 * 平台给了回应、但 `show_status` 是没见过的值时（`parseDouyu` / `parseHuya` 映成
+			 * `unknown`），状态其实没拿到——照"没取到"记，而不是"这一轮联网抓到了"。
+			 * 摘要那一栏说的是"有没有拿到开播状态"，不是"有没有发请求"。
+			 */
+			return { status, source: parsed.state === 'unknown' ? 'none' : 'network' };
 		}
 
 		// 斗鱼关闭房间播放时给的是一张提示页，这里如实记成 closed。
@@ -321,8 +329,8 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
 		if (pageOwner) {
 			/*
 			 * 标 `none` 而不是 `network`：这只是从房间页标题里认出了主播名，**开播状态仍然是未知的**。
-			 * 标成联网抓取的话，构建摘要会把"本轮联网 N 个"算上它，`usable > 0 && cache === 0`
-			 * 时整源还会判成 fresh——而它其实是没取到状态的那一批。
+			 * 标成联网抓取的话，摘要里"本轮联网 N 个"会把它算进去——那一栏要回答的是"这一轮真的
+			 * 拿到了几个房间的开播状态"，不是"发了几次请求"。
 			 */
 			return { status: unknownStatus(`房间页显示的主播是「${pageOwner}」，但本次未取到开播状态`), source: 'none' };
 		}
