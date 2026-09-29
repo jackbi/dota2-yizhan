@@ -56,6 +56,23 @@ export function dayInWeek(day: number, week: StatWeek): boolean {
 }
 
 /**
+ * 一批日桶是不是把窗口**盖满**了（少一天都不算）。
+ *
+ * `banDay` 那边只能靠 `take: 20` 这个字面量假设"给得够多"，而这层假设一旦破了，累加是**静默**的：
+ * 缺哪儿少哪儿，页面上只表现为禁用数偏小。所以累加之前先问一句这个，缺一天就整块不给数字——
+ * 宁可这一列空着，也不要给一个看着正常的少算值。
+ *
+ * 只看覆盖、不看顺序：上游的排序不是我们的契约。
+ */
+export function daysCoverWeek(days: Iterable<number>, week: StatWeek): boolean {
+	const present = days instanceof Set ? days : new Set(days);
+	for (let day = week.firstDay; day <= week.lastDay; day += 1) {
+		if (!present.has(day)) return false;
+	}
+	return true;
+}
+
+/**
  * 传给 STRATZ `week` 参数的值（秒）：落在**上一桶**里的任意时刻。
  *
  * 桶内任意时刻等价（实测），取"终点前一秒"最不容易在实现变化时越界。

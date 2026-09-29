@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { DAY_MS, WEEK_MS, dayInWeek, inWeek, previousStatWeek, weekAnchorSeconds } from '../src/lib/metaWindow.ts';
+import { DAY_MS, WEEK_MS, dayInWeek, daysCoverWeek, inWeek, previousStatWeek, weekAnchorSeconds } from '../src/lib/metaWindow.ts';
 
 /**
  * `src/lib/metaWindow.ts` 的自检。
@@ -137,6 +137,31 @@ const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 		'stats 与 laneOutcome 两处要用同一个锚点',
 	);
 	ok('接线：版本提醒、被禁用数、stats 查询共用同一个窗口');
+}
+
+// 6. 日桶覆盖不全就整块不算：少算也得是"没有数字"，不能是"偏小的数字"
+{
+	const week = previousStatWeek(at('2026-09-29T02:12:00Z')); // 09-17 → 09-23
+	const inside = [0, 1, 2, 3, 4, 5, 6].map((i) => week.firstDay + i);
+	// 覆盖判定按日序号，不管上游给的顺序、也不重复计数。
+	assert.ok(daysCoverWeek(inside, week), '窗口内七天全在就算盖满');
+	assert.ok(daysCoverWeek([...inside].reverse(), week), '顺序不是契约：倒着给也算盖满');
+	assert.ok(daysCoverWeek(new Set([...inside, week.firstDay, week.lastDay]), week), '重了也还是盖满');
+	assert.ok(!daysCoverWeek(inside.slice(0, 6), week), '缺一天就不算盖满');
+	assert.ok(
+		!daysCoverWeek([...inside.slice(0, 6), week.firstDay - 1, week.lastDay + 1], week),
+		'窗口外多给几天不能顶替窗口里缺的那天',
+	);
+	assert.ok(!daysCoverWeek([], week), '一个日桶都没有当然不算');
+
+	// 接线：累加禁用数之前必须先过这一关，否则缺几天就是静默少算。
+	const stratz = readFileSync(new URL('../src/lib/stratzApi.ts', import.meta.url), 'utf8');
+	assert.match(
+		stratz,
+		/banHeroes\.size >= BAN_COVERAGE_MIN_HEROES && daysCoverWeek\(banDays, week\)/,
+		'累加被禁用数之前要先确认日桶盖满了整个窗口',
+	);
+	ok('被禁用数：日桶必须盖满窗口，缺一天就整块不算');
 }
 
 console.log(`metaWindow 全部断言通过（${cases} 组）`);

@@ -3,7 +3,7 @@ import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCa
 import { reportSource } from './dataHealth';
 import { LANE_MIN_GAMES, LANE_POSITIONS, buildLaneSlice, type HeroLanes, type LaneData } from './draftLanes';
 import type { HeroMatchups } from './draftMatchup';
-import { dayInWeek, previousStatWeek, weekAnchorSeconds, type StatWeek } from './metaWindow';
+import { dayInWeek, daysCoverWeek, previousStatWeek, weekAnchorSeconds, type StatWeek } from './metaWindow';
 import { createPace } from './pace';
 import { resolveStratzEndpoint } from './stratzEndpoint';
 import { byStartTime } from './matchSeries.ts';
@@ -550,7 +550,16 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[], week:
 	if (heroes.size === 0) return null;
 
 	const banHeroes = new Set(banRows.map((row) => row.heroId).filter((id): id is number => typeof id === 'number'));
-	if (banHeroes.size >= BAN_COVERAGE_MIN_HEROES) {
+	/*
+	 * 覆盖性先验一遍，不能只靠 `take: 20` 这个字面量。
+	 *
+	 * `take` 一旦被上游忽略、或者那边改了排序，窗口里就会缺几天——而累加本身是静默的：
+	 * 缺哪儿少哪儿，页面上只表现为禁用数偏小，没有任何报错。缺一天就整块不算：
+	 * 宁可这一列没有数字，也不要给一个看着正常的少算值。
+	 */
+	const banDays = banRows.map((row) => row.day).filter((day): day is number => typeof day === 'number');
+
+	if (banHeroes.size >= BAN_COVERAGE_MIN_HEROES && daysCoverWeek(banDays, week)) {
 		/*
 		 * 裁进与出场 / 胜率**同一个**窗口。
 		 *
