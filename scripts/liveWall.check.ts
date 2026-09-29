@@ -40,7 +40,7 @@ const ok = (label: string): void => {
 	for (const line of noteLines) {
 		assert.ok(line.includes('esc(r.note)'), `note 要转义（内容来自上游）：${line.trim()}`);
 	}
-	assert.match(wall, /title="\$\{esc\(r\.note\)\}"/, '列表行那条要带 title，截断之后还能悬停看全');
+	assert.match(wall, /title="\$\{esc\(r\.note\)\}"/, '列表行那条要带 title：长文案在窄栏里会换行，悬停还能看全');
 
 	/*
 	 * 格子那处必须画在**待播遮罩之外**。

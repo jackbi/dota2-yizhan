@@ -892,7 +892,8 @@ export function fetchHeroTimeline(): Promise<HeroTimeline | null> {
  *    否则对比表里的净对线与它旁边的胜率差着一个残缺周。
  *
  * 数据本身是「某英雄打某号位时，线上遇到的对手/搭档」，与 `heroStats.matchUp`（整局、不分路）
- * 是两回事，别混用。按 `LANE_MIN_GAMES` 裁剪后约 7,600 格 / 0.2MB，单独出一份静态 JSON。
+ * 是两回事，别混用。按 `LANE_MIN_GAMES` 裁剪后实测 11,623（对手）+ 5,221（搭档）格 / 约 330KB
+ * （2026-09-29，完整周口径），单独出一份静态 JSON。
  */
 const LANE_TTL_SECONDS = 24 * 3600;
 
