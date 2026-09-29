@@ -39,14 +39,16 @@ export function formatDay(unix: number): string {
 	return `${p.year}.${p.month}.${p.day}`;
 }
 
-/** 09.10 */
+/** 09.10。不是有效时间戳时返回 `--.--`（分组用的 `dayKey` 不设这道守卫，见文件末尾）。 */
 export function formatMonthDay(unix: number): string {
+	if (!Number.isFinite(unix) || unix <= 0) return '--.--';
 	const p = parts(unix);
 	return `${p.month}.${p.day}`;
 }
 
-/** 20:30 */
+/** 20:30。不是有效时间戳时返回 `--:--`。 */
 export function formatClock(unix: number): string {
+	if (!Number.isFinite(unix) || unix <= 0) return '--:--';
 	const p = parts(unix);
 	return `${p.hour}:${p.minute}`;
 }
@@ -71,8 +73,14 @@ export function formatElapsed(seconds: number): string {
 	return minutes >= 60 ? `${Math.floor(minutes / 60)}:${tail}` : `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 
-/** 09.10（周一） */
+/**
+ * 09.10（周一）。不是有效时间戳时返回「时间待定」。
+ *
+ * 与 `formatMatchTime` 同一道理：上游的 `startDateTime` 缺省是 0，而 `new Date(0)` 是合法的
+ * 1970-01-01——不拦的话页面上会多出一个看着像真日期的假信息（对局详情、复盘页都直连这个函数）。
+ */
 export function formatDayWithWeekday(unix: number): string {
+	if (!Number.isFinite(unix) || unix <= 0) return '时间待定';
 	const weekday = new Intl.DateTimeFormat('zh-CN', { timeZone: TIME_ZONE, weekday: 'short' }).format(unix * 1000);
 	return `${formatMonthDay(unix)}（${weekday}）`;
 }
@@ -116,8 +124,14 @@ export function formatCount(value: number): string {
 	return String(value);
 }
 
-/** 2026.09.06 — 2026.09.13，同一天只显示一个日期 */
+/**
+ * 2026.09.06 — 2026.09.13，同一天只显示一个日期。
+ *
+ * 两端都要是有效时间戳：赛事数据来自 Liquipedia / OpenDota，缺日期时是 0，印出来就是
+ * 「1970.01.01 — 1970.01.01」这种看着像真的假区间。
+ */
 export function formatRange(start: number, end: number): string {
+	if (!Number.isFinite(start) || start <= 0 || !Number.isFinite(end) || end <= 0) return '时间待定';
 	if (dayKey(start) === dayKey(end)) return formatDay(start);
 	const a = parts(start);
 	const b = parts(end);

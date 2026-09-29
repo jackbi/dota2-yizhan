@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { formatCount, formatElapsed, formatMatchTime, formatRange } from '../src/lib/format.ts';
+import { formatClock, formatCount, formatDayWithWeekday, formatElapsed, formatMatchTime, formatMonthDay, formatRange } from '../src/lib/format.ts';
 
 /**
  * `src/lib/format.ts` 的自检。
@@ -32,6 +32,15 @@ const TODAY = NOW;
 	assert.equal(formatMatchTime(Number.POSITIVE_INFINITY, NOW), '时间待定');
 	assert.equal(formatMatchTime(TODAY, NOW), '今天 20:30');
 	assert.equal(formatMatchTime(TODAY - 86_400, NOW), '昨天 20:30');
+	// 同一批上游数据还会流到对局详情页与复盘页，那两处直连下面这两个函数（不走 formatMatchTime），
+	// 所以守卫得在这里也有一道——否则标题里会出现「01.01（周四） 08:00」这种看着像真的假日期。
+	assert.equal(formatDayWithWeekday(0), '时间待定');
+	assert.equal(formatDayWithWeekday(Number.NaN), '时间待定');
+	assert.equal(formatDayWithWeekday(TODAY), '09.29（周二）');
+	assert.equal(formatClock(0), '--:--');
+	assert.equal(formatClock(-1), '--:--');
+	assert.equal(formatClock(TODAY), '20:30');
+	assert.equal(formatMonthDay(0), '--.--');
 	ok('时间：0 / NaN / 负数 → 时间待定，正常值照旧');
 }
 
@@ -41,6 +50,8 @@ const TODAY = NOW;
 	assert.equal(formatRange(TODAY, TODAY + 3 * 86_400), '2026.09.29 — 10.02', '同年只写月日');
 	const yearEnd = Math.floor(Date.parse('2026-12-30T12:30:00Z') / 1000);
 	assert.equal(formatRange(yearEnd, yearEnd + 7 * 86_400), '2026.12.30 — 2027.01.06', '跨年要带上年份');
+	assert.equal(formatRange(0, TODAY), '时间待定', '缺日期的赛事别印成 1970 区间');
+	assert.equal(formatRange(TODAY, 0), '时间待定');
 	ok('区间：同一天 / 跨天 / 跨年');
 }
 
