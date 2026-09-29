@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { formatClock, formatCount, formatDayWithWeekday, formatElapsed, formatMatchTime, formatMonthDay, formatRange } from '../src/lib/format.ts';
+import { formatClock, formatCount, formatDay, formatDayWithWeekday, formatElapsed, formatIso, formatMatchTime, formatMonthDay, formatRange } from '../src/lib/format.ts';
 
 /**
  * `src/lib/format.ts` 的自检。
@@ -41,6 +41,15 @@ const TODAY = NOW;
 	assert.equal(formatClock(-1), '--:--');
 	assert.equal(formatClock(TODAY), '20:30');
 	assert.equal(formatMonthDay(0), '--.--');
+	// 日期那一路也要守住 0：上面几个函数补了守卫，`formatDay` 却漏了，而 Reddit 帖子详情页的
+	// 发布时间正好会走到这里——上游缺时间戳时是 `createdAt: … || 0`，页面再做
+	// `new Date(0).toISOString()`，拿到的是一个**合法 ISO**，`Date.parse` 得 0（不是 NaN）。
+	assert.equal(formatDay(0), '时间待定', '0 不是"1970.01.01"，是"不知道"');
+	assert.equal(formatDay(Number.NaN), '时间待定');
+	assert.equal(formatDay(TODAY), '2026.09.29');
+	assert.equal(formatIso(new Date(0).toISOString()), '时间待定', '合法 ISO 也会骗过 NaN 守卫');
+	assert.equal(formatIso(''), '时间待定');
+	assert.equal(formatIso(new Date(TODAY * 1000).toISOString()), '2026.09.29 20:30');
 	ok('时间：0 / NaN / 负数 → 时间待定，正常值照旧');
 }
 

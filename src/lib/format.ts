@@ -33,8 +33,9 @@ function parts(unix: number): Parts {
 	};
 }
 
-/** 2026.09.10 */
+/** 2026.09.10。不是有效时间戳时返回「时间待定」。 */
 export function formatDay(unix: number): string {
+	if (!Number.isFinite(unix) || unix <= 0) return '时间待定';
 	const p = parts(unix);
 	return `${p.year}.${p.month}.${p.day}`;
 }
@@ -140,9 +141,16 @@ export function formatRange(start: number, end: number): string {
 	return `${left} — ${right}`;
 }
 
-/** 把 ISO 时间渲染成 2026.09.10 14:30 */
+/**
+ * 把 ISO 时间渲染成 2026.09.10 14:30。不是有效时间戳时返回「时间待定」。
+ *
+ * 守卫按**秒级时间戳**判，不能只看 `NaN`：`new Date(0).toISOString()` 是一个合法字符串
+ * （Reddit 那条路缺发布时间时上游给的就是 `createdAt: … || 0`），`Date.parse` 得到 0 而不是
+ * NaN，于是从 NaN 那道门口走过去，一路印成「1970.01.01 --:--」这种看着像真的假日期。
+ */
 export function formatIso(iso: string): string {
 	const time = Date.parse(iso);
-	if (Number.isNaN(time)) return iso;
-	return `${formatDay(Math.floor(time / 1000))} ${formatClock(Math.floor(time / 1000))}`;
+	if (!Number.isFinite(time) || time <= 0) return '时间待定';
+	const seconds = Math.floor(time / 1000);
+	return `${formatDay(seconds)} ${formatClock(seconds)}`;
 }
