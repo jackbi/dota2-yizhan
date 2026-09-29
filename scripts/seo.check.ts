@@ -66,5 +66,13 @@ assert.match(
 	/title=\{`[^`]*\$\{title\}[^`]*`\}/,
 	'PlayerLayout 要把各页传进来的 title 用上（否则 /me/* 七页一个标题）',
 );
+// 光有布局侧的断言不够：调用方写死一个常量照样是"每页一样"。唯一的动态路由尤其容易漏——
+// 同一个玩家的每一场都叫"对局详情"时，标签页与分享预览分不出是哪一局。
+const matchPage = readFileSync(new URL('../src/pages/me/matches/[id].astro', import.meta.url), 'utf8');
+assert.ok(
+	!matchPage.includes('title="对局详情"'),
+	'/me/matches/[id] 的标题不能写死：要带上这一局的日期与开赛时间',
+);
+assert.match(matchPage, /const pageTitle = match \? `对局详情 · \$\{formatDayWithWeekday\(match\.startTime\)\}/, '/me 对局详情的标题要按这一局拼');
 
 console.log('seo.check 通过');

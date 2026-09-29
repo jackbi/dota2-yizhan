@@ -60,6 +60,11 @@ const me = match?.players.find((player) => player.accountId === session.accountI
 const youWon = me && match?.radiantWin !== null ? match?.radiantWin === me.isRadiant : null;
 
 const averageRank = match?.averageRank ? rankInfo(match.averageRank).label : null;
+/*
+ * 页签名带上这一局的日期与开赛时间：同一个玩家的每一场都写"对局详情"的话，标签页、
+ * 浏览历史与分享预览完全分不出是哪一局（这条在 /me 其它页修过，这里漏了）。
+ */
+const pageTitle = match ? `对局详情 · ${formatDayWithWeekday(match.startTime)} ${formatClock(match.startTime)}` : '对局详情';
 
 const summary: { label: string; value: string; tone?: 'win' | 'loss' | 'muted' }[] = match
 	? [
@@ -92,7 +97,7 @@ const summary: { label: string; value: string; tone?: 'win' | 'loss' | 'muted' }
 	) : !matchLoad.ok ? (
 		<PlayerNotice {...noticeProps(matchLoad)} />
 	) : (
-		<PlayerLayout profile={loaded.profile} active="/me/matches" title="对局详情">
+		<PlayerLayout profile={loaded.profile} active="/me/matches" title={pageTitle}>
 			<a
 				href="/me/matches"
 				class="mb-4 inline-flex items-center gap-1 text-xs text-faint transition hover:text-cream"
