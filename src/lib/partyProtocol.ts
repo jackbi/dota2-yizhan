@@ -33,19 +33,25 @@ export type LobbyRoom = {
  *   跟着盖戳的话，一个安静但有人的房间会被反复顶到真正活跃的房间前面，而且每次都让所有订阅者
  *   重收一遍列表（心跳与"有人进出"在上报里是同一个形状，靠名字与人数就分得清）；
  * - `seenAt` 每次上报都刷新，兜底清理（`PartyLobby.pruneStale`）按它判这张卡片是不是幽灵。
+ *
+ * 顺带把"这次到底变没变"一并返回：大厅要拿它决定推不推列表，**不能在外面再按 at/名字/人数
+ * 抄一遍判据**——抄一遍就是两套规则，改了一处漏一处（这正是这条函数被抽出来的理由）。
  */
 export function nextLobbyCard(
 	code: string,
 	prev: LobbyRoom | undefined,
 	update: { name: string; count: number; now: number },
-): LobbyRoom {
+): { room: LobbyRoom; changed: boolean } {
 	const changed = !prev || prev.name !== update.name || prev.count !== update.count;
 	return {
-		code,
-		name: update.name,
-		count: update.count,
-		at: changed ? update.now : prev.at,
-		seenAt: update.now,
+		changed,
+		room: {
+			code,
+			name: update.name,
+			count: update.count,
+			at: changed ? update.now : prev.at,
+			seenAt: update.now,
+		},
 	};
 }
 

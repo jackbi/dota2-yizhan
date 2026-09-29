@@ -200,25 +200,30 @@ ok('chat：空/非字符串被拒，超长裁剪');
 	 * 而且每次都让所有订阅者重收一遍列表。
 	 */
 	const beat = nextLobbyCard('ABCDE', base, { name: '开黑房间', count: 5, now: T + 900_000 });
-	assert.equal(beat.at, T, '房名与人数都没变：at 要保住原值');
-	assert.equal(beat.seenAt, T + 900_000, '存活时间每次上报都要刷新（兜底清理按它判）');
-	assert.equal(beat.count, 5);
+	assert.equal(beat.room.at, T, '房名与人数都没变：at 要保住原值');
+	assert.equal(beat.room.seenAt, T + 900_000, '存活时间每次上报都要刷新（兜底清理按它判）');
+	assert.equal(beat.room.count, 5);
+	assert.equal(beat.changed, false, '没变就不能让大厅重推一遍列表');
 
 	const joined = nextLobbyCard('ABCDE', base, { name: '开黑房间', count: 6, now: T + 900_000 });
-	assert.equal(joined.at, T + 900_000, '人数变了要往前走，卡片才会浮到列表前面');
+	assert.equal(joined.room.at, T + 900_000, '人数变了要往前走，卡片才会浮到列表前面');
+	assert.equal(joined.changed, true, '人数变了要重推列表');
 	const renamed = nextLobbyCard('ABCDE', base, { name: '换了个名字', count: 5, now: T + 900_000 });
-	assert.equal(renamed.at, T + 900_000, '改了房名也算变动');
+	assert.equal(renamed.room.at, T + 900_000, '改了房名也算变动');
+	assert.equal(renamed.changed, true, '改了房名也要重推列表');
 
 	const fresh = nextLobbyCard('ABCDE', undefined, { name: '开黑房间', count: 2, now: T });
-	assert.equal(fresh.at, T, '第一次上报（建房）本身就是变动');
-	assert.equal(fresh.seenAt, T);
-	assert.equal(fresh.code, 'ABCDE', 'DO 的名字要从路由那份代码带过来');
+	assert.equal(fresh.room.at, T, '第一次上报（建房）本身就是变动');
+	assert.equal(fresh.room.seenAt, T);
+	assert.equal(fresh.room.code, 'ABCDE', 'DO 的名字要从路由那份代码带过来');
+	assert.equal(fresh.changed, true, '新建的房间当然要出现在列表里');
 
 	// 老数据没有 seenAt：兜底清理那边退回 at（见 partyRoom.check 的接线）。
 	const legacy = nextLobbyCard('ABCDE', { code: 'ABCDE', name: '开黑房间', count: 5, at: T }, { name: '开黑房间', count: 5, now: T + 1 });
-	assert.equal(legacy.at, T, '老卡片也要按同一条规则记账');
-	assert.equal(legacy.seenAt, T + 1);
-	ok('大厅卡片：at 只在人数/房名变了时前进，心跳只刷 seenAt');
+	assert.equal(legacy.room.at, T, '老卡片也要按同一条规则记账');
+	assert.equal(legacy.room.seenAt, T + 1);
+	assert.equal(legacy.changed, false, '老卡片上没变就是没变');
+	ok('大厅卡片：at 只在人数/房名变了时前进、心跳只刷 seenAt，且"变没变"由它一并给出');
 }
 
 console.log(`partyProtocol 全部断言通过（${cases} 组）`);

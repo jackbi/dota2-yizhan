@@ -690,16 +690,16 @@ export class PartyLobby {
 			} else {
 				const prev = this.rooms.get(code);
 				/*
-				 * 记账规则（含 `at` 只有真变了才往前走）在 `nextLobbyCard` 里，那边能被自检直接跑；
-				 * 这里只负责判断要不要重推列表。
+				 * 记账规则（`at` 只有真变了才往前走）与"这次到底变没变"都在 `nextLobbyCard` 里，
+				 * 那边能被自检直接跑；这里不要再按 at/名字/人数抄一遍判据。
 				 */
-				const card = nextLobbyCard(code, prev, {
+				const { room, changed: cardChanged } = nextLobbyCard(code, prev, {
 					name: L.sanitizeName(typeof body.name === 'string' ? body.name : '') || '开黑房间',
 					count,
 					now: Date.now(),
 				});
-				changed = !prev || prev.at !== card.at || prev.count !== card.count || prev.name !== card.name;
-				this.rooms.set(code, card);
+				changed = cardChanged;
+				this.rooms.set(code, room);
 			}
 			await this.persist();
 			if (changed) this.broadcast();

@@ -146,8 +146,12 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	// `partyProtocol.check.ts`；这里只钉大厅确实走了那条路，而不是自己在 fetch 里又盖一次戳。
 	assert.match(
 		worker,
-		/const card = nextLobbyCard\(code, prev, \{[\s\S]{0,200}?now: Date\.now\(\)/,
-		'大厅卡片要走 nextLobbyCard 记账（at 只在真变了时往前走）',
+		/const \{ room, changed: cardChanged \} = nextLobbyCard\(code, prev, \{[\s\S]{0,200}?now: Date\.now\(\)/,
+		'大厅卡片要走 nextLobbyCard 记账（at 只在真变了时往前走，"变没变"也由它给）',
+	);
+	assert.ok(
+		!/changed = !prev \|\| prev\.at !== /.test(worker),
+		'不要再在 fetch 里抄一遍"变没变"的判据：那是 nextLobbyCard 里的规则',
 	);
 	assert.match(
 		worker,
