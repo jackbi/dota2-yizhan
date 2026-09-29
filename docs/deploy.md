@@ -27,6 +27,7 @@
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
 | `.cache/avatars/` | 主播头像的字节（构建结束拷进 `dist/avatars/`） | 永久，30 天没用到就清理 |
 | `.cache/covers/` | B站视频封面的字节（构建结束拷进 `dist/covers/`） | 永久，30 天没用到就清理 |
+| `.cache/teamlogos/` | 战队队标的字节（构建结束拷进 `dist/teamlogos/`） | 永久，30 天没用到就清理 |
 | `.cache/patch-heroes/` | 更新日志里的英雄图标（构建结束拷进 `dist/patch-heroes/`） | 永久，30 天没用到就清理 |
 | `.cache/patch-items/` | 更新日志里的物品图标（构建结束拷进 `dist/patch-items/`） | 永久，30 天没用到就清理 |
 | `.cache/tournaments.json` | 聚合后的赛事日历 | 每次拿到完整日历就覆盖 |
@@ -35,7 +36,7 @@
 上面那些「永久」指的是**读取时不判过期**，不等于文件会一直留着。每轮构建开头会扫一遍
 （`astro:build:start`）：
 
-- 图片频道（avatars / covers / patch-heroes / patch-items）走 `pruneImages()`：**30 天没被用到**
+- 图片频道（avatars / covers / teamlogos / patch-heroes / patch-items）走 `pruneImages()`：**30 天没被用到**
   就删——`localImages()` 每次命中都会把 mtime 刷成当前时间，所以这里的 mtime 是「上次用到」。
 - 其余目录走 `pruneCacheDirs()`：**180 天没写过**的 JSON / HTML 删掉，外加任何年龄的 `*.tmp`
   写入残留。这里的 mtime 是「上次写入」——命中缓存不刷新它，只有真联网抓回来才写，所以窗口给得

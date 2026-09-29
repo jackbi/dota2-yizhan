@@ -43,12 +43,14 @@ const SITE_ORIGIN = 'https://dota2.hiwenbin.com';
 /**
  * 需要在构建末尾发布到 `dist/` 的图片频道（通用逻辑见 `src/lib/localImages.ts`）。
  *
- * `dir` 必须和 `src/lib/avatars.ts`、`src/lib/covers.ts` 里的 `channel.dir` 对得上：
+ * `dir` 必须和 `src/lib/avatars.ts`、`src/lib/covers.ts`、`src/lib/teamLogos.ts` 等
+ * 里的 `channel.dir` 对得上：
  * 这里是「哪个目录要拷出去」，那边是「拷出去的图长什么样」。
  */
 const IMAGE_CHANNELS = [
 	{ dir: 'avatars', label: '主播头像', empty: '没有取到任何头像，页面退回首字母占位' },
 	{ dir: 'covers', label: 'B站视频封面', empty: '没有取到任何封面，页面退回热链 B站 CDN' },
+	{ dir: 'teamlogos', label: '战队队标', empty: '没有取到任何队标，页面退回热链 Liquipedia' },
 	{ dir: 'patch-heroes', label: '更新日志英雄图标', empty: '没有取到任何英雄图标，更新日志只显示名字' },
 	{ dir: 'patch-items', label: '更新日志物品图标', empty: '没有取到任何物品图标，更新日志只显示名字' },
 	{ dir: 'wmpvp-images', label: '完美世界配图', empty: '没有取到国服资讯配图，详情页会退回外链（那是 403）' },

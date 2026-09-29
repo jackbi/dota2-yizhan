@@ -149,8 +149,10 @@ Builder Policy + new approval process for API access」）结束了自助 API �
 > 对象，老缓存不会自己长出字段：加头像那次就没加版本，结果 64 个热门房间一个头像都没有，
 > 而构建汇总还写着「使用缓存」，看上去像抓取失败，其实是拿了一份旧形状的数据。
 
-**还有哪些图没落地。** 站点里仍有大量外链图（`img.dota2.com.cn` 1287 张、`liquipedia.net` 993 张，
-以及社区正文里的图），它们量级大、多数来自第三方正文，没有跟着一起本地化。已知会挂的两处：
+**还有哪些图没落地。** 站点里仍有大量外链图（`img.dota2.com.cn` 930 个地址、`www.dota2.com.cn`
+525 个，以及社区正文里的图），它们量级大、多数来自第三方正文，没有跟着一起本地化。
+**`liquipedia.net` 那一批已经落地了**——队标走 `/teamlogos/`，见「赛事数据来自 Liquipedia」那节。
+已知会挂的两处：
 
 - **虎扑正文图**：一度记为「全 403，因为 `sanitizeHupuHtml()` 没补 `referrerpolicy`」——这个结论
   是错的，别再照它去改。详情页有**文档级**的 `<meta name="referrer" content="no-referrer">`
@@ -383,6 +385,33 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
   不归并就会被拆成两个站内赛事，读者点进去看到的是「即将开始」加一场孤零零的对阵。归并只认明确的
   阶段名（`group_stage` / `playoffs` / …），`BLAST/SLAM/9/Southeast_Asia` 这种区域子赛有自己
   独立的赛程，保持单独一个赛事。
+
+### 队标也取回本地了
+
+主赛程页与赛事页的每支队伍都带一份队标缩略图。这些图以前是**热链**`liquipedia.net`，
+一轮构建下来对阵行、对阵页、战队页、赛事页加起来三千多个 `<img>` 指着人家的服务器。
+现在和头像、封面走同一条路（直连 → `wsrv.nl` 代理 → `.cache/teamlogos/` → 构建末尾发布到
+`/teamlogos/`），页面引用的永远是站内地址。频道配置在 `src/lib/teamLogos.ts`，
+「哪些地址要去下」的判据在 `src/lib/teamLogoSource.ts`（纯函数，`scripts/teamLogos.check.ts` 守着）。
+
+三件实测出来的事，改这块之前先看一眼：
+
+- **别把缩略图地址改写成更大的尺寸**。Liquipedia 赛程页给的是它按版面缩好的小图（实测 36–100px），
+  把 `50px-` 换成 `128px-` 试过，46 个里有 18 个直接 404——它对超过原图宽度的缩略图请求是**拒绝**
+  而不是放大。所以按原样取回来，清晰度和热链时一样，不会更差。真要高清除非去战队页的 Infobox 拿
+  Valve 队伍 id（`teamid=2163`），换 STRATZ 的 `cdn.stratz.com/images/dota2/teams/<id>.png`。
+- **`Dota_2_default_allmode.png` 不是队标**。那是 Valve 的通用标志，赛程页上实测有 6 支队伍挂着它，
+  六个不同的队显示同一个图标比显示首字母还糟。判据里当成「没有队标」处理，页面退回首字母占位。
+- **本地化要盖住 bundle 里的每一个 `TeamRef`**。一支队在对阵里是一堆各自独立的对象，
+  `buildEvents()` 归并出的 `event.teams` 还是**拷贝**——只改其中一个，线上表现就是
+  一部分页面对了、一部分还在热链（这个漏过一次：先把对阵改对了，赛事页的「参赛队伍」那一栏没跟上）。
+
+**有一批队标在深色底上几乎看不见**，这是既有的问题、不是这次改造引入的：Liquipedia 对一部分队伍只给
+`_lightmode` 版本（据其模板，那是给亮色界面用的）。实测叠在站点的 `--color-surface-2`（`#2f140f`）
+上取平均亮度：Team Spirit 3.0、Team Lynx 2.3、Balu Team 3.5、Team Nemesis 26.4、Kalmychata 27.8（满分
+255），而 NAVI 103、Team Liquid 79.7 是正常的。这几支现在显示出来就是「首字母 + 一块看不见的图」。
+要修得走战队页那条线（那里的 Infobox 同时给 `image=` 与 `imagedark=`），或者直接用 STRATZ 按队伍 id
+给的队标——两件事都要先把队伍 slug 映射到 Valve 队伍 id。
 
 ## 对阵页的阵容：按小局取
 

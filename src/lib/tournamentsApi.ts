@@ -4,6 +4,8 @@ import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
 import { LIQUIPEDIA_LABEL, fetchLiquipediaEventMatches, fetchLiquipediaMatches } from './liquipediaApi';
 import { routeSlug } from './routeSlug';
+import { isPlaceholderLogo } from './teamLogoSource';
+import { localizeTeamLogos } from './teamLogos';
 import type {
 	DataSource,
 	DataSourceStatus,
@@ -459,10 +461,54 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 let bundlePromise: Promise<TournamentsBundle> | null = null;
 
 /**
+ * 把外链队标换成本站路径。
+ *
+ * 放在这里而不是各页面里：`MatchRow`、`/matches/[id]`、`/tournaments/[id]`、`/teams/[id]`
+ * 四个地方都要队标，拿到的是同一批 `TeamRef`。在各页面上分别做一次等于同一张图检查四遍，
+ * 而且一定会漏掉一处，漏掉的表现是"只有那个页面还在热链"。
+ *
+ * 只改**内存里这一份**：落进 `.cache/tournaments.json` 的仍是原始外链。那是数据缓存，
+ * 混进构建产物路径之后，离线构建会拿到一堆 `dist/` 里其实没有的地址。
+ *
+ * 拿不到字节就保留原外链，和 `covers.ts` 一样——不会比改造前更差。
+ */
+async function localizeLogos(bundle: TournamentsBundle): Promise<TournamentsBundle> {
+	/*
+	 * 这里刻意**不去重**：一支队在 bundle 里是一堆各自独立的 `TeamRef` 对象（每场对阵两个），
+	 * 而本地化只下一张。去重成"每队一个引用"的话，只有那一个对象被改写，同一支队在别的
+	 * 对阵里的引用还留着外链——线上表现是一部分页面对了、另一部分还在热链。
+	 * 做法是：交给 `localizeTeamLogos` 去重下载（它取最宽的那张），这里再把**每一个**引用
+	 * 都指到同一个站内地址上。
+	 *
+	 * `event.teams` 也要收：那是 `buildEvents()` 按队名归并出来的**拷贝**（`{ ...team }`），
+	 * 不是对阵里那些对象，漏掉它赛事页的「参赛队伍」那一栏就还是热链——实测漏过一次。
+	 */
+	const refs: TeamRef[] = [];
+	for (const event of bundle.events) {
+		refs.push(...event.teams);
+		for (const match of event.matches) refs.push(match.home, match.away);
+	}
+	for (const match of bundle.live) refs.push(match.home, match.away);
+
+	const local = await localizeTeamLogos(refs);
+	for (const team of refs) {
+		const path = local.get(team.id);
+		if (path) team.logo = path;
+		// 占位图不是这支队自己的队标，去掉，让页面退回首字母（判据见 `teamLogoSource.ts`）。
+		else if (isPlaceholderLogo(team.logo)) delete team.logo;
+	}
+
+	return bundle;
+}
+
+/**
  * 取赛事数据。构建期多个页面（列表页、详情页的 getStaticPaths）会重复调用，
  * 这里用模块级 Promise 做单飞，保证一次构建只抓一轮。
+ *
+ * 单飞要盖住本地化这一步：`assemble()` 之后、任何页面拿到 bundle 之前必须已经换好路径，
+ * 否则先渲染的那个页面会拿到外链、后渲染的拿到本地路径——同一轮构建两种结果。
  */
 export function getTournaments(): Promise<TournamentsBundle> {
-	bundlePromise ??= assemble();
+	bundlePromise ??= assemble().then(localizeLogos);
 	return bundlePromise;
 }
