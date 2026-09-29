@@ -28,19 +28,58 @@ export interface CacheLimits {
 /**
  * 估算一份缓存值占多少字节。
  *
- * 拿 `JSON.stringify` 的长度当量级：这些值本来都是从上游 JSON 解析出来的，形状就是它。
- * 乘 2 是因为 V8 的字符串按 UTF-16 存（值里中文不少，不过淘汰只关心"谁更大"这个排序，
- * 不需要精确到字节）。量不出来的（循环引用、含 BigInt）按"跟预算一样大"算，
+ * **不能只靠 `JSON.stringify` 量长度**：它把 `Map` / `Set` 序列化成 `{}`，而 `gameRefs` 缓存的
+ * 正是两张这样的表（127 个英雄、600 多件装备，实际约 150KB）——在账本上各占 4 字节，
+ * 等于免预算、永远淘汰不掉，恰好与"按字节记账就是为了挡住大条目"相反。
+ *
+ * 所以这里自己走一遍结构：基本类型按长度算（字符串乘 2，因为 V8 按 UTF-16 存），
+ * `Map` / `Set` / 数组 / 普通对象递归累加（键也算）。深度给个上限：缓存里不该有环，
+ * 但这是防呆——真遇到自引用也不会让构建卡在测量上。
+ *
+ * 量不出来的（函数、symbol 之类，本来也不该出现在缓存里）按"跟预算一样大"算，
  * 它会在下一次写入时立刻被丢掉，而不是挂着一个不肯淘汰的条目。
  */
-function estimateBytes(value: unknown, unmeasurable: number): number {
-	try {
-		const text = JSON.stringify(value);
-		return text === undefined ? unmeasurable : text.length * 2;
-	} catch {
-		return unmeasurable;
+function estimateBytes(value: unknown, unmeasurable: number, depth = 0): number {
+	if (value === null || value === undefined) return 8;
+	switch (typeof value) {
+		case 'string':
+			return value.length * 2 + 8;
+		case 'number':
+		case 'boolean':
+		case 'bigint':
+			return 16;
+		case 'function':
+		case 'symbol':
+			return unmeasurable;
+		default:
+			break;
 	}
+	// 容器自身还有一层开销；到不了底就按"还剩不少"估，宁可多算一点。
+	if (depth >= MAX_MEASURE_DEPTH) return 256;
+
+	let total = 48;
+	if (value instanceof Map) {
+		for (const [key, item] of value) {
+			total += estimateBytes(key, unmeasurable, depth + 1) + estimateBytes(item, unmeasurable, depth + 1);
+		}
+		return total;
+	}
+	if (value instanceof Set) {
+		for (const item of value) total += estimateBytes(item, unmeasurable, depth + 1);
+		return total;
+	}
+	if (Array.isArray(value)) {
+		for (const item of value) total += estimateBytes(item, unmeasurable, depth + 1);
+		return total;
+	}
+	for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+		total += key.length * 2 + estimateBytes(item, unmeasurable, depth + 1);
+	}
+	return total;
 }
+
+/** 结构最多递归到第几层。缓存值都是从上游 JSON 或几张 Map 来的，再深就是异常形状了。 */
+const MAX_MEASURE_DEPTH = 8;
 
 /**
  * 建一份带预算的内存缓存。

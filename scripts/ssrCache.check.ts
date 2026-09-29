@@ -71,12 +71,40 @@ const bigValue = (): string => 'x'.repeat(10 * 1024);
 	// ttl 给 0 就是"立刻过期"，逼出一次真正的重写。
 	await cache.cached('same', 0, async () => 'tiny');
 	const afterSmall = cache.stats().bytes;
-	assert.equal(afterSmall, JSON.stringify('tiny').length * 2, `重写小值后应当只记小值的账，实际 ${afterSmall}`);
+	assert.ok(afterSmall < 200, `重写一个 4 字符的值只该记几十字节，实际 ${afterSmall}`);
 	assert.ok(afterSmall < afterBig, '重写同一 key 不能把两份字节叠在一起记账');
 	ok('同一个 key 重写只记一份账');
 }
 
-// 4. 命中与 TTL：没过期不再加载，过期了要重新加载
+// 4. Map / Set 也要进账：JSON.stringify 把它们变成 `{}`，而 gameRefs 缓存的正是两张 Map
+{
+	const limits = { maxEntries: 1000, maxBytes: 120_000 };
+	const cache = createCache(limits);
+	const table = (fill: string) => {
+		const map = new Map<number, { name: string; img: string }>();
+		for (let i = 0; i < 300; i += 1) map.set(i, { name: `${fill}${i}`.repeat(6), img: `/i/${i}.png`.repeat(3) });
+		return map;
+	};
+	const first = table('英雄');
+	await cache.cached('map0', 60_000, async () => first);
+	const afterOne = cache.stats().bytes;
+	const asJson = JSON.stringify(first).length * 2;
+	assert.ok(afterOne > 20_000, `一张 300 条的 Map 至少要记几十 KB，实际只有 ${afterOne}`);
+	assert.ok(afterOne > asJson * 4, `按 JSON 量长度会把它算成 ${asJson} 字节（Map 序列化成 {}），实际记了 ${afterOne}`);
+
+	let loads = 0;
+	for (let i = 1; i < 6; i += 1) await cache.cached(`map${i}`, 60_000, async () => (loads += 1, table(`第${i}张`)));
+	assert.ok(cache.stats().bytes <= limits.maxBytes, `总字节越线：${cache.stats().bytes} > ${limits.maxBytes}`);
+	assert.ok(cache.stats().entries < 6, '几张几十 KB 的 Map 不该都留在预算里');
+	await cache.cached('map0', 60_000, async () => {
+		loads += 1;
+		return first;
+	});
+	assert.equal(loads, 6, '最旧的那张 Map 要被淘汰（再取一次会重新加载）');
+	ok('Map / Set 进账，大表照样按预算淘汰');
+}
+
+// 5. 命中与 TTL：没过期不再加载，过期了要重新加载
 {
 	const cache = createCache({ maxEntries: 10, maxBytes: 10 * 1024 * 1024 });
 	let calls = 0;
