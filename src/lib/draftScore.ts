@@ -727,8 +727,11 @@ export function advise(input: AdviseInput): Advice | null {
 			const matches = entry.matches[position - 1];
 			const reasons = [
 				rate === null
-					// 口径用 `windowLabel`（「上一个完整统计周」）而不是「近 N 天」：STRATZ 不传 week 时
-					// 给的是上一个完整统计周，最坏离现在 7~14 天，写成"近 7 天"是错的（见 docs/data-sources.md）。
+					// 口径用 `windowLabel`（「上一个完整统计周」）而不是「近 N 天」：这个窗口是上游
+					// 按 Unix 纪元对齐的 7 天桶，**显式传 week** 才拿得到完整的一桶，最坏离现在 7~14 天，
+					// 写成「近 7 天」是错的（见 metaWindow.ts 与 docs/data-sources.md）。
+					// 注意别把 stratzApi 里那行 `week: weekAnchorSeconds(week)` 当成多余的删掉：
+					// 不传 week 拿到的是**当前那个没走完的桶**（实测只有 5/7 天）。
 					? `${position} 号位在${data.windowLabel}没有足够样本，只能按中性估`
 					: `${position} 号位在${data.windowLabel}的胜率 ${pct(rate)}（${matches.toLocaleString('zh-CN')} 场）`,
 				`现在拿：五号位估值 ${pct(ourBase.total / 5)} → ${pct(oursAfter.total / 5)}`,
