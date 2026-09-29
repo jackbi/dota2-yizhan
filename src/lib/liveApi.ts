@@ -319,7 +319,12 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
 		const page = await fetchText(`https://www.douyu.com/${room.roomId}`);
 		const pageOwner = page ? pageOwnerFromTitle(room.platform, page) : undefined;
 		if (pageOwner) {
-			return { status: unknownStatus(`房间页显示的主播是「${pageOwner}」，但本次未取到开播状态`), source: 'network' };
+			/*
+			 * 标 `none` 而不是 `network`：这只是从房间页标题里认出了主播名，**开播状态仍然是未知的**。
+			 * 标成联网抓取的话，构建摘要会把"本轮联网 N 个"算上它，`usable > 0 && cache === 0`
+			 * 时整源还会判成 fresh——而它其实是没取到状态的那一批。
+			 */
+			return { status: unknownStatus(`房间页显示的主播是「${pageOwner}」，但本次未取到开播状态`), source: 'none' };
 		}
 	}
 

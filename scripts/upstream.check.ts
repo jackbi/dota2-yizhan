@@ -149,4 +149,18 @@ assert.match(
 assert.match(live, /const stale = usableStale\(hit, OFFLINE_STALE_MAX_MS\)/, '离线分支只能用离线那档');
 assert.match(live, /const stale = usableStale\(await readCachedStatus\(file\), STALE_MAX_MS\)/, '网络兜底只能用网络那档');
 
+/*
+ * 「状态未知」的出口不能标成联网抓取。
+ *
+ * 这条只靠行为断言看不出来：`scripts/liveApi.check.ts` 把 'network' / 'cache' / 'none' 手写喂给
+ * `sourceSummary`，从不经过 `loadRoom`——把 `loadRoom` 里所有 `source:` 改掉，那三个自检照样全绿。
+ * 而 `sourceSummary` 是按标签计数的：「斗鱼房间页只读到主播名、开播状态没取到」那种情况一旦标成
+ * `network`，构建摘要会把它算进"本轮联网 N 个"，`usable > 0 && cache === 0` 时整源还判成 fresh。
+ */
+const unknownExits = [...live.matchAll(/return \{ status: unknownStatus\((?:[^()]|\([^()]*\))*\), source: '([a-z]+)' \}/g)];
+assert.ok(unknownExits.length >= 3, `只找到 ${unknownExits.length} 处 unknownStatus 出口，解析多半坏了`);
+for (const exit of unknownExits) {
+	assert.equal(exit[1], 'none', `unknownStatus 的出口只能标 'none'（现在是 '${exit[1]}'）：状态未知不能记成联网抓取`);
+}
+
 console.log(`upstream.check 通过（扫了 ${withFetch.length} 个取数文件）`);
