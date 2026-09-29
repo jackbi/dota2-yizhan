@@ -1,0 +1,136 @@
+---
+import Layout from '../layouts/Layout.astro';
+
+/**
+ * 赞赏页。
+ *
+ * **二维码是自托管的**（`public/donate/`）。README 里那两张走图床热链，而站点的规矩是资源自己发
+ * （字体、logo、头像都是这样）。热链的问题不是慢：图床哪天换域名、加防盗链或者干脆关掉，
+ * 这里就剩一张破图，而扫码的人正好卡在这一步，没有任何替代路径。
+ *
+ * **名单是一小段手写数据，不接任何支付接口。** 赞赏发生在站外（微信 / 支付宝），
+ * 站点这边只把收过的人记下来：加下一位就往 `DONORS` 上面 append 一条（最新的放最上面），
+ * 页面与自检都读这个数组。
+ */
+const QR_CODES = [
+	{
+		id: 'wechat',
+		label: '微信',
+		src: '/donate/wechat.jpg',
+		alt: '微信收款码',
+		width: 511,
+		height: 546,
+		hint: '长按识别，或截图后用微信「扫一扫」从相册选。',
+	},
+	{
+		id: 'alipay',
+		label: '支付宝',
+		src: '/donate/alipay.jpg',
+		alt: '支付宝收款码',
+		width: 1071,
+		height: 1072,
+		hint: '长按识别，或截图后用支付宝「扫一扫」从相册选。',
+	},
+] as const;
+
+/** 赞赏过的人，最新的放最上面。`note` 是到账通知里的原话，没有就不写。 */
+interface Donor {
+	name: string;
+	amount: number;
+	/** 到账日期，形如 2026.09.20 */
+	at: string;
+	note?: string;
+}
+
+const DONORS: Donor[] = [
+	{
+		name: 'Soren.H',
+		amount: 66,
+		at: '2026.09.20',
+		note: '牛的兄弟，知乎刷到的，说实话做得比完美世界 APP 好太多了！',
+	},
+];
+
+const total = DONORS.reduce((sum, donor) => sum + donor.amount, 0);
+---
+
+<Layout
+	title="赞赏项目 · DOTA2 驿站"
+	description="本站的赞赏页：微信与支付宝收款码，以及到目前为止赞赏过的人。自愿原则，收到的赞赏用在开发环境与后续维护上。"
+	breadcrumbs={[{ name: '赞赏项目' }]}
+>
+	<section class="mx-auto max-w-3xl px-4 py-12 sm:px-6">
+		<h1 class="font-display text-3xl">赞赏项目</h1>
+		<p class="mt-3 text-sm leading-relaxed text-muted">
+			如果这个站点对你有帮助，欢迎请我喝杯咖啡 ☕️。
+			<strong class="text-cream">自愿原则</strong>：该有的功能一个都不锁在赞赏后面——
+			没有会员、没有广告、也不接推广。
+		</p>
+
+		<!--
+			二维码用白底并留一圈内边距：这两张图自己带白边，但深色页面上留一圈白更保险，
+			扫码失败最常见的原因就是对比度不够。宽高写死是为了别让页面跳版。
+		-->
+		<div class="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
+			{
+				QR_CODES.map((code) => (
+					<figure class="rounded-2xl border border-line bg-surface p-4 text-center">
+						<figcaption class="font-display text-base text-cream">{code.label}</figcaption>
+						<img
+							src={code.src}
+							alt={code.alt}
+							width={code.width}
+							height={code.height}
+							loading="lazy"
+							decoding="async"
+							class="mx-auto mt-3 h-auto w-full max-w-[240px] rounded-lg bg-white p-2"
+						/>
+						<p class="mt-3 text-xs leading-relaxed text-faint">{code.hint}</p>
+					</figure>
+				))
+			}
+		</div>
+
+		<section class="mt-10 rounded-2xl border border-line bg-surface/60 p-5" aria-label="赞赏的用途与边界">
+			<h2 class="font-display text-lg">赞赏用在哪</h2>
+			<p class="mt-3 text-sm leading-relaxed text-muted">
+				收到的赞赏会用在<strong class="text-cream">提高开发积极性和开发环境</strong>上。
+				这个站是一个人业余维护的，赞赏是「这件事值得继续做」的反馈。
+			</p>
+			<p class="mt-3 text-xs leading-relaxed text-faint">
+				边界说清楚：赞赏不改变任何功能。模型 key 仍然只存在你自己的浏览器里，站点不经手也不保存；
+				数据全部来自官方与社区公开来源，没有付费内容，也不会因为谁赞赏过就给他开小灶。
+			</p>
+		</section>
+
+		<section class="mt-10" aria-label="赞赏名单">
+			<div class="flex flex-wrap items-end justify-between gap-2">
+				<h2 class="font-display text-lg">赞赏名单</h2>
+				<p class="text-xs text-faint">
+					目前 {DONORS.length} 位 · 累计 ¥{total.toFixed(2)}
+				</p>
+			</div>
+			{
+				DONORS.length === 0 ? (
+					<p class="mt-3 text-sm leading-relaxed text-muted">还没有人赞赏过。你是第一个的话，名字会记在这里。</p>
+				) : (
+					<ul class="mt-3 space-y-3">
+						{DONORS.map((donor) => (
+							<li class="rounded-2xl border border-line bg-surface/60 p-4">
+								<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+									<span class="font-display text-base text-cream">{donor.name}</span>
+									<span class="text-sm text-gold">¥{donor.amount.toFixed(2)}</span>
+									<span class="text-xs text-faint">{donor.at}</span>
+								</div>
+								{donor.note ? <p class="mt-2 text-sm leading-relaxed text-muted">「{donor.note}」</p> : null}
+							</li>
+						))}
+					</ul>
+				)
+			}
+			<p class="mt-3 text-xs leading-relaxed text-faint">
+				按到账时间倒序，只写名字、金额与留言——留言按到账通知里的原话放，没有留言就不写。
+			</p>
+		</section>
+	</section>
+</Layout>
