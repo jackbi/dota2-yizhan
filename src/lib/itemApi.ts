@@ -157,18 +157,28 @@ export function normalizeItemDetail(key: string, v: any): ItemDetail {
 	};
 }
 
-/** 懒加载全部装备详情（JSONP），缓存复用。 */
+/**
+ * 懒加载全部装备详情（JSONP），缓存复用。
+ *
+ * 失败的 promise **不能留在缓存里**（与 `heroApi` 的 `loadHeroDetail` 同一条规矩）：
+ * 留一次（脚本加载失败，或者上游返回的形状不对），整个会话的悬浮框都会退回卡片上的
+ * `data-*` 兜底——描述与配方永远不出现，而页面上没有任何提示、也不会再重试。
+ */
 export function loadItemDetails(): Promise<Record<string, ItemDetail>> {
 	if (!detailCache) {
 		detailCache = (async () => {
 			const payload = await loadJsonp(DETAIL_URL, 'HeropediaDFReceive');
 			const itemdata = payload.itemdata;
+			if (!itemdata || typeof itemdata !== 'object') throw new Error('装备详情接口返回的形状不对');
 			const map: Record<string, ItemDetail> = {};
 			for (const [key, v] of Object.entries<any>(itemdata)) {
 				map[key] = normalizeItemDetail(key, v);
 			}
 			return map;
-		})();
+		})().catch((error: unknown) => {
+			detailCache = null;
+			throw error;
+		});
 	}
 	return detailCache;
 }
