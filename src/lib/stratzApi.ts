@@ -149,19 +149,17 @@ async function writeCache<T>(key: string, value: T): Promise<void> {
  *
  * TTL 可以按缓存内容给：比赛明细里 BP 是后补的，同一份数据"现在算新鲜、之后算过期"
  * 取决于它完不完整，见 `matchTtlSeconds`。
+ *
+ * **回退只在同一个键内**（同一份数据自己过期了还能用）。不要跨键回退，尤其是那些带统计窗口的
+ * 键：`hero-stats:<窗口起点>` 一旦读不到就去读无后缀的 `hero-stats`，拿到的可能是**上一个桶**
+ * 甚至**当前那个没走完的桶**（实测 1,040,817 场 vs 本窗口 1,763,328 场），而页面照样按
+ * 「上一个完整统计周」渲染——那比"这一块不显示"错得更多。跨桶后的首轮构建上游要是失败，
+ * 就让它空着，等下一轮构建（每小时一次）再取。
  */
 async function cached<T>(
 	key: string,
 	ttlSeconds: number | ((value: T) => number),
 	load: () => Promise<T | null>,
-	/**
-	 * 请求失败、当前键又没有缓存时，按顺序去读这些键（忽略 TTL）。
-	 *
-	 * 缓存键带上统计窗口起点之后，跨过桶边界的**第一轮构建**是个空窗：新键还没有文件，
-	 * 上游又刚好抽风或离线，`hit` 为 null 就整块数据没了——而上一桶那份可用数据还躺在磁盘上。
-	 * 离线构建的承诺就是用起 `.cache/`（见本函数第一段），所以这里留一条回退路。
-	 */
-	fallbacks: readonly string[] = [],
 ): Promise<T | null> {
 	const hit = await readCache<T>(key);
 	if (hit) {
@@ -174,10 +172,6 @@ async function cached<T>(
 		return fresh;
 	}
 	if (hit) return hit.value;
-	for (const fallback of fallbacks) {
-		const older = await readCache<T>(fallback);
-		if (older) return older.value;
-	}
 	return null;
 }
 
@@ -604,6 +598,8 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 		 *
 		 * 缓存键带上窗口起点：跨过桶边界时旧键里的数据属于上一个桶，不该拿来当这一轮的窗口
 		 * （TTL 只有 6 小时，但边界前后差几小时就会串）。旧键交给 `cachePrune`（180 天）清。
+		 * 也**不要**在新键读不到时回退到旧键：那正是"把上一个桶的数字贴上本窗口的标签"
+		 * （见 `cached` 的说明与禁用数那条同一条原则）。
 		 */
 		const week = previousStatWeek(Date.now());
 		const windowKey = String(week.startMs);
@@ -614,7 +610,7 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 			});
 			const rows = data?.heroStats?.stats;
 			return rows && rows.length > 0 ? rows : null;
-		}, ['hero-stats']);
+		});
 		if (!statRows || statRows.length === 0) {
 			await reportSource(
 				'stratz-hero',
@@ -639,7 +635,7 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 				});
 				const rows = data?.heroStats?.banDay;
 				return rows && rows.length > 0 ? rows : null;
-			}, ['hero-bans'])) ?? [];
+			})) ?? [];
 
 		const meta = buildHeroMeta(statRows, banRows, week);
 		if (meta) {
@@ -950,7 +946,7 @@ export function fetchHeroLanes(): Promise<LaneData | null> {
 		const withLanes = await collect(true);
 		if (Object.keys(vs).length === 0 || Object.keys(withLanes).length === 0) return null;
 		return { vs, with: withLanes };
-	}, ['hero-lanes-v3']);
+	});
 		if (!data) {
 			await reportSource('stratz-lanes', 'STRATZ 线上对位', 'empty', '请求未拿到数据（限流、挑战页或接口异常）');
 			return null;

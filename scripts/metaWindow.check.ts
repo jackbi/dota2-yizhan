@@ -101,23 +101,16 @@ const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 	assert.ok(takeDays >= 14, `日桶至少要覆盖 14 天（窗口最远 13 天前），现在是 ${takeDays}`);
 
 	/*
-	 * 版本化的缓存键不能把离线兜底打掉。
+	 * 缓存回退只在同一个键内，不跨窗口。
 	 *
-	 * 跨过桶边界的**第一轮构建**是个空窗：新键还没有文件，上游又刚好抽风或离线。这时 `hit`
-	 * 为 null，如果直接返回 null，整个「上一个完整统计周」板块连同英雄胜率榜一起消失——而上一桶
-	 * 那份可用数据还躺在磁盘上（旧键 `hero-stats` / `hero-bans`）。离线构建的承诺就是用起 `.cache/`。
+	 * 曾经加过一条"新键读不到就回退无后缀旧键"的兜底，实测是有害的：`hero-stats.json` 里是
+	 * 1,040,817 场（没走完的那个桶）、`hero-lanes-v3.json` 是 5,959 + 2,597 格（同样没传 `week`），
+	 * 而本窗口分别是 1,763,328 场与 11,623 + 5,221 格。跨桶后首轮上游一失败，页面就会拿这些
+	 * 数字顶着「上一个完整统计周」的标签发布，与禁用数那条「宁可不给也不要用错值」自相矛盾。
 	 */
-	assert.match(stratz, /for \(const fallback of fallbacks\)/, 'cached 要真的去读回退键，而不是只声明一个参数');
-	assert.match(
-		stratz,
-		/`hero-stats:\$\{windowKey\}`, HERO_META_TTL_SECONDS,[\s\S]{0,600}?\}, \['hero-stats'\]\)/,
-		'hero-stats 的版本化键要留旧键兜底',
-	);
-	assert.match(
-		stratz,
-		/`hero-bans:\$\{windowKey\}`, HERO_META_TTL_SECONDS,[\s\S]{0,600}?\}, \['hero-bans'\]\)/,
-		'hero-bans 的版本化键要留旧键兜底',
-	);
+	assert.ok(!/fallbacks/.test(stratz), 'cached 不该再有跨窗口回退的入口');
+	assert.ok(!/\['hero-(stats|bans)'\]/.test(stratz), 'hero-stats / hero-bans 不能回退到无窗口的旧键');
+	assert.ok(!/\['hero-lanes-v3'\]/.test(stratz), '线上对位不能回退到没传 week 的残缺桶');
 
 	/*
 	 * 线上对位也要显式要上一桶。
