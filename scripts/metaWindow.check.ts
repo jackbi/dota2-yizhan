@@ -126,8 +126,24 @@ const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 		'线上对位也要显式传 week：不传给的是当前那个没走完的桶',
 	);
 	assert.ok(
-		(stratz.match(/week: weekAnchorSeconds\(week\)/g) ?? []).length >= 2,
-		'stats 与 laneOutcome 两处要用同一个锚点',
+		(stratz.match(/week: weekAnchorSeconds\(week\)/g) ?? []).length >= 3,
+		'stats / laneOutcome / groupByTime 三处都要用同一个锚点',
+	);
+	/*
+	 * 时间曲线（`groupByTime: true`）是同一个 `heroStats.stats` 字段的第三种取法，同样不传 `week`
+	 * 就给没走完的桶。实测全池 57,289,847 场 vs 91,082,833 场；127 个英雄两边都过得了样本门槛
+	 * （曲线不会整条消失），但 5 分钟切点的胜率均值差 0.57 个百分点，而前/中/后期判定正是拿
+	 * 这两个切点在比。
+	 */
+	assert.match(
+		stratz,
+		/stats\(bracketBasicIds: \$bracket, groupByTime: true, week: \$week\)/,
+		'时间曲线也要显式传 week',
+	);
+	assert.match(
+		stratz,
+		/`hero-timeline:\$\{week\.startMs\}`/,
+		'时间曲线的缓存键要带窗口起点',
 	);
 	ok('接线：版本提醒、被禁用数、stats 查询共用同一个窗口');
 }

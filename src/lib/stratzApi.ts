@@ -790,9 +790,17 @@ interface RawTimelineRow {
 	winCount?: number | null;
 }
 
-const TIMELINE_DOCUMENT = `query HeroTimeline($bracket: [RankBracketBasicEnum]) {
+/*
+ * `week` 与 `stats` / `laneOutcome` 一样要显式传，否则拿到的是**当前那个没走完的桶**。
+ *
+ * 实测（2026-09-29）：不传 week 全池 57,289,847 场，传上一桶的锚点是 91,082,833 场；
+ * 127 个英雄两边的切点都过得了 `TIMELINE_MIN_MATCHES`（所以曲线不会整条消失），但 5 分钟
+ * 切点的胜率均值差 0.57 个百分点（49.76% → 50.33%），单英雄的差更大——而前/中/后期判定
+ * 就是拿这两个切点在比，窗口必须与号位胜率一致。
+ */
+const TIMELINE_DOCUMENT = `query HeroTimeline($bracket: [RankBracketBasicEnum], $week: Long) {
 	heroStats {
-		stats(bracketBasicIds: $bracket, groupByTime: true) {
+		stats(bracketBasicIds: $bracket, groupByTime: true, week: $week) {
 			heroId
 			time
 			matchCount
@@ -809,9 +817,12 @@ let timelinePromise: Promise<HeroTimeline | null> | null = null;
 export function fetchHeroTimeline(): Promise<HeroTimeline | null> {
 	timelinePromise ??= (async () => {
 		const before = networkFetches;
-		const rows = await cached<RawTimelineRow[]>('hero-timeline', TIMELINE_TTL_SECONDS, async () => {
+		// 窗口与 `fetchHeroMeta` / `fetchHeroLanes` 同源（`metaWindow`），也写进缓存键。
+		const week = previousStatWeek(Date.now());
+		const rows = await cached<RawTimelineRow[]>(`hero-timeline:${week.startMs}`, TIMELINE_TTL_SECONDS, async () => {
 			const data = await query<{ heroStats: { stats: RawTimelineRow[] | null } }>(TIMELINE_DOCUMENT, {
 				bracket: [HERO_META_BRACKET],
+				week: weekAnchorSeconds(week),
 			});
 			const list = data?.heroStats?.stats;
 			return list && list.length > 0 ? list : null;
