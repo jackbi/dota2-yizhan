@@ -71,6 +71,24 @@ for (const tag of tags) {
 
 assert.match(page, /key 只存在这台浏览器/, '要写明 key 存在本机');
 assert.match(page, /本站不经手/, '要写明站点不经手请求');
+
+/*
+ * 两个「坏掉了页面照样看着正常」的行为。
+ *
+ * 它们是同一批修掉的静默失效，当时只补了 draft 侧的断言，这里漏了——而设置页恰恰是
+ * 这两条唯一会露出来的地方。
+ */
+assert.match(
+	script,
+	/baseUrlInput\?\.addEventListener\('input', \(\) => \{\s*renderProviders\(\);/,
+	'手打地址要重认服务商：不监听的话，域名换了那排按钮与提示还停在上一家（Ollama / Cloudflare 的注意事项就写在提示里）',
+);
+assert.match(
+	script,
+	/fetchedFor && fetchedFor === normalizeBaseUrl\(baseUrlInput\?\.value \?\? ''\)/,
+	'换地址要作废拉过的模型列表：那份列表属于上一家',
+);
+assert.match(script, /fetchedFor = target\.baseUrl;/, '拉到列表后要记住它属于哪个地址');
 assert.match(page, /公共电脑上别存/, '公共电脑的提醒不能删');
 
 const keyInput = /<input[^>]*id="settings-key"[^>]*>/i.exec(page)?.[0] ?? '';

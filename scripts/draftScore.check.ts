@@ -333,6 +333,13 @@ assert.match(traitAdvice.composition.text, /控制 0\/4/, '阵容维度要列出
 assert.ok(traitAdvice.composition.enemySummon, '要认出对面是幻象/召唤体系');
 assert.match(traitAdvice.composition.text, /清场 0\/2/, '对面是体系阵容时清场目标提到 2');
 assert.match(traitAdvice.composition.text, /幻象\/召唤体系/, '要在界面上说明为什么提高要求');
+// 光说"对面是召唤体系"读者没法核对：004 号英雄（304 是那个体系英雄）的名字要真的写出来。
+assert.match(
+	traitAdvice.composition.text,
+	/幻象\/召唤体系：英雄304/,
+	'体系判断要写出触发它的英雄，实际：' + traitAdvice.composition.text,
+);
+assert.match(traitAdvice.composition.text, /清场要求提高/, '提高要求的原因要跟在英雄后面说清');
 
 // 把对面的体系英雄换成普通英雄，清场要求回到 1。
 const calmAdvice = advise({
