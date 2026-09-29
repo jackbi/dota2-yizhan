@@ -36,6 +36,7 @@ for (const id of [
 	'settings-key',
 	'settings-model',
 	'settings-model-options',
+	'settings-model-toggle',
 	'settings-models',
 	'settings-models-state',
 	'settings-provider-hint',
@@ -111,5 +112,41 @@ assert.ok(page.includes("import '../scripts/settingsForm'"), '页面要加载客
 // 地址与模型名是这一版唯一能改的两项：填了它们才谈得上「不只限于一家」。
 assert.ok(page.includes('id="settings-base-url"'), '要能填 API 地址');
 assert.ok(page.includes('id="settings-model"'), '要能填模型名');
+
+// ---------------------------------------------------------------- 模型候选的下拉
+
+/*
+ * 候选模型名原先走原生 `datalist`：弹层由浏览器画，配色与位置都是系统那套，和这个深色输入框
+ * 之间永远隔着一条白边——看着就是两块分离的东西，而且一条 CSS 都改不动。现在是自绘的 `ul`，
+ * 用 `absolute` + `top-full` 贴在输入框下面。
+ *
+ * 换掉之后有三条**页面看着一切正常**的责任要自己扛：收起、键盘、以及选项按下时别让输入框失焦。
+ * 原生那三样都是免费的，自绘一份不写就是点了没反应。
+ */
+assert.ok(!page.includes('<datalist'), '模型候选别再用原生 datalist：它的弹层与输入框必然是分离的两块');
+assert.ok(page.includes('id="settings-model-options"') && page.includes('role="listbox"'), '候选要换成自绘的 listbox');
+assert.match(
+	page,
+	/id="settings-model-options"[\s\S]{0,200}?absolute[\s\S]{0,200}?top-full/,
+	'候选列表要贴着输入框（absolute + top-full），不能飘在别的地方',
+);
+assert.match(page, /role="listbox"[\s\S]{0,300}?style="display: none"/, '候选列表初始要收起');
+assert.match(page, /aria-controls="settings-model-options"/, '输入框要指向它控制的那个列表');
+
+assert.match(script, /modelOptions\.style\.display = '';/, '展开要把列表放出来');
+assert.match(script, /modelOptions\.style\.display = 'none';/, '收起要把列表藏掉');
+assert.match(script, /setAttribute\('aria-expanded'/, '展开状态要同步给读屏');
+assert.match(script, /ArrowDown/, '键盘要能上下选');
+assert.match(script, /event\.key === 'Escape'/, 'Esc 要能收起');
+assert.match(
+	script,
+	/document\.addEventListener\('click'[\s\S]{0,500}?closeModelList\(\)/,
+	'点到别处要收起：弹层浮在表单上面，不收会一直挡着下面的地址与 key',
+);
+assert.match(
+	script,
+	/addEventListener\('mousedown'[\s\S]{0,120}?event\.preventDefault\(\)/,
+	'选项按下时不能让输入框先失焦：列表会在 click 之前被收掉，点起来像点空了',
+);
 
 console.log('settingsPage.check 通过');

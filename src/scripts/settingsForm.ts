@@ -43,7 +43,8 @@ const statusEl = element<HTMLSpanElement>('settings-status');
 const detailEl = element<HTMLParagraphElement>('settings-detail');
 const providerHint = element<HTMLParagraphElement>('settings-provider-hint');
 const modelsState = element<HTMLSpanElement>('settings-models-state');
-const modelOptions = element<HTMLDataListElement>('settings-model-options');
+const modelOptions = element<HTMLUListElement>('settings-model-options');
+const modelToggle = element<HTMLButtonElement>('settings-model-toggle');
 
 /** 服务商那排按钮。按 `data-provider` 挂钩子，不走 id 对账那一套。 */
 const providerChips = [...document.querySelectorAll<HTMLButtonElement>('[data-provider]')];
@@ -77,16 +78,79 @@ function currentProviderId(): string {
 	return initialProviderId(normalizeBaseUrl(baseUrlInput?.value ?? ''));
 }
 
-/** 把候选模型名写进 datalist。用 DOM 建节点而不是拼 HTML：这些字符串来自服务商的返回。 */
+/** 候选模型名。下拉的展开、上下键与回车都读它。 */
+let modelCandidates: string[] = [];
+/** 键盘走到第几项；-1 表示还没选。 */
+let highlight = -1;
+
+/** 把候选模型名画进下拉。用 DOM 建节点而不是拼 HTML：这些字符串来自服务商的返回。 */
 function fillModelOptions(ids: readonly string[]): void {
+	modelCandidates = [...ids];
+	highlight = -1;
 	if (!modelOptions) return;
 	modelOptions.replaceChildren(
 		...ids.map((id) => {
-			const option = document.createElement('option');
-			option.value = id;
-			return option;
+			const item = document.createElement('li');
+			item.setAttribute('role', 'option');
+			item.setAttribute('aria-selected', 'false');
+			item.dataset.model = id;
+			item.className = modelOptionClass(false);
+			item.textContent = id;
+			return item;
 		}),
 	);
+	if (ids.length === 0) closeModelList();
+}
+
+function modelOptionClass(on: boolean): string {
+	return on
+		? 'cursor-pointer bg-surface-3 px-2 py-1.5 text-xs text-cream'
+		: 'cursor-pointer px-2 py-1.5 text-xs text-muted hover:bg-surface-3 hover:text-cream';
+}
+
+function isModelListOpen(): boolean {
+	return Boolean(modelOptions && modelOptions.style.display !== 'none');
+}
+
+/** 键盘高亮第 index 项（-1 = 取消高亮）。 */
+function setHighlight(index: number): void {
+	if (!modelOptions) return;
+	const items = [...modelOptions.children] as HTMLElement[];
+	const next = index < 0 || index >= items.length ? -1 : index;
+	highlight = next;
+	items.forEach((item, i) => {
+		item.setAttribute('aria-selected', String(i === next));
+		item.className = modelOptionClass(i === next);
+	});
+	if (next >= 0) items[next]?.scrollIntoView({ block: 'nearest' });
+}
+
+/**
+ * 展开与收起。
+ *
+ * 用内联 `display` 而不是 Tailwind 的 hidden 类：类名一加一减要和 `aria-expanded` 两边对齐，
+ * 内联只有一个真值来源（`isModelListOpen` 也读它）。没有候选时不开——点开一个空框更让人困惑，
+ * 那种情况由下面那句提示说明「手填」。
+ */
+function openModelList(): void {
+	if (!modelOptions || modelCandidates.length === 0) return;
+	modelOptions.style.display = '';
+	modelInput?.setAttribute('aria-expanded', 'true');
+}
+
+function closeModelList(): void {
+	if (!modelOptions) return;
+	modelOptions.style.display = 'none';
+	modelInput?.setAttribute('aria-expanded', 'false');
+	setHighlight(-1);
+}
+
+/** 选中一个候选：填进输入框、收起来、把焦点还回去。 */
+function pickModel(id: string): void {
+	if (modelInput) modelInput.value = id;
+	closeModelList();
+	modelInput?.focus();
+	setStatus('');
 }
 
 /** 把「用哪一家」那排按钮、提示与模型候选摆到与当前地址一致的位置。 */
@@ -99,10 +163,10 @@ function renderProviders(): void {
 	const cached = fetchedFor && fetchedFor === normalizeBaseUrl(baseUrlInput?.value ?? '') ? fetchedModels : [];
 	fillModelOptions(cached.length > 0 ? cached : provider?.models ?? []);
 	if (modelsState) {
-		if (cached.length > 0) modelsState.textContent = `拿到 ${cached.length} 个模型，点输入框就能选`;
+		if (cached.length > 0) modelsState.textContent = `拿到 ${cached.length} 个模型，点右边的箭头就能选`;
 		else {
 			modelsState.textContent = provider?.models?.length
-				? '可以手填；点「拉取模型列表」会向这家要一份准的。'
+				? '可以手填；点右边的箭头看内置建议，点「拉取模型列表」会向这家要一份准的。'
 				: '这家没内置建议模型名：手填，或者点「拉取模型列表」从它那儿拿。';
 		}
 	}
@@ -264,7 +328,9 @@ async function fetchModels(): Promise<void> {
 		fetchedModels = ids;
 		fetchedFor = target.baseUrl;
 		fillModelOptions(ids);
-		if (modelsState) modelsState.textContent = `拿到 ${ids.length} 个模型，点输入框就能选`;
+		if (modelsState) modelsState.textContent = `拿到 ${ids.length} 个模型，点右边的箭头就能选`;
+		// 拉完就展开：这一步的意图本来就是挑一个，让用户再点一次箭头是多余的。
+		openModelList();
 	} catch {
 		if (modelsState) modelsState.textContent = '拉取失败：网络、跨域或超时；手填模型名也行';
 	} finally {
@@ -274,6 +340,62 @@ async function fetchModels(): Promise<void> {
 
 modelsButton?.addEventListener('click', () => {
 	void fetchModels();
+});
+
+/*
+ * 模型候选那个自绘下拉：点开、键选、点到别处收起。
+ *
+ * 「收起」这一条是自绘才有的责任：弹层是 absolute 浮在表单上的，不收就会一直挡着下面的
+ * 地址与 key。原生 datalist 由浏览器负责收，所以这一段是换掉它之后必须补上的。
+ */
+modelToggle?.addEventListener('click', () => {
+	if (isModelListOpen()) closeModelList();
+	else openModelList();
+});
+
+// 点输入框也展开：手填的人多半是想先看看这家有什么可选。
+modelInput?.addEventListener('click', () => {
+	openModelList();
+});
+
+modelInput?.addEventListener('keydown', (event) => {
+	if (event.key === 'Escape') {
+		closeModelList();
+		return;
+	}
+	if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+		if (!isModelListOpen()) openModelList();
+		if (modelCandidates.length === 0) return;
+		event.preventDefault();
+		const down = event.key === 'ArrowDown';
+		const next = highlight < 0 ? (down ? 0 : modelCandidates.length - 1) : highlight + (down ? 1 : -1);
+		setHighlight((next + modelCandidates.length) % modelCandidates.length);
+		return;
+	}
+	if (event.key === 'Enter' && isModelListOpen() && highlight >= 0) {
+		event.preventDefault();
+		pickModel(modelCandidates[highlight]);
+	}
+});
+
+/*
+ * 选项按下时先挡住默认行为：不挡的话输入框会立刻失焦，列表在 click 之前就被收掉，
+ * 点起来像点空了（原生 datalist 没有这个问题，这份也是换掉它之后才有的）。
+ */
+modelOptions?.addEventListener('mousedown', (event) => {
+	event.preventDefault();
+});
+
+modelOptions?.addEventListener('click', (event) => {
+	const item = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-model]');
+	if (item?.dataset.model) pickModel(item.dataset.model);
+});
+
+document.addEventListener('click', (event) => {
+	if (!isModelListOpen()) return;
+	const target = event.target as Node | null;
+	const inside = Boolean(target && (modelInput?.contains(target) || modelToggle?.contains(target) || modelOptions?.contains(target)));
+	if (!inside) closeModelList();
 });
 
 fillForm();
