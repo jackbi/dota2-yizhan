@@ -87,10 +87,12 @@ assert.equal(created, 3, '坏数据也不能留在缓存里');
 	await Promise.resolve();
 	assert.equal(timers.size, 1, 'JSONP 要挂一个超时回调：卡住的时候才有出路');
 	assert.equal(created, 4, '卡住的那次也真的插了 script');
-	[...timers.values()][0]?.();
-	timers.clear();
+	const [timerId, fireTimeout] = [...timers.entries()][0] ?? [];
+	assert.ok(timerId !== undefined && fireTimeout, '没拿到那个超时回调');
+	fireTimeout();
 	await assert.rejects(() => hung, '卡住的加载超时后要按失败处理，不能永远挂着');
-	assert.equal(timers.size, 0, '超时之后不该还留着计时器');
+	// 这里**不能**自己 clear 之后再断言 size === 0（那是恒真）：要断言的是 cleanup 真的把它清了。
+	assert.ok(!timers.has(timerId), '超时之后要把那个计时器清掉：不清就是每挂一次多留一个回调');
 	mode = 'ok';
 }
 
@@ -144,6 +146,13 @@ assert.equal(created, 5, '命中缓存时不该再插 script');
 		'只有指针真在卡上（进入/聚焦）才取消隐藏并重画',
 	);
 	assert.ok(!/if \(lastTipAnchor\) showTip\(lastTipAnchor\)/.test(page), '晚到那条路不能走 showTip：它会取消已经排好的隐藏');
+	// `detailPending` 的复位也不能漏：去掉它，一次失败之后整个会话都不再重试——正是要治的症状。
+	assert.match(page, /detailPending = true;/, '发请求之前要标上"有一发在飞"');
+	assert.match(
+		page,
+		/\.finally\(\(\) => \{\s*detailPending = false;/,
+		'detailPending 必须在 finally 里复位：否则一次失败之后整个会话都不再重试',
+	);
 }
 
 console.log('itemApi.check 通过');
