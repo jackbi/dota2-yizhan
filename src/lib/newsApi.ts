@@ -3,7 +3,7 @@ import type { NewsCardItem } from '../data/types';
 import { decodeEntities, summarizeArticle, toArticleContent } from './articleHtml';
 import { cacheFile as cachePath, readCacheText, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
-import { reportSource } from './dataHealth';
+import { reportSource, sourceState } from './dataHealth';
 
 /**
  * 官方新闻层：构建期抓取 dota2.com.cn 的新闻列表与正文。
@@ -75,8 +75,14 @@ function cacheFile(url: string): string {
 	return cachePath(CACHE_DIR, `${url.replace(`${ORIGIN}/`, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '')}.html`);
 }
 
-/** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
-let networkFetches = 0;
+/**
+ * 正文本轮联网抓了几篇。
+ *
+ * **只进构建汇总的说明文字，不参与状态判定**：这一源的状态看的是它的主数据（列表）本轮是不是
+ * 从上游取到的（见 `sourceState`）。按整个模块的抓取次数判，列表吃缓存、正文补抓的那一轮，
+ * 摘要就会把这一源写成"联网抓取"。
+ */
+let articleFetched = 0;
 
 /**
  * 正文缓存是不是一份完整的页面。
@@ -85,18 +91,24 @@ let networkFetches = 0;
  * 这是给「写入被打断留下的半截文件」兜底的：正文的 TTL 是「永久」（见 `ARTICLE_TTL_SECONDS`），
  * 半截内容一旦被当成新鲜命中就再也不会重抓，所以宁可当没命中重抓一次。
  *
- * 它**不是**正文正确性的判据——上游换成一张错误页时，两条都过得去。那种情况靠 `networkFetches`
- * 与构建汇总里的抓取次数看出来。
+ * 它**不是**正文正确性的判据——上游换成一张错误页时，两条都过得去。那种情况靠构建汇总里的
+ * 抓取次数（列表与正文分开记）看出来。
  */
 function isCompleteHtml(text: string): boolean {
 	return text.length > 2000 && text.trimEnd().endsWith('</html>');
 }
 
+/** 一次取数的结果：内容，以及**这一份**是本轮联网抓的还是吃缓存的。 */
+interface FetchedPage {
+	text: string | null;
+	network: boolean;
+}
+
 /** 抓取官方页面并落盘；命中新鲜缓存就直接返回，失败时退回过期缓存。 */
-async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null> {
+async function fetchHtml(url: string, ttlSeconds: number): Promise<FetchedPage> {
 	const file = cacheFile(url);
 	const cached = await readCacheText(file, isCompleteHtml);
-	if (cached && cached.ageMs < ttlSeconds * 1000) return cached.text;
+	if (cached && cached.ageMs < ttlSeconds * 1000) return { text: cached.text, network: false };
 
 	let fresh: string | null = null;
 	if (!OFFLINE) {
@@ -104,20 +116,17 @@ async function fetchHtml(url: string, ttlSeconds: number): Promise<string | null
 		const timer = setTimeout(() => controller.abort(), 20_000);
 		try {
 			const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT } });
-			if (res.ok) {
-				fresh = await res.text();
-				networkFetches += 1;
-			}
+			if (res.ok) fresh = await res.text();
 		} catch {
 			fresh = null;
 		} finally {
 			clearTimeout(timer);
 		}
 	}
-	if (fresh === null) return cached?.text ?? null;
+	if (fresh === null) return { text: cached?.text ?? null, network: false };
 
 	await writeCacheFile(file, fresh);
-	return fresh;
+	return { text: fresh, network: true };
 }
 
 
@@ -186,8 +195,9 @@ export function fetchNewsArticle(url: string): Promise<string> {
 	let pending = articleCache.get(url);
 	if (!pending) {
 		pending = (async () => {
-			const html = await fetchHtml(url, ARTICLE_TTL_SECONDS);
-			return html ? toArticleContent(html) : '';
+			const page = await fetchHtml(url, ARTICLE_TTL_SECONDS);
+			if (page.network) articleFetched += 1;
+			return page.text ? toArticleContent(page.text) : '';
 		})();
 		articleCache.set(url, pending);
 	}
@@ -206,12 +216,16 @@ export function fetchOfficialNews(): Promise<OfficialNews[]> {
 }
 
 async function loadNews(): Promise<OfficialNews[]> {
+	/** 列表页本轮联网抓到几页。**整源的状态只看它**，正文是次要数据。 */
+	let listFetched = 0;
+
 	const byId = new Map<string, OfficialNews>();
 	for (const feed of NEWS_FEEDS) {
 		for (let page = 1; page <= LIST_PAGES; page++) {
-			const html = await fetchHtml(feedPageUrl(feed.path, page), LIST_TTL_SECONDS);
-			if (!html) continue;
-			const items = parseFeedPage(html);
+			const fetched = await fetchHtml(feedPageUrl(feed.path, page), LIST_TTL_SECONDS);
+			if (fetched.network) listFetched += 1;
+			if (!fetched.text) continue;
+			const items = parseFeedPage(fetched.text);
 			// 翻到没有条目的页码（官方对超出范围的页码仍返回 200）就停下。
 			if (!items.length) break;
 			for (const item of items) {
@@ -232,7 +246,11 @@ async function loadNews(): Promise<OfficialNews[]> {
 		item.summary = summarizeArticle(await fetchNewsArticle(item.url));
 	});
 
-	const state = networkFetches > 0 ? 'fresh' : list.length > 0 ? 'cache' : 'empty';
-	await reportSource('news', 'DOTA2 官网新闻', state, `${list.length} 篇文章，联网抓取 ${networkFetches} 次`);
+	await reportSource(
+		'news',
+		'DOTA2 官网新闻',
+		sourceState(listFetched > 0, list.length),
+		`${list.length} 篇文章，列表联网抓取 ${listFetched} 页，正文联网抓取 ${articleFetched} 篇`,
+	);
 	return list;
 }

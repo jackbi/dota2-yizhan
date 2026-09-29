@@ -37,6 +37,22 @@ export function stateLabel(state: SourceState): string {
 	return STATE_LABEL[state];
 }
 
+/**
+ * 一个源的状态：**按它的主数据本轮是抓的还是吃缓存的**判定。
+ *
+ * `fresh` 的依据是"这一源的数据这轮从上游取到了"，不是"这一轮发过请求"。一个源常常有两级数据
+ * （列表是主，详情/正文是次），两级缓存的 TTL 各管各的：列表吃缓存的那一轮，详情照样可能联网补抓。
+ * 按模块级的抓取次数判，就会把"使用缓存"写成"联网抓取"——上游挂着、旧缓存顶上来的那一轮，
+ * 恰好就是这份旧数据最像新数据的时候。
+ *
+ * 优先级和 `liveApi.sourceSummary` 一致：**一条数据都没有就是"没拿到"**，哪怕这一轮确实发过请求
+ * （页面取回来了、却一条都没解析出来，那是页面结构变了，不是新数据）。
+ */
+export function sourceState(primaryFetched: boolean, itemCount: number): SourceState {
+	if (itemCount === 0) return 'empty';
+	return primaryFetched ? 'fresh' : 'cache';
+}
+
 /** 记录一个数据源本轮的结果。写失败不影响构建。 */
 export async function reportSource(id: string, label: string, state: SourceState, detail: string): Promise<void> {
 	try {

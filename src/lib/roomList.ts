@@ -1,7 +1,7 @@
 import path from 'node:path';
 // 带扩展名：自检（`scripts/roomList.check.ts`）要用 Node 直接跑这个模块，Node 的 ESM 解析不补扩展名。
 import { isFresh, readCacheJson, writeCacheFile } from './buildCache.ts';
-import { reportSource } from './dataHealth.ts';
+import { reportSource, sourceState } from './dataHealth.ts';
 import { extractJson, fetchNote, fetchText } from './fetchText.ts';
 import type { RoomRef } from '../data/types';
 
@@ -148,24 +148,36 @@ function writeCache(file: string, rooms: RoomRef[]): Promise<void> {
 	return writeCacheFile(file, JSON.stringify({ v: CACHE_VERSION, rooms }));
 }
 
-async function loadOne(file: string, url: string, html: boolean, parse: (text: string) => Omit<RoomRef, 'key' | 'source'>[]): Promise<RoomRef[]> {
+/** 一份房间列表，外加**它是怎么来的**。 */
+interface LoadedList {
+	rooms: RoomRef[];
+	/** 这一份是本轮联网抓到的（拿到了非空的房间列表），还是吃缓存/没抓到。 */
+	fetched: boolean;
+}
+
+async function loadOne(
+	file: string,
+	url: string,
+	html: boolean,
+	parse: (text: string) => Omit<RoomRef, 'key' | 'source'>[],
+): Promise<LoadedList> {
 	const cached = await readCache(file, TTL_SECONDS);
-	if (cached) return cached;
+	if (cached) return { rooms: cached, fetched: false };
 
 	const stale = OFFLINE ? await readCache(file, Number.POSITIVE_INFINITY) : null;
-	if (stale) return stale;
+	if (stale) return { rooms: stale, fetched: false };
 
-	if (OFFLINE) return [];
+	if (OFFLINE) return { rooms: [], fetched: false };
 
 	const text = await fetchText(url, { html });
-	if (!text) return (await readCache(file, Number.POSITIVE_INFINITY)) ?? [];
+	if (!text) return { rooms: (await readCache(file, Number.POSITIVE_INFINITY)) ?? [], fetched: false };
 
 	const rows = parse(text);
-	if (rows.length === 0) return (await readCache(file, Number.POSITIVE_INFINITY)) ?? [];
+	if (rows.length === 0) return { rooms: (await readCache(file, Number.POSITIVE_INFINITY)) ?? [], fetched: false };
 
 	const rooms = toRefs(rows);
 	await writeCache(file, rooms);
-	return rooms;
+	return { rooms, fetched: true };
 }
 
 let listPromise: Promise<RoomRef[]> | null = null;
@@ -185,14 +197,18 @@ async function loadAll(): Promise<RoomRef[]> {
 		loadOne(path.join(CACHE_DIR, 'huya.json'), HUYA_LIST, false, (text) => parseHuyaCategory(extractJson(text))),
 	]);
 
+	/*
+	 * 上面那句 `fetchNote()` 是本进程取数层的总数（它自己的注释就是这么写的）——别的源在这一轮里
+	 * 抓过东西，它也会非空。所以**状态不能拿它判**：这一源看的是它自己那份列表本轮抓没抓到。
+	 */
 	const note = fetchNote();
-	const usable = douyu.length + huya.length;
+	const usable = douyu.rooms.length + huya.rooms.length;
 	await reportSource(
 		'roomlist',
 		'热门直播间',
-		note ? 'fresh' : usable > 0 ? 'cache' : 'empty',
-		usable > 0 ? `斗鱼 ${douyu.length} 个、虎牙 ${huya.length} 个${note}` : '没有取到热门列表',
+		sourceState(douyu.fetched || huya.fetched, usable),
+		usable > 0 ? `斗鱼 ${douyu.rooms.length} 个、虎牙 ${huya.rooms.length} 个${note}` : '没有取到热门列表',
 	);
 
-	return [...douyu, ...huya];
+	return [...douyu.rooms, ...huya.rooms];
 }

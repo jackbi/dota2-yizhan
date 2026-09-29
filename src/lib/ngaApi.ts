@@ -2,7 +2,7 @@ import path from 'node:path';
 import { decodeEntities } from './articleHtml';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
-import { reportSource } from './dataHealth';
+import { reportSource, sourceState } from './dataHealth';
 import { collectNicknames } from './ngaBbcode';
 import { createPace } from './pace';
 
@@ -24,8 +24,14 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 const USER_AGENT = 'NGA_WP_JW';
 
 let boardPromise: Promise<CommunityThread[]> | null = null;
+/** 一份详情，外加**它是怎么来的**。列表那一行只报列表的来源，详情只记次数。 */
+interface LoadedThread {
+	detail: ThreadDetail | null;
+	network: boolean;
+}
+
 /** 帖子详情按 tid 记忆，列表页与详情页共用同一次请求。 */
-const threadCache = new Map<string, Promise<ThreadDetail | null>>();
+const threadCache = new Map<string, Promise<LoadedThread>>();
 
 /** 热帖榜的时间窗，对应接口的 days 参数。 */
 export const HOT_WINDOWS = [
@@ -115,9 +121,6 @@ export interface ThreadDetail {
 /** 串行化请求间隔，避免并发同时穿过限速窗口。 */
 const pace = createPace(MIN_INTERVAL_MS);
 
-/** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
-let networkFetches = 0;
-
 async function fetchText(url: string, encoding = 'utf-8'): Promise<string | null> {
 	await pace();
 	const controller = new AbortController();
@@ -125,7 +128,6 @@ async function fetchText(url: string, encoding = 'utf-8'): Promise<string | null
 	try {
 		const res = await fetch(url, { signal: controller.signal, headers: { 'User-Agent': USER_AGENT } });
 		if (!res.ok) return null;
-		networkFetches += 1;
 		return new TextDecoder(encoding).decode(await res.arrayBuffer());
 	} catch {
 		return null;
@@ -184,10 +186,16 @@ function toThreads(raw: unknown): HotThread[] | null {
 	return threads.length > 0 ? threads : null;
 }
 
-async function loadHotList(days: number): Promise<HotThread[] | null> {
+/** 一个时间窗的热帖榜本轮是联网抓到的，还是吃缓存/没抓到。 */
+interface LoadedHotList {
+	threads: HotThread[] | null;
+	network: boolean;
+}
+
+async function loadHotList(days: number): Promise<LoadedHotList> {
 	const key = `hot-${days}`;
 	const cached = await readCache<HotThread[]>(key);
-	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return cached.value;
+	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return { threads: cached.value, network: false };
 
 	let value: HotThread[] | null = null;
 	if (!OFFLINE) {
@@ -201,10 +209,10 @@ async function loadHotList(days: number): Promise<HotThread[] | null> {
 			}
 		}
 	}
-	if (value === null) return cached?.value ?? null;
+	if (value === null) return { threads: cached?.value ?? null, network: false };
 
 	await writeCache(key, value);
-	return value;
+	return { threads: value, network: true };
 }
 
 // ---------------------------------------------------------------- 主楼摘要
@@ -341,6 +349,10 @@ async function fetchThreadHtml(tid: string): Promise<ThreadDetail | null> {
  * 列表页只用其中的摘要，所以详情页不会再产生额外请求。
  */
 export function fetchThreadDetail(tid: string): Promise<ThreadDetail | null> {
+	return loadThreadRaw(tid).then((loaded) => loaded.detail);
+}
+
+function loadThreadRaw(tid: string): Promise<LoadedThread> {
 	let pending = threadCache.get(tid);
 	if (!pending) {
 		pending = loadThread(tid);
@@ -349,12 +361,12 @@ export function fetchThreadDetail(tid: string): Promise<ThreadDetail | null> {
 	return pending;
 }
 
-async function loadThread(tid: string): Promise<ThreadDetail | null> {
+async function loadThread(tid: string): Promise<LoadedThread> {
 	// 键里的版本号跟解析格式绑定：摘要规则一变就得换，否则旧结果会一直吃到过期。
 	const key = `thread-v3-${tid}`;
 	const cached = await readCache<ThreadDetail>(key);
-	if (cached && cached.ageMs < THREAD_TTL_SECONDS * 1000) return cached.value;
-	if (OFFLINE) return cached?.value ?? null;
+	if (cached && cached.ageMs < THREAD_TTL_SECONDS * 1000) return { detail: cached.value, network: false };
+	if (OFFLINE) return { detail: cached?.value ?? null, network: false };
 
 	let detail: ThreadDetail | null = null;
 	for (let attempt = 0; attempt < 2 && detail === null; attempt++) {
@@ -365,10 +377,10 @@ async function loadThread(tid: string): Promise<ThreadDetail | null> {
 		}
 	}
 	if (detail === null) detail = await fetchThreadHtml(tid);
-	if (detail === null) return cached?.value ?? null;
+	if (detail === null) return { detail: cached?.value ?? null, network: false };
 
 	await writeCache(key, detail);
-	return detail;
+	return { detail, network: true };
 }
 
 // ---------------------------------------------------------------- 对外接口
@@ -383,9 +395,14 @@ export function fetchCommunityThreads(): Promise<CommunityThread[]> {
 }
 
 async function loadBoard(): Promise<CommunityThread[]> {
+	/** 热帖榜本轮联网抓到几个时间窗。**整源的状态只看它**，楼层详情是次要数据。 */
+	let listFetched = 0;
+
 	const byId = new Map<string, CommunityThread>();
 	for (const window of HOT_WINDOWS) {
-		const list = await loadHotList(window.days);
+		const loaded = await loadHotList(window.days);
+		if (loaded.network) listFetched += 1;
+		const list = loaded.threads;
 		if (!list) continue;
 		for (const thread of list.slice(0, THREADS_PER_WINDOW)) {
 			const existing = byId.get(thread.tid);
@@ -399,19 +416,23 @@ async function loadBoard(): Promise<CommunityThread[]> {
 	);
 	/** 楼层抓取失败与"主楼没有文字"是两回事，汇总里分开报。 */
 	let failed = 0;
+	/** 楼层本轮联网抓了几个。只进说明文字：那一行的状态说的是**热帖榜**的来源。 */
+	let detailFetched = 0;
 	await mapLimit(threads, FETCH_CONCURRENCY, async (thread) => {
-		const detail = await fetchThreadDetail(thread.tid);
+		const loaded = await loadThreadRaw(thread.tid);
+		if (loaded.network) detailFetched += 1;
+		const detail = loaded.detail;
 		if (!detail) failed += 1;
 		thread.summary = detail?.summary ?? '';
 	});
 
 	const withSummary = threads.filter((thread) => thread.summary).length;
-	const state = networkFetches > 0 ? 'fresh' : threads.length > 0 ? 'cache' : 'empty';
 	await reportSource(
 		'nga',
 		'NGA 刀塔版块',
-		state,
-		`${threads.length} 个热帖，楼层抓取失败 ${failed} 个，${withSummary} 个有文字摘要，联网抓取 ${networkFetches} 次`,
+		sourceState(listFetched > 0, threads.length),
+		`${threads.length} 个热帖，热帖榜联网抓取 ${listFetched} 个时间窗，楼层联网抓取 ${detailFetched} 个，` +
+			`楼层抓取失败 ${failed} 个，${withSummary} 个有文字摘要`,
 	);
 	return threads;
 }

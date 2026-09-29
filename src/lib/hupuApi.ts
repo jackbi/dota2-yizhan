@@ -2,7 +2,7 @@ import path from 'node:path';
 import { sanitizeArticleHtml, summarizeArticle } from './articleHtml';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
-import { reportSource } from './dataHealth';
+import { reportSource, sourceState } from './dataHealth';
 import { type HupuThread, selectBoardThreads, toThreads } from './hupuBoard';
 import { createPace } from './pace';
 
@@ -93,9 +93,6 @@ export function hupuThreadUrl(pid: string): string {
 /** 串行化请求间隔，避免并发同时穿过限速窗口。 */
 const pace = createPace(MIN_INTERVAL_MS);
 
-/** 本轮真正联网抓了几次；用于区分"新抓的"和"吃缓存的"。 */
-let networkFetches = 0;
-
 async function fetchHtml(url: string): Promise<string | null> {
 	await pace();
 	const controller = new AbortController();
@@ -107,7 +104,6 @@ async function fetchHtml(url: string): Promise<string | null> {
 			headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,application/xhtml+xml' },
 		});
 		if (!res.ok) return null;
-		networkFetches += 1;
 		return await res.text();
 	} catch {
 		return null;
@@ -135,10 +131,16 @@ async function writeCache(key: string, value: unknown): Promise<void> {
  * 那边是纯函数，能脱离网络与缓存在 `scripts/hupuBoard.check.ts` 里测。
  */
 
-async function loadBoard(): Promise<HupuThread[]> {
+/** 版面列表本轮是联网抓到的（拿到了非空的帖子），还是吃缓存/没抓到。 */
+interface LoadedBoard {
+	threads: HupuThread[];
+	network: boolean;
+}
+
+async function loadBoard(): Promise<LoadedBoard> {
 	const key = 'hupu-list';
 	const cached = await readCache<HupuThread[]>(key);
-	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return cached.value;
+	if (cached && cached.ageMs < LIST_TTL_SECONDS * 1000) return { threads: cached.value, network: false };
 
 	let value: HupuThread[] | null = null;
 	if (!OFFLINE) {
@@ -149,11 +151,12 @@ async function loadBoard(): Promise<HupuThread[]> {
 			value = toThreads(html, nowSec);
 		}
 	}
-	if (value === null) return cached?.value ?? [];
+	if (value === null) return { threads: cached?.value ?? [], network: false };
 
 	value = selectBoardThreads(value);
 	await writeCache(key, value);
-	return value;
+	// 页面取到了、却一条帖子都没解析出来（版面改版），和"没抓到"是一回事，不能算本轮拿到了列表。
+	return { threads: value, network: value.length > 0 };
 }
 
 // ---------------------------------------------------------------- 详情解析
@@ -279,10 +282,20 @@ function extractMainPost(html: string): string {
 	return html.slice(bodyStart);
 }
 
-const detailCache = new Map<string, Promise<HupuThreadDetail | null>>();
+/** 一份详情，外加**它是怎么来的**。列表那一行只报列表的来源，详情只记次数。 */
+interface LoadedDetail {
+	detail: HupuThreadDetail | null;
+	network: boolean;
+}
+
+const detailCache = new Map<string, Promise<LoadedDetail>>();
 
 /** 帖子详情，按 pid 记忆：列表页的摘要与详情页共用同一次请求。 */
 export function fetchHupuThreadDetail(pid: string): Promise<HupuThreadDetail | null> {
+	return loadDetailRaw(pid).then((loaded) => loaded.detail);
+}
+
+function loadDetailRaw(pid: string): Promise<LoadedDetail> {
 	let pending = detailCache.get(pid);
 	if (!pending) {
 		pending = loadDetail(pid);
@@ -291,21 +304,21 @@ export function fetchHupuThreadDetail(pid: string): Promise<HupuThreadDetail | n
 	return pending;
 }
 
-async function loadDetail(pid: string): Promise<HupuThreadDetail | null> {
+async function loadDetail(pid: string): Promise<LoadedDetail> {
 	// 键里的版本号跟解析格式绑定：清洗规则一变就得换，否则旧结果会一直吃到过期。
 	// v3：正文清洗从黑名单换成白名单（`articleHtml.ts`），v2 缓存里可能存着漏网的 `onerror`。
 	const key = `hupu-thread-v3-${pid}`;
 	const cached = await readCache<HupuThreadDetail>(key);
-	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return cached.value;
-	if (OFFLINE) return cached?.value ?? null;
+	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return { detail: cached.value, network: false };
+	if (OFFLINE) return { detail: cached?.value ?? null, network: false };
 
 	const html = await fetchHtml(hupuThreadUrl(pid));
-	if (html === null) return cached?.value ?? null;
+	if (html === null) return { detail: cached?.value ?? null, network: false };
 	const detail = parseDetail(html);
-	if (detail === null) return cached?.value ?? null;
+	if (detail === null) return { detail: cached?.value ?? null, network: false };
 
 	await writeCache(key, detail);
-	return detail;
+	return { detail, network: true };
 }
 
 // ---------------------------------------------------------------- 对外接口
@@ -322,11 +335,16 @@ export function fetchHupuThreads(): Promise<HupuThread[]> {
 }
 
 async function loadBoardWithSummaries(): Promise<HupuThread[]> {
-	const threads = await loadBoard();
+	const board = await loadBoard();
+	const threads = board.threads;
 	/** 摘要"抓失败"（网络不通、页面结构变了）与"主楼本来就没文字"是两回事，汇总里分开报。 */
 	let failed = 0;
+	/** 详情本轮联网抓了几个。只进说明文字：那一行的状态说的是**列表**的来源。 */
+	let detailFetched = 0;
 	await mapLimit(threads, FETCH_CONCURRENCY, async (thread) => {
-		const detail = await fetchHupuThreadDetail(thread.pid);
+		const loaded = await loadDetailRaw(thread.pid);
+		if (loaded.network) detailFetched += 1;
+		const detail = loaded.detail;
 		if (detail === null) {
 			failed += 1;
 			return;
@@ -338,12 +356,12 @@ async function loadBoardWithSummaries(): Promise<HupuThread[]> {
 	});
 
 	const withSummary = threads.filter((thread) => thread.summary).length;
-	const state = networkFetches > 0 ? 'fresh' : threads.length > 0 ? 'cache' : 'empty';
 	await reportSource(
 		'hupu',
 		'虎扑 DOTA2 区',
-		state,
-		`${threads.length} 个帖子，详情抓取失败 ${failed} 个，${withSummary} 个有文字摘要，联网抓取 ${networkFetches} 次`,
+		sourceState(board.network, threads.length),
+		`${threads.length} 个帖子，列表${board.network ? '联网抓取' : '用缓存'}，详情联网抓取 ${detailFetched} 个，` +
+			`详情抓取失败 ${failed} 个，${withSummary} 个有文字摘要`,
 	);
 	return threads;
 }

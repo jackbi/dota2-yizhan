@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { isFresh, readCacheJson, writeCacheFile } from './buildCache';
-import { reportSource } from './dataHealth';
+import { reportSource, sourceState } from './dataHealth';
 import { extractJson, fetchText } from './fetchText';
 import {
 	groupByMajor,
@@ -55,10 +55,13 @@ export interface PatchUpdate {
 	siteUrl?: string;
 }
 
-/** 本轮联网抓了几次，用来区分「新抓的」和「吃缓存的」。 */
-let networkFetches = 0;
-
 // ---------------------------------------------------------------- 抓取与缓存
+
+/** 一次取数的结果：值，以及**这一次**是本轮联网抓的还是吃缓存的。 */
+interface LoadedJson<T> {
+	value: T | null;
+	network: boolean;
+}
 
 /**
  * 带缓存的 JSON 取数：新鲜缓存优先，其次联网，最后退回旧缓存。
@@ -71,18 +74,17 @@ async function loadJson<T>(
 	url: string,
 	ttlSeconds: number,
 	validate: (value: unknown) => boolean,
-): Promise<T | null> {
+): Promise<LoadedJson<T>> {
 	const cached = await readCacheJson<T>(file, validate);
-	if (cached && isFresh(cached.ageMs, ttlSeconds)) return cached.value;
+	if (cached && isFresh(cached.ageMs, ttlSeconds)) return { value: cached.value, network: false };
 
 	const text = OFFLINE ? null : await fetchText(url);
 	const value = text ? extractJson(text) : null;
 	if (value !== null && validate(value)) {
-		networkFetches += 1;
 		await writeCacheFile(file, JSON.stringify(value));
-		return value as T;
+		return { value: value as T, network: true };
 	}
-	return cached?.value ?? null;
+	return { value: cached?.value ?? null, network: false };
 }
 
 function cachePath(...parts: string[]): string {
@@ -138,14 +140,14 @@ function formatDate(timestamp: number): string {
 }
 
 async function loadList(): Promise<PatchUpdate[]> {
-	const raw = await loadJson<{ patches: RawPatchListEntry[] }>(
+	const list = await loadJson<{ patches: RawPatchListEntry[] }>(
 		cachePath('list.json'),
 		`${BASE}/patchnoteslist?language=schinese`,
 		LIST_TTL_SECONDS,
 		isPatchList,
 	);
 
-	const updates = (raw?.patches ?? [])
+	const updates = (list.value?.patches ?? [])
 		.filter((p) => typeof p?.patch_number === 'string' && p.patch_number.length > 0)
 		.map((p): PatchUpdate => {
 			const version = p.patch_number;
@@ -167,8 +169,9 @@ async function loadList(): Promise<PatchUpdate[]> {
 	await reportSource(
 		'patches',
 		'官方更新日志',
-		networkFetches > 0 ? 'fresh' : updates.length > 0 ? 'cache' : 'empty',
-		`${updates.length} 个版本，最新 ${updates[0]?.version ?? '未知'}（${updates[0]?.date ?? '—'}），联网抓取 ${networkFetches} 次`,
+		sourceState(list.network, updates.length),
+		// 这一源只有列表一级数据，来源就是上面那个状态本身，不必再复述一遍。
+		`${updates.length} 个版本，最新 ${updates[0]?.version ?? '未知'}（${updates[0]?.date ?? '—'}）`,
 	);
 	return updates;
 }
@@ -189,7 +192,7 @@ export function fetchPatchNotes(version: string): Promise<PatchNotes | null> {
 	if (!pending) {
 		const file = cachePath(`notes-${version.replace(/[^\w.]+/g, '_')}.json`);
 		const url = `${BASE}/patchnotes?version=${encodeURIComponent(version)}&language=schinese`;
-		pending = loadJson<PatchNotes>(file, url, NOTES_TTL_SECONDS, isPatchNotes);
+		pending = loadJson<PatchNotes>(file, url, NOTES_TTL_SECONDS, isPatchNotes).then((loaded) => loaded.value);
 		notesPromises.set(version, pending);
 	}
 	return pending;
@@ -220,7 +223,7 @@ export function fetchPatchNames(): Promise<PatchNames> {
 }
 
 async function loadNames(): Promise<PatchNames> {
-	const [heroRaw, itemRaw, abilityRaw] = await Promise.all([
+	const [heroTable, itemTable, abilityTable] = await Promise.all([
 		loadJson<{ result: { data: { heroes: RawNamed[] } } }>(
 			cachePath('herolist.json'),
 			`${BASE}/herolist?language=schinese`,
@@ -240,6 +243,9 @@ async function loadNames(): Promise<PatchNames> {
 			isNameTable('itemabilities'),
 		),
 	]);
+	const heroRaw = heroTable.value;
+	const itemRaw = itemTable.value;
+	const abilityRaw = abilityTable.value;
 
 	const heroes = new Map<number, { key: string; name: string }>();
 	for (const hero of heroRaw?.result?.data?.heroes ?? []) {
