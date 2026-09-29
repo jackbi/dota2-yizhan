@@ -535,6 +535,10 @@ export class PartyRoom {
 	 *
 	 * 「房间没了」这条上报会重试几次：count > 0 的报告失败了还有下一次有人进出兜底，
 	 * 而房间删掉之后**没有下一次了**，那一次失败就等于留一张永久卡片。
+	 *
+	 * 限速戳要在**发之前**就盖上，不能只在 response.ok 里盖：大厅 5xx、或者 stub 那层直接抛错时
+	 * 戳子不更新，15 分钟那道闸门就一直开着——每条心跳（客户端 25 秒一次）都会重发一遍，去砸那个
+	 * 已经在报错的大厅。宁可为一次失败等满 15 分钟，也不要把它变成持续重放。
 	 */
 	private async tellLobby(code: string, count: number): Promise<void> {
 		const name = count > 0 ? (this.stored?.name ?? '') : '';
@@ -542,17 +546,15 @@ export class PartyRoom {
 		const attempts = count > 0 ? 1 : LOBBY_REPORT_ATTEMPTS;
 		const lobby = this.env.PARTY_LOBBY.get(this.env.PARTY_LOBBY.idFromName('lobby'));
 
+		if (count > 0 && this.stored) {
+			this.stored.lobbyReportedAt = Date.now();
+			await this.persist();
+		}
+
 		for (let attempt = 0; attempt < attempts; attempt += 1) {
 			try {
 				const response = await lobby.fetch('https://party.internal/rooms', { method: 'POST', body });
-				if (response.ok) {
-					// 记下这次上报的时刻（心跳靠它限速）。落盘：Hibernation 会把内存清掉。
-					if (count > 0 && this.stored) {
-						this.stored.lobbyReportedAt = Date.now();
-						await this.persist();
-					}
-					return;
-				}
+				if (response.ok) return;
 				console.warn(`[party] 大厅上报被拒：${code} count=${count} HTTP ${response.status}`);
 			} catch (error) {
 				console.warn(`[party] 大厅上报失败：${code} count=${count} ${error instanceof Error ? error.message : error}`);

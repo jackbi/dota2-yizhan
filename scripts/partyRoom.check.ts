@@ -138,6 +138,14 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 		/Date\.now\(\) - \(this\.stored\.lobbyReportedAt \?\? 0\) < LOBBY_HEARTBEAT_MS/,
 		'心跳刷新要按上次上报时刻限速（否则每条 ping 都写一次 storage）',
 	);
+	assert.ok(
+		tell.indexOf('this.stored.lobbyReportedAt = Date.now();') < tell.indexOf('for (let attempt'),
+		'限速戳要在发上报之前就盖上：只在 response.ok 里盖的话，大厅报错时闸门一直开着',
+	);
+	assert.ok(
+		!/if \(response\.ok\) \{[\s\S]{0,200}?lobbyReportedAt/.test(tell),
+		'不要只在 response.ok 里盖限速戳（那正是上一版的问题）',
+	);
 	ok('大厅上报与兜底清理');
 }
 
