@@ -19,6 +19,7 @@ import * as L from '../lib/partyLogic';
 import {
 	decodeClientMessage,
 	encodeMessage,
+	parseRoomPath,
 	type ClientMessage,
 	type LobbyRoom,
 	type PartyErrorCode,
@@ -117,8 +118,18 @@ export class PartyRoom {
 
 	async fetch(request: Request): Promise<Response> {
 		if (!isWebSocket(request)) return new Response('需要 WebSocket 升级', { status: 426 });
-		this.code = L.normalizeCode(new URL(request.url).pathname.split('/').pop() ?? '');
-		if (!L.isValidCode(this.code)) return new Response('房间码不对', { status: 400 });
+		/*
+		 * 房间码必须与路由用**同一个函数**解析（`parseRoomPath`）。
+		 *
+		 * 这里原先取 `URL.pathname` 的最后一段再过 `normalizeCode()`，而那个函数是给"人手输入"
+		 * 用的：它会过滤字母表外的字符、再截到 5 位。于是 `/api/party/room/%20ABCDE%20` 在路由侧
+		 * 算出 `ABCDE`（因此路由到 DO ABCDE），DO 却把 `%20ABCDE%20` 过滤成 `2ABCD`（`%20` 里的
+		 * **2 在字母表里**）——房间自称的码与它所在的 DO 不是同一个，无需鉴权就能覆盖、并在过期时
+		 * 删掉真房间 `2ABCD` 在大厅的卡片。同一个函数、同一份判据，才谈得上"没有别名"。
+		 */
+		const code = parseRoomPath(new URL(request.url).pathname);
+		if (!code) return new Response('房间码不对', { status: 400 });
+		this.code = code;
 
 		const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
 		this.ctx.acceptWebSocket(server);

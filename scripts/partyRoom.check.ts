@@ -118,4 +118,21 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	ok('大厅上报与兜底清理');
 }
 
+// 5. 房间码：路由与房间 DO 必须用同一个解析函数
+{
+	/*
+	 * 这一条是上一条修复的漏网：路由换了 `parseRoomPath`，DO 却还在用会**过滤字符**的
+	 * `normalizeCode` 处理未解码的路径段。两种判据并存时别名照样成立——`%20ABCDE%20` 在路由侧
+	 * 是 `ABCDE`（路由到 DO ABCDE），在 DO 里被过滤成 `2ABCD`（`%20` 里的 2 在字母表内），
+	 * 房间于是自称成另一个码，能覆盖并删掉真房间在大厅的卡片。
+	 */
+	assert.match(worker, /const code = parseRoomPath\(new URL\(request\.url\)\.pathname\)/, 'DO 要用路由那一套解析房间码');
+	assert.ok(
+		!/this\.code = L\.normalizeCode\(/.test(worker),
+		'DO 不能再对路径段用 normalizeCode：它会过滤字符、造出别名',
+	);
+	assert.ok(!/pathname\.split\('\/'\)\.pop\(\)/.test(worker), '别再手拆路径段取房间码');
+	ok('房间码：路由与 DO 同一个解析函数');
+}
+
 console.log(`partyRoom 全部断言通过（${cases} 组）`);
