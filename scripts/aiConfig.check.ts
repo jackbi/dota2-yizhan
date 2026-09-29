@@ -13,6 +13,8 @@ import {
 	modelsEndpointOf,
 	normalizeBaseUrl,
 	parseAiConfig,
+	sameAiConfig,
+	sameAiTarget,
 	saveAiConfig,
 	stateOf,
 	validateBaseUrl,
@@ -148,5 +150,21 @@ assert.deepEqual(
 	{ baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-rt', model: 'gpt-4o-mini', lastCheckedAt: 123, lastCheckOk: true },
 	'存进去再读出来应当收敛到同一套值（含去空白与去尾斜杠）',
 );
+
+/*
+ * 判等：界面上的状态文案吃 lastCheckedAt / lastCheckOk，而"上一份 AI 建议还能不能用"只看
+ * 地址 / key / 模型。两者混用会出两种错——点完「测试连接」返回 BP 台不重画（台头仍写"还没测过"），
+ * 或者清掉 key 后建议面板还挂着上一个模型的 picks。
+ */
+{
+	const base = { baseUrl: 'https://api.deepseek.com', apiKey: 'sk-a', model: 'deepseek-flash', lastCheckedAt: 0, lastCheckOk: false };
+	assert.equal(sameAiConfig(base, { ...base }), true, '一模一样的两份要判等');
+	assert.equal(sameAiConfig(base, { ...base, lastCheckedAt: 1, lastCheckOk: true }), false, '只改了测试结果也算"配置变了"：状态文案要跟着重画');
+	assert.equal(sameAiTarget(base, { ...base, lastCheckedAt: 1, lastCheckOk: true }), true, '只改测试结果不算换模型：上一份建议仍然有效');
+	assert.equal(sameAiTarget(base, { ...base, model: 'deepseek-reasoner' }), false, '换模型要认出目标变了');
+	assert.equal(sameAiTarget(base, { ...base, apiKey: '' }), false, '清掉 key 要认出目标变了');
+	assert.equal(sameAiTarget(base, { ...base, baseUrl: 'https://api.openai.com/v1' }), false, '换地址要认出目标变了');
+	assert.equal(sameAiConfig(base, { ...base, apiKey: 'sk-b' }), false);
+}
 
 console.log('aiConfig.check 通过');

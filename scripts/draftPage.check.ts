@@ -111,6 +111,9 @@ assert.match(script, /advice\.foeCandidates\.find\(\(item\) => item\.heroId === 
 // 配置在别处改了要跟上：bfcache 返回、另一个标签页保存。
 assert.match(script, /addEventListener\('pageshow'/, '从 bfcache 返回时要重读配置');
 assert.match(script, /event\.key === AI_STORE_KEY/, '另一个标签页改了配置要跟上');
+// 变更判定要覆盖**全部**字段：只比地址与 key 的话，在设置页点完「测试连接」切回来不会重画。
+assert.match(script, /if \(sameAiConfig\(next, ai\)\) return;/, '重读配置后要按全部字段判等（含上次测试结果）');
+assert.match(script, /if \(!sameAiTarget\(next, ai\)\) aiResult = null;/, '换了地址/key/模型要撤掉上一份 AI 建议，别让面板挂着旧模型的 picks');
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
 assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
 // 三条调用路径走同一个入口：退让顺序、超时、按服务商拼的请求头都只写一遍。

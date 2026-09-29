@@ -15,7 +15,7 @@ import {
 } from '../lib/draftPrompt.ts';
 import type { PromptMessage } from '../lib/draftPrompt.ts';
 import type { AiConfig } from '../lib/aiConfig.ts';
-import { AI_STORE_KEY, aiStateLabel, endpointOf, isConfigured, loadAiConfig } from '../lib/aiConfig.ts';
+import { AI_STORE_KEY, aiStateLabel, endpointOf, isConfigured, loadAiConfig, sameAiConfig, sameAiTarget } from '../lib/aiConfig.ts';
 import { headersFor, shapeFor } from '../lib/aiProviders.ts';
 import { adviceNarrative, opponentMoveReason } from '../lib/draftNarrative.ts';
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
@@ -1461,7 +1461,13 @@ if (data) {
 		 */
 		function refreshAiConfig(): void {
 			const next = loadAiConfig();
-			if (next.baseUrl === ai.baseUrl && next.apiKey === ai.apiKey && next.model === ai.model) return;
+			if (sameAiConfig(next, ai)) return;
+			/*
+			 * 换了地址 / key / 模型：台头会立刻改成新状态，但上一份建议还是按旧配置问出来的，
+			 * 再挂在面板上就是"假装有 AI"（清掉 key 之后尤其明显：上面写「未配置模型」，
+			 * 下面还列着上一个模型的 picks 与「AI：…」摘要）。只改测试结果不算换配置，那份建议仍然有效。
+			 */
+			if (!sameAiTarget(next, ai)) aiResult = null;
 			ai = next;
 			shape = shapeFor(ai.baseUrl);
 			aiSide = isConfigured(ai) && aiSidePref;

@@ -117,6 +117,34 @@ export function isConfigured(config: AiConfig): boolean {
 	return Boolean(config.baseUrl.trim() && config.apiKey.trim() && config.model.trim());
 }
 
+/**
+ * 两份配置是否**完全**一样，含「上次测试」那两个字段。
+ *
+ * 判等必须按全部字段来：界面状态就吃 `lastCheckedAt` / `lastCheckOk`——在设置页点一次
+ * 「测试连接」再切回 BP 台，只比地址与 key 的话这里会当成"没变化"提前返回，台头仍旧写着
+ * 「还没测过连接」。
+ */
+export function sameAiConfig(a: AiConfig, b: AiConfig): boolean {
+	return (
+		a.baseUrl === b.baseUrl &&
+		a.apiKey === b.apiKey &&
+		a.model === b.model &&
+		a.lastCheckedAt === b.lastCheckedAt &&
+		a.lastCheckOk === b.lastCheckOk
+	);
+}
+
+/**
+ * 决定「发给哪家、用哪个模型、拿什么 key」的那几项是否一样。
+ *
+ * 与上面分开是因为它管的是另一件事：只要这几项变了，上一份模型建议就是按旧配置问出来的，
+ * 不能再挂在面板上（台头写着「未配置模型」、建议面板却还挂着上一个模型的 picks，
+ * 正是文档里禁止的"假装有 AI"）。
+ */
+export function sameAiTarget(a: AiConfig, b: AiConfig): boolean {
+	return a.baseUrl === b.baseUrl && a.apiKey === b.apiKey && a.model === b.model;
+}
+
 export function stateOf(config: AiConfig): AiConfigState {
 	if (!isConfigured(config)) return 'unset';
 	return config.lastCheckedAt > 0 && !config.lastCheckOk ? 'failed' : 'ready';
