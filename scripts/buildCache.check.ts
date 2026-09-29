@@ -153,6 +153,10 @@ try {
 	// 半张：只有头，没有收尾（模拟构建被 kill / 缓存还原到一半）
 	await fs.writeFile(file, u8(jpegHead));
 	assert.equal(await inspectImageFile(file), 'incomplete', '半张 JPG 必须被认出来，否则它会一直当命中');
+	// 0 字节：空数组是真值，很容易从守卫底下溜过去，然后被当成"认不出的格式 = 完整"。
+	const empty = path.join(imgDir, 'empty.jpg');
+	await fs.writeFile(empty, new Uint8Array());
+	assert.equal(await inspectImageFile(empty), 'incomplete', '0 字节文件必须算没写完（空数组是真值，别让它溜过去）');
 	assert.equal(await inspectImageFile(path.join(os.tmpdir(), 'no-such-image-check.jpg')), 'incomplete', '文件不在也算没写完');
 	await fs.rm(imgDir, { recursive: true, force: true });
 	cases += 1;

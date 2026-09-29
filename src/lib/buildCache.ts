@@ -153,7 +153,15 @@ export function imageIntegrity(head: Uint8Array, tail: Uint8Array): ImageIntegri
 	return 'unknown';
 }
 
-/** 读文件的一段；文件不在、读不了都返回 null。`fromEnd` 为真时读最后 `length` 个字节。 */
+/**
+ * 读文件的一段；文件不在、读不了、**或是 0 字节的文件**都返回 null。
+ *
+ * 0 字节要归到 null 而不是 `new Uint8Array()`：那个空数组是**真值**，会让 `inspectImageFile`
+ * 的 `!head || !tail` 守卫失效，一路走到 `imageIntegrity([], [])`——它既不是 JPEG 也不是 PNG，
+ * 于是判成 'unknown'，而调用方把 unknown 当完整：一张 0 字节的破图会被当成命中。
+ *
+ * `fromEnd` 为真时读最后 `length` 个字节。
+ */
 async function readRange(file: string, length: number, fromEnd = false): Promise<Uint8Array | null> {
 	let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
 	try {
@@ -161,7 +169,7 @@ async function readRange(file: string, length: number, fromEnd = false): Promise
 		const size = (await handle.stat()).size;
 		const offset = fromEnd ? Math.max(0, size - length) : 0;
 		const take = Math.min(length, Math.max(0, size - offset));
-		if (take === 0) return new Uint8Array();
+		if (take === 0) return null;
 		const buffer = new Uint8Array(take);
 		await handle.read(buffer, 0, take, offset);
 		return buffer;
