@@ -566,7 +566,12 @@ export function toRedditCard(post: RedditPost): NewsCardItem {
 		title: postTitle(post),
 		originalTitle: post.zh?.title ? post.title : undefined,
 		summary: postSummary(post),
-		date: new Date(post.createdAt * 1000).toISOString().slice(0, 10),
+		/*
+		 * 上游缺发布时间时 `createdAt` 是 0（见前面两处 `|| 0`），而 `new Date(0).toISOString()`
+		 * 是**合法**的 1970-01-01——不守的话列表卡片上会多出一个看着像真日期的假信息。
+		 * 详情页走的是 `formatIso`（那边已经守了），卡片这条是它没覆盖到的兄弟路径。
+		 */
+		date: post.createdAt > 0 ? new Date(post.createdAt * 1000).toISOString().slice(0, 10) : '时间待定',
 		img: post.image || undefined,
 		tags: ['Reddit'],
 		badge: 'Reddit 社区',

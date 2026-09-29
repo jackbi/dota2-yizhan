@@ -190,6 +190,16 @@ assert.match(
 	/export function formatMatchTime\(unix: number, nowSec: number\): string \{\s*if \(!Number\.isFinite\(unix\) \|\| unix <= 0\) return '时间待定';/,
 	'formatMatchTime 要自己守卫 0/NaN：不然每个漏写的调用点都会印出 1970-01-01',
 );
+/*
+ * 展示侧还有一条**不经过格式化函数**的兄弟路径：Reddit 列表卡片自己拼日期（`createdAt` 来自
+ * 上游的 `|| 0`，`new Date(0).toISOString()` 是合法字符串，格式化函数里的守卫管不到它）。
+ * 详情页修好、列表没修，等于同一批数据在同一个站上有两种表现。
+ */
+assert.match(
+	reddit,
+	/date: post\.createdAt > 0 \? new Date\(post\.createdAt \* 1000\)\.toISOString\(\)\.slice\(0, 10\) : '时间待定'/,
+	'Reddit 卡片要守卫 createdAt=0：否则列表上会印出 1970-01-01',
+);
 
 // ---------------------------------------------------------------- 5. 退回旧缓存要有年龄上限
 
