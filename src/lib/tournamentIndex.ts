@@ -1,6 +1,7 @@
 import type { EsportsEvent, EsportsMatch, LeagueTier, MatchStatus, TeamRef } from '../data/types';
+import { fetchLiquipediaPlayerIds, fetchLiquipediaTeamRosters } from './liquipediaApi';
 import type { TeamRoster } from './liquipediaParse';
-import { fetchLiquipediaTeamRosters } from './liquipediaApi';
+import { loadPlayerHeroPools } from './playerHeroes';
 import { getTournaments } from './tournamentsApi';
 
 /**
@@ -117,6 +118,34 @@ async function buildIndex(): Promise<TournamentIndex> {
 	);
 	for (const team of teams.values()) {
 		if (team.wiki) team.roster = rosters.get(team.wiki);
+	}
+
+	/*
+	 * 名单里的人还没有账号 id——它写在**选手页**上（`|playerid=`），所以要多取一层。
+	 * 有账号才谈得上"这个人打过什么英雄"：昵称会改（实测一个账号在 Liquipedia 上叫
+	 * Gotthejuice、游戏里已经叫 realm），按名字根本对不上人。
+	 */
+	const playerPages = [...rosters.values()].flatMap((roster) => roster.players.map((member) => member.page));
+	const accountIds = await fetchLiquipediaPlayerIds(playerPages.filter((page): page is string => !!page));
+	for (const roster of rosters.values()) {
+		for (const member of roster.players) {
+			const accountId = member.page ? accountIds.get(member.page) : undefined;
+			if (accountId) member.accountId = accountId;
+		}
+	}
+
+	/*
+	 * 招牌英雄：按当前版本统计，样本不够就回退到近 90 天（口径会写进数据里，页面照实标）。
+	 * 一位选手一个请求，靠缓存摊平——只有缓存过期的那几位会真的联网。
+	 */
+	const pools = await loadPlayerHeroPools(
+		[...rosters.values()].flatMap((roster) => roster.players.map((member) => member.accountId ?? 0)),
+	);
+	for (const roster of rosters.values()) {
+		for (const member of roster.players) {
+			const pool = member.accountId ? pools.get(member.accountId) : undefined;
+			if (pool) member.heroPool = pool;
+		}
 	}
 
 	return {

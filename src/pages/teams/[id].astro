@@ -3,6 +3,10 @@ import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
 import RosterMemberCard from '../../components/RosterMemberCard.astro';
 import { formatRange } from '../../lib/format';
+import { fetchHeroListCached } from '../../lib/heroList';
+import type { RosterMember } from '../../lib/liquipediaParse';
+import { localizePatchIcons } from '../../lib/patchIcons';
+import { heroIconKey } from '../../lib/patchNotes';
 import { EVENT_STATUS_META } from '../../lib/statusMeta';
 import type { TeamDetail } from '../../lib/tournamentIndex';
 import { getTournamentIndex } from '../../lib/tournamentIndex';
@@ -42,6 +46,48 @@ export async function getStaticPaths() {
 const { team } = Astro.props;
 const roster = team.roster;
 const now = Math.floor(Date.now() / 1000);
+
+/*
+ * 招牌英雄的图标复用更新日志那一套（同一个 Valve CDN、同一个已发布目录），不新开图片通道——
+ * 图标只有 20px 大，多存一份没有意义。
+ *
+ * 英雄列表拿不到时整块降级：不显示英雄，只留名单。这一块是附加信息，不该让整页失败。
+ */
+const poolHeroIds = [...new Set((roster?.players ?? []).flatMap((member) => member.heroPool?.heroes.map((h) => h.heroId) ?? []))];
+const heroById = new Map<number, { name: string; key: string }>();
+try {
+	for (const hero of await fetchHeroListCached()) {
+		// 官网列表里的图名就是内部名（`npc_dota_hero_<key>.png`），图标地址按同一个 key 拼。
+		const key = (hero.img.split('/').pop() ?? '').replace(/^npc_dota_hero_/, '').replace(/\.png$/, '');
+		heroById.set(hero.id, { name: hero.name, key });
+	}
+} catch {
+	// 拿不到就退化成"没有招牌英雄"，下面两处都会自然跳过。
+}
+
+const heroIcons =
+	heroById.size > 0
+		? await localizePatchIcons({
+				heroes: [...heroById.values()].map((hero) => ({ key: hero.key, name: hero.name })),
+				items: [],
+			})
+		: new Map<string, string>();
+
+/** 一位选手的招牌英雄（名字 + 图标都备好）。英雄列表拿不到时返回空数组。 */
+function heroChips(member: RosterMember): { name: string; icon?: string; games: number; wins: number }[] {
+	return (member.heroPool?.heroes ?? []).flatMap((stat) => {
+		const hero = heroById.get(stat.heroId);
+		if (!hero) return [];
+		return [{ name: hero.name, icon: heroIcons.get(heroIconKey(hero.key)), games: stat.games, wins: stat.wins }];
+	});
+}
+
+/** 口径文案。跨版本的那一批不能写版本号——那会让人以为这也是本版本的数据。 */
+function heroScopeLabel(member: RosterMember): string | undefined {
+	const pool = member.heroPool;
+	if (!pool) return undefined;
+	return pool.scope === 'patch' ? `${pool.version} 版本` : '近 90 天';
+}
 
 /** 号位按国内习惯说。 */
 const POSITION_LABEL: Record<number, string> = { 1: '一号位', 2: '二号位', 3: '三号位', 4: '四号位', 5: '五号位' };
@@ -147,12 +193,20 @@ function initial(name: string): string {
 							) : null
 						}
 					</div>
+					<p class="mt-2 text-xs text-faint">
+						招牌英雄只算正式比赛（STRATZ 不开放天梯对局），优先当前版本、样本不足才回退到近 90 天；每行末尾标的是实际口径，图标后的数字是场次/胜场。
+					</p>
 
 					{
 						roster.players.length > 0 ? (
-							<div class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+							<div class="mt-4 grid grid-cols-1 gap-2">
 								{roster.players.map((member) => (
-									<RosterMemberCard member={member} badge={POSITION_LABEL[member.position ?? 0] ?? '位置待定'} />
+									<RosterMemberCard
+										member={member}
+										badge={POSITION_LABEL[member.position ?? 0] ?? '位置待定'}
+										heroes={heroChips(member)}
+										heroScope={heroScopeLabel(member)}
+									/>
 								))}
 							</div>
 						) : null

@@ -100,7 +100,7 @@ const TEAM_PAGE = `
 }}
 ===Coaching Staff===
 {{Squad|type=staff|status=active
-|{{Person|flag=ba|id=MiLAN|name=Milan Kozomara|role=Coach|joindate=2026-06-20}}
+|{{Person|flag=at|id=Tobi|link=Tobi (Austrian player)|name=Tobias Buchner|role=Coach|joindate=2026-06-20}}
 }}
 {{box|end}}<!--
 {{stand-ins table|
@@ -124,9 +124,19 @@ assert.deepEqual(
 assert.equal(spirit.players[0]?.joined, '2020-12-19', '`<ref>` 要从加入日期里去掉');
 assert.equal(spirit.players[2]?.captain, true, 'captain=yes 要读出来');
 assert.equal(spirit.players[0]?.realName, 'Illya Mulyarchuk');
+assert.equal(
+	spirit.players[0]?.page,
+	'Yatoro',
+	'没有 link= 时选手页标题就是昵称本身（MediaWiki 首字母不区分大小写，查账号靠它）',
+);
+assert.equal(
+	spirit.staff[0]?.page,
+	'Tobi (Austrian player)',
+	'写了 `link=` 就用它当页面标题——昵称撞名时只有 link 指得准',
+);
 assert.deepEqual(
 	spirit.staff.map((s) => [s.nick, s.role]),
-	[['MiLAN', 'Coach']],
+	[['Tobi', 'Coach']],
 	'`type=staff` 归教练组，不要混进选手',
 );
 assert.equal(

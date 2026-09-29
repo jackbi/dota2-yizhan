@@ -7,28 +7,65 @@ import type { RosterMember } from '../lib/liquipediaParse';
  * 三个分组（现役 / 替补 / 教练组）共用它，差别只有徽章上那几个字，由调用方传进来。
  * 头像位置沿用站点里其他地方的做法：队标与选手头像都没有图源时显示首字母，
  * 不渲染 `<img>`，也就不会出现破图。
+ *
+ * 招牌英雄只在现役身上有（教练组没有对局可算），由调用方算好传进来——组件不去碰数据源。
  */
+/** 已经备好图标与文案的一个英雄。 */
+interface HeroChip {
+	name: string;
+	icon?: string;
+	games: number;
+	wins: number;
+}
+
 interface Props {
 	member: RosterMember;
 	/** 徽章文字：号位、角色，或「替补」。 */
 	badge: string;
+	heroes?: HeroChip[];
+	/** 这批英雄的统计口径（`7.41f 版本` / `近 90 天`）。 */
+	heroScope?: string;
 }
 
-const { member, badge } = Astro.props;
+const { member, badge, heroes = [], heroScope } = Astro.props;
 const initial = member.nick.trim().slice(0, 2).toUpperCase();
 const meta = [member.realName, member.joined ? `加入于 ${member.joined}` : ''].filter(Boolean).join(' · ');
 ---
 
-<div class="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3">
-	<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
-		{initial}
-	</span>
-	<span class="min-w-0 flex-1">
-		<span class="flex items-center gap-1.5">
-			<span class="min-w-0 truncate text-sm text-cream">{member.nick}</span>
-			<span class="shrink-0 rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-faint">{badge}</span>
-			{member.captain ? <span class="shrink-0 rounded bg-gold/15 px-1.5 py-0.5 text-[10px] text-gold">队长</span> : null}
+<div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-line bg-surface px-4 py-3">
+	<span class="flex min-w-0 flex-1 basis-56 items-center gap-3">
+		<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+			{initial}
 		</span>
-		{meta ? <span class="mt-0.5 block truncate text-xs text-faint">{meta}</span> : null}
+		<span class="min-w-0 flex-1">
+			<span class="flex items-center gap-1.5">
+				<span class="min-w-0 truncate text-sm text-cream">{member.nick}</span>
+				<span class="shrink-0 rounded bg-surface-3 px-1.5 py-0.5 text-[10px] text-faint">{badge}</span>
+				{member.captain ? <span class="shrink-0 rounded bg-gold/15 px-1.5 py-0.5 text-[10px] text-gold">队长</span> : null}
+			</span>
+			{meta ? <span class="mt-0.5 block truncate text-xs text-faint">{meta}</span> : null}
+		</span>
 	</span>
+
+	{
+		heroes.length > 0 ? (
+			<span class="flex flex-wrap items-center gap-1.5">
+				{heroes.map((hero) => (
+					/* 名字进 title：图标认得出来的人一眼扫过，认不出的hover 一下就有全称与战绩。 */
+					<span
+						class="inline-flex items-center gap-1 rounded-md border border-line bg-surface-2 py-0.5 pl-0.5 pr-1.5"
+						title={`${hero.name} · ${hero.games} 场 ${hero.wins} 胜`}
+					>
+						{hero.icon ? (
+							<img src={hero.icon} alt={hero.name} loading="lazy" class="h-5 w-5 rounded-sm object-cover" />
+						) : null}
+						<span class="text-[10px] tabular-nums text-faint">
+							{hero.games}/{hero.wins}
+						</span>
+					</span>
+				))}
+				{heroScope ? <span class="text-[10px] text-faint">{heroScope}</span> : null}
+			</span>
+		) : null
+	}
 </div>

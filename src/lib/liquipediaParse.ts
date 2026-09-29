@@ -1,4 +1,6 @@
 import type { EsportsMatch, LeagueTier } from '../data/types';
+// 只借类型：`playerHeroes` 引了 node:fs，而本模块要被纯 node 的自检直接 import（见文件头注释）。
+import type { PlayerHeroPool } from './playerHeroes.ts';
 import { routeSlug } from './routeSlug.ts';
 
 /**
@@ -267,6 +269,11 @@ export function parseBracketMatches(html: string, pagePath: string, nowSec: numb
 export interface RosterMember {
 	/** 昵称（`id=`），页面上显示的就是它。 */
 	nick: string;
+	/**
+	 * 这个人自己的 Liquipedia 页面标题（`link=`，缺省时就是昵称）。
+	 * 查 Steam 账号 id 要靠它——账号 id 只写在选手页上。
+	 */
+	page?: string;
 	/** 真名；Liquipedia 没有时缺省。 */
 	realName?: string;
 	/** 一到五号位；教练组没有这个。 */
@@ -278,6 +285,13 @@ export interface RosterMember {
 	/** 加入日期，YYYY-MM-DD。 */
 	joined?: string;
 	captain?: boolean;
+	/**
+	 * Steam 账号 id。**不由解析得到**：它在选手页的 Infobox 里，由 `liquipediaApi` 补上
+	 * （见 `fetchLiquipediaPlayerIds`）。
+	 */
+	accountId?: number;
+	/** 按版本算好的招牌英雄，由 `playerHeroes` 补上。 */
+	heroPool?: PlayerHeroPool;
 }
 
 export interface TeamRoster {
@@ -382,6 +396,8 @@ function toMember(segments: string[]): RosterMember | null {
 	if (!nick) return null;
 	const position = Number(params.get('position'));
 	const member: RosterMember = { nick };
+	// `link=` 只在昵称撞名时才写；没有它时页面标题就是昵称本身（MediaWiki 首字母不区分大小写）。
+	member.page = params.get('link') || nick;
 	const realName = params.get('name');
 	if (realName) member.realName = realName;
 	if (Number.isInteger(position) && position > 0) member.position = position;

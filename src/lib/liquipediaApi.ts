@@ -48,7 +48,7 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
  * 而构建汇总还写着「联网抓取」——看着像上游的问题，实际是拿了一份旧形状的数据。
  * 同一个坑 `roomList.ts` 里踩过，处理办法也一样：版本对不上就当没有。
  */
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
 
 interface CacheEntry {
 	v?: number;
@@ -467,5 +467,104 @@ async function loadTeamRosters(wikiPaths: string[]): Promise<Map<string, TeamRos
 	}
 
 	await writeRosterCache(next);
+	return out;
+}
+
+/*
+ * ---- 选手的 Steam 账号 -------------------------------------------------------------
+ *
+ * 账号 id 写在**选手页**的 Infobox 里（`|playerid=152962063`），不在战队页上，所以要多取一层。
+ * 有了它才能去 STRATZ 查这个人的对局——按昵称搜是不行的：STRATZ 的根查询里没有按名字搜的字段，
+ * 而玩家昵称本来就随时改（实测一个账号在 Liquipedia 上叫 Gotthejuice，游戏里已经改叫 realm，
+ * 九月的比赛里就是这个名字）。
+ *
+ * 和名单一样批量取：一次 50 个标题。选手页比战队页多（一支队五个），几十支队也就三四批。
+ */
+
+const PLAYER_ID_CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'player-ids.json');
+/** 账号 id 基本不会变（换号才变），缓存给一周。 */
+const PLAYER_ID_TTL_SECONDS = 7 * 24 * 3600;
+
+interface PlayerIdCacheEntry {
+	v?: number;
+	at: number;
+	/** 取到页面但页面上没有 `playerid` 时留空，免得每轮白问。 */
+	accountId?: number;
+}
+
+type PlayerIdCache = Record<string, PlayerIdCacheEntry>;
+
+async function readPlayerIdCache(): Promise<PlayerIdCache> {
+	const hit = await readCacheJson<PlayerIdCache>(PLAYER_ID_CACHE_FILE, (value) => typeof value === 'object' && value !== null);
+	if (!hit) return {};
+	return Object.fromEntries(Object.entries(hit.value).filter(([, entry]) => entry?.v === CACHE_VERSION));
+}
+
+function writePlayerIdCache(cache: PlayerIdCache): Promise<void> {
+	return writeCacheFile(PLAYER_ID_CACHE_FILE, JSON.stringify(cache));
+}
+
+/** 选手页 Infobox 里的 `|playerid=152962063`。 */
+const PLAYER_ID_RE = /^\|\s*playerid\s*=\s*(\d+)\s*$/m;
+
+let playerIdsPromise: Promise<Map<string, number>> | null = null;
+
+/**
+ * 选手页面标题 → Steam 账号 id。页面不存在、或那一行是空的时候不会出现在返回值里。
+ */
+export function fetchLiquipediaPlayerIds(playerPages: string[]): Promise<Map<string, number>> {
+	playerIdsPromise ??= loadPlayerIds(playerPages);
+	return playerIdsPromise;
+}
+
+async function loadPlayerIds(playerPages: string[]): Promise<Map<string, number>> {
+	const wanted = [...new Set(playerPages.map((page) => page.trim()).filter(Boolean))];
+	const out = new Map<string, number>();
+	if (wanted.length === 0) return out;
+
+	const cache = await readPlayerIdCache();
+	const next: PlayerIdCache = {};
+	const stale: string[] = [];
+	for (const page of wanted) {
+		const hit = cache[page];
+		if (hit && Date.now() - hit.at < PLAYER_ID_TTL_SECONDS * 1000) {
+			next[page] = hit;
+			if (hit.accountId) out.set(page, hit.accountId);
+			continue;
+		}
+		stale.push(page);
+	}
+
+	const carry = (page: string): void => {
+		const hit = cache[page];
+		if (!hit) return;
+		next[page] = hit;
+		if (hit.accountId) out.set(page, hit.accountId);
+	};
+
+	if (OFFLINE) {
+		for (const page of stale) carry(page);
+	} else {
+		let fetched = 0;
+		for (let i = 0; i < stale.length; i += ROSTER_BATCH) {
+			const batch = stale.slice(i, i + ROSTER_BATCH);
+			if (fetched > 0) await sleep(SLOW_PAGE_GAP_MS);
+			fetched += 1;
+
+			const pages = await fetchWikitext(batch);
+			if (!pages) {
+				for (const page of batch) carry(page);
+				continue;
+			}
+			for (const page of batch) {
+				const wikitext = pages.get(page);
+				const accountId = wikitext ? Number(wikitext.match(PLAYER_ID_RE)?.[1]) || undefined : undefined;
+				next[page] = { v: CACHE_VERSION, at: Date.now(), accountId };
+				if (accountId) out.set(page, accountId);
+			}
+		}
+	}
+
+	await writePlayerIdCache(next);
 	return out;
 }

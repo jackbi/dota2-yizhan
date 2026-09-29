@@ -25,6 +25,8 @@
 | `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
 | `.cache/liquipedia/tiers.json` | 各届赛事的档位（Tier 1–4） | 7 天 |
 | `.cache/liquipedia/rosters.json` | 各战队的人员名单 | 12 小时 |
+| `.cache/liquipedia/player-ids.json` | 选手的 Steam 账号 id（从选手页取） | 7 天 |
+| `.cache/stratz/player-heroes.json` | 选手按版本统计的招牌英雄 | 6 小时 |
 | `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
 | `.cache/avatars/` | 主播头像的字节（构建结束拷进 `dist/avatars/`） | 永久，30 天没用到就清理 |
