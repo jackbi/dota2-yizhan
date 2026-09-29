@@ -47,8 +47,19 @@ const withFetch: string[] = [];
 
 const countFetches = (source: string): number => (source.match(/\bfetch\(/g) ?? []).length;
 const countSignals = (source: string): number => (source.match(/\bsignal\s*:/g) ?? []).length;
-/** 只看对外的字面量地址；`.fetch(`（DO 内部 RPC）不算。 */
-const externalFetchRe = /(?<![.\w])fetch\(\s*[`'"]https:\/\//g;
+/**
+ * 取数用的 `fetch(`：**裸调用**才算，`.fetch(`（DO 之间的内部 RPC）不算。
+ *
+ * 上一版要求 `fetch(` 后面紧跟字面量 `https://`，于是 `fetch(`${BASE}${path}`)` 这种模板串拼出来的
+ * 地址被漏掉——`mcp/` 下所有文件因此被跳过，删掉刚补的超时也照样绿。
+ */
+const bareFetchRe = /(?<![.\w$])fetch\(/g;
+/** 去掉方法声明行（`async fetch(request, env, ctx)`）：那是 Worker 的入口，不是取数。 */
+const dropFetchDeclarations = (code: string): string =>
+	code
+		.split('\n')
+		.filter((line) => !/^\s*(?:async\s+)?fetch\(/.test(line))
+		.join('\n');
 
 for (const name of files) {
 	const source = readFileSync(new URL(name, libDir), 'utf8');
@@ -70,13 +81,13 @@ for (const [label, dir, ext] of [
 	['mcp', new URL('../mcp/', import.meta.url), '.mjs'],
 ] as const) {
 	for (const name of readdirSync(dir).filter((file) => file.endsWith(ext))) {
-		const code = stripComments(readFileSync(new URL(name, dir), 'utf8'));
-		const external = (code.match(externalFetchRe) ?? []).length;
-		if (external === 0) continue;
+		const code = dropFetchDeclarations(stripComments(readFileSync(new URL(name, dir), 'utf8')));
+		const bare = (code.match(bareFetchRe) ?? []).length;
+		if (bare === 0) continue;
 		const signals = countSignals(code);
 		assert.ok(
-			signals >= external,
-			`${label}/${name} 有 ${external} 处对外 fetch 但只有 ${signals} 处 signal：外层挂住时调用会一直等下去`,
+			signals >= bare,
+			`${label}/${name} 有 ${bare} 处取数 fetch 但只有 ${signals} 处 signal：外层挂住时调用会一直等下去`,
 		);
 	}
 }
@@ -133,5 +144,9 @@ assert.match(
 	/waitForPeerCache\(file: string\)[\s\S]{0,400}readCache\(file, TTL_SECONDS\)/,
 	'等同伴写缓存那一处要按 TTL 判：用宽门槛会把上一轮构建的旧文件当成同伴刚写的，还跳过"这是旧快照"的提示',
 );
+// 两档门槛要在**各自的分支**里：写反了（网络兜底用 7 天档）行为断言看不出来——那边只测
+// `usableStale` 本身，不测谁在用、用哪一档。
+assert.match(live, /const stale = usableStale\(hit, OFFLINE_STALE_MAX_MS\)/, '离线分支只能用离线那档');
+assert.match(live, /const stale = usableStale\(await readCachedStatus\(file\), STALE_MAX_MS\)/, '网络兜底只能用网络那档');
 
 console.log(`upstream.check 通过（扫了 ${withFetch.length} 个取数文件）`);
