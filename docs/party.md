@@ -61,8 +61,9 @@ pnpm check   # 协议 + 队伍逻辑 + Steam ID 解析 + 拖拽规则，纯 node
 
 手填那条路由是**公网可调用**的：每次未命中都会消耗一次 STRATZ 额度，所以只取了
 `steamAccount { name avatar }` 两个字段（不去拉 `loadPlayerProfile` 那份带 60 个英雄的
-大查询）、结果缓存 6 小时，并且复用了 `gql()` 里的串行限速。没配 `STRATZ_TOKEN` 时
-这条功能返回 503 并提示直接填昵称，不是报错。
+大查询）、结果缓存 6 小时，并且复用了 `gql()` 里的串行限速。**没接上 STRATZ 时**
+（`ENDPOINT.mode === 'none'`：既没配直连 token，也没配齐中转地址与口令）这条功能返回 503
+并提示直接填昵称，不是报错——判定按端点形态来，不是"有没有 STRATZ_TOKEN"这一项。
 
 解析支持 SteamID64、账号 id（Steam 好友码就是它）、`STEAM_X:Y:Z`、`[U:1:Z]` 与
 `/profiles/<id>` 链接；**`/id/<自定义短名>` 不支持**——换算它要 Steam Web API Key，
