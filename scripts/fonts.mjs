@@ -37,6 +37,14 @@ const CSS_URL =
 const UA =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
+/**
+ * 一次请求的墙钟上限。
+ *
+ * 本机到 Google 的连接是被**重置**的（很快就失败），但在"能连上却不回包"的网络里，
+ * 没有超时的 `fetch` 会把 `pnpm fonts` 永远挂住——下面是三个重试档，那就是三次无限等待。
+ */
+const TIMEOUT_MS = 30_000;
+
 const ROOT = path.resolve(import.meta.dirname, '..');
 const FONT_DIR = path.join(ROOT, 'public', 'fonts');
 const CSS_FILE = path.join(ROOT, 'src', 'styles', 'fonts.css');
@@ -58,7 +66,7 @@ async function get(url) {
 	let last;
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		try {
-			const res = await fetch(url, { headers: { 'User-Agent': UA } });
+			const res = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) });
 			if (res.ok) return res;
 			last = new Error(`HTTP ${res.status}`);
 		} catch (error) {

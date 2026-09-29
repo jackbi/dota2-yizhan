@@ -11,6 +11,7 @@ import { readFileSync, readdirSync } from 'node:fs';
  *    计数按**调用点**来：原先只问"这份文件里有没有 signal"，往一个已经有 signal 的文件里
  *    再加一个裸 fetch 是查不出来的。`src/worker` 与 `mcp` 里那种 DO / 内部调用（`.fetch(`）
  *    不算——它们是本机 RPC，没有超时语义；只数字面量 `fetch('https://…')`。
+ *    `scripts/` 下的构建脚本（取字体、推索引）也打外部接口，用同一把尺子量。
  * 2. **图片缓存必须原子写**（先临时文件再 rename）。图片的命中判定是 `fs.access`：一个被 kill 掉的
  *    构建留下的半张 JPG 会被当成已有缓存，还会被拷进 `dist/`，变成一张永远修不好的破图。
  * 3. **取数助手要把正文读完再清超时。** 拿到 `Response` 只代表响应头到了，正文还得下载；
@@ -150,6 +151,27 @@ for (const [label, dir, ext] of [
 		);
 	}
 }
+
+/*
+ * `scripts/` 下的构建脚本同样打外部接口（取字体、推索引），原先一个都没被扫到：
+ * `fonts.mjs` 一直没有超时，而"上游挂起就把 `pnpm fonts` 拖到天荒地老"这件事在这里全绿。
+ *
+ * 跳过 `*.check.*`：那些是自检本身，里面的 `fetch(` 多半只是用例里的字符串（本文件第 1 组的
+ * 夹具就写成 `fetch(a),`），不是取数，也没人会把它们当构建路径跑。
+ */
+const scriptsDir = new URL('../scripts/', import.meta.url);
+let scriptsScanned = 0;
+for (const name of readdirSync(scriptsDir).filter(
+	(file) => (file.endsWith('.mjs') || file.endsWith('.ts')) && !file.includes('.check.'),
+)) {
+	const code = dropFetchDeclarations(stripComments(readFileSync(new URL(name, scriptsDir), 'utf8')));
+	const bare = (code.match(bareFetchRe) ?? []).length;
+	if (bare === 0) continue;
+	scriptsScanned += 1;
+	const signals = countSignals(code);
+	assert.ok(signals >= bare, `scripts/${name} 有 ${bare} 处取数 fetch 但只有 ${signals} 处 signal：上游挂起会把这一整步挂死`);
+}
+assert.ok(scriptsScanned >= 3, `只扫到 ${scriptsScanned} 个取数脚本，解析多半坏了`);
 
 // ---------------------------------------------------------------- 2. 图片缓存原子写
 
