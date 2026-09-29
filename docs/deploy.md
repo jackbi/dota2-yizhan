@@ -64,7 +64,7 @@
 
 ```
 [data-source-report] 数据源（8）：
-[data-source-report]   直播开播状态 — 联网抓取：11 个房间：直播中 5、轮播中 1、未开播 4、房间已关闭 1，联网抓取 11 次
+[data-source-report]   直播开播状态 — 联网抓取：11 个房间：直播中 5、轮播中 1、未开播 4、房间已关闭 1（本轮联网 11 个、吃缓存 0 个）
 [data-source-report]   官方更新日志 — 联网抓取：118 个版本，最新 7.41f（2026-09-15），联网抓取 1 次
 [data-source-report]   赛事日历 — 联网抓取：7 个赛事，1 场进行中；来源：Liquipedia / OpenDota
 ```

@@ -119,10 +119,15 @@ assert.match(
 
 // ---------------------------------------------------------------- 5. 退回旧缓存要有年龄上限
 
+// 行为在 `scripts/liveApi.check.ts`（真文件 + 真门槛）；这里只钉两条**接线**，它们错了
+// 行为断言也看不出来（那边只测 usableStale 本身，不测谁在用、用哪一档）。
 const live = lib('liveApi.ts');
-assert.ok(live.includes('const STALE_MAX_MS'), '直播状态退回旧缓存要给年龄上限：几天前的「直播中」摆出来就是个绿点');
-assert.ok(/hit\.ageMs > STALE_MAX_MS/.test(live), 'readStale 要拿文件年龄去卡上限，不能见到文件就用');
+assert.ok(live.includes('STALE_MAX_MS') && live.includes('OFFLINE_STALE_MAX_MS'), '两档年龄上限都要在');
 assert.ok(!live.includes('readRawJson'), '退回旧缓存不能走 readRawJson：那条路读不到年龄，等于没有上限');
-assert.ok(live.includes('withStaleNote(stale)'), '退回旧缓存时要把这份快照有多旧说出来，别让读者以为它是刚抓的');
+assert.match(
+	live,
+	/waitForPeerCache\(file: string\)[\s\S]{0,400}readCache\(file, TTL_SECONDS\)/,
+	'等同伴写缓存那一处要按 TTL 判：用宽门槛会把上一轮构建的旧文件当成同伴刚写的，还跳过"这是旧快照"的提示',
+);
 
 console.log(`upstream.check 通过（扫了 ${withFetch.length} 个取数文件）`);

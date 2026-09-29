@@ -1,9 +1,10 @@
 import path from 'node:path';
-import { isFresh, readCacheJson, writeCacheFile } from './buildCache';
-import { mapLimit } from './concurrency';
-import { reportSource } from './dataHealth';
-import { extractJson, fetchNote, fetchText, sleep } from './fetchText';
-import { OB_ROOMS } from '../data/ob';
+// 带扩展名：自检（`scripts/liveApi.check.ts`）要用 Node 直接跑这个模块，Node 的 ESM 解析不补扩展名。
+import { isFresh, readCacheJson, writeCacheFile } from './buildCache.ts';
+import { mapLimit } from './concurrency.ts';
+import { reportSource } from './dataHealth.ts';
+import { extractJson, fetchText, sleep } from './fetchText.ts';
+import { OB_ROOMS } from '../data/ob.ts';
 import type { LiveSnapshot, LiveState, LiveStatus, Platform } from '../data/types';
 
 /**
@@ -49,14 +50,22 @@ const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 /** 开播状态变化很快，缓存只用来省掉同一轮构建里的重复请求。 */
 const TTL_SECONDS = 5 * 60;
 /**
- * 退回旧缓存时的年龄上限。
+ * 网络兜底时旧缓存最多能有多旧。
  *
  * 缓存文件是**上一次构建**留下的，可能是好几天前那份。开播状态按分钟变，把几天前的
  * 「直播中」当现在渲染出来就是编状态——页面上那是个绿点，而 `docs/live.md` 里写死了
  * 「任何情况下都不写死假的正在直播」。所以只拿它兜"连续几次构建都没抓到"这种短暂故障，
  * 超过这个上限就当没有缓存，老老实实标「状态未知」。
  */
-const STALE_MAX_MS = 2 * 60 * 60 * 1000;
+export const STALE_MAX_MS = 2 * 60 * 60 * 1000;
+/**
+ * 离线构建（`TOURNAMENTS_OFFLINE=1`）时能用到多久以前的那份。
+ *
+ * 离线构建的承诺就是「只用 `.cache/` 里的数据」（README 的变量表），所以门槛比网络兜底宽得多：
+ * 卡在 2 小时的话，几天没构建过就整块变「状态未知」，等于一份缓存都没用上。也不能不设上限——
+ * 开播状态按分钟变，把上个月的「直播中」画成绿点是同一类错误。
+ */
+export const OFFLINE_STALE_MAX_MS = 7 * 24 * 60 * 60 * 1000;
 /** 代理是第三方服务，别把它打爆。 */
 const CONCURRENCY = 3;
 /** 抓取失败后等同伴进程写缓存的轮次与间隔。 */
@@ -169,23 +178,29 @@ async function readCache(file: string, ttlSeconds: number): Promise<LiveStatus |
 	return hit && isFresh(hit.ageMs, ttlSeconds) ? hit.value : null;
 }
 
-/**
- * 只读内容、不看 TTL——离线构建与「上游失败退回旧缓存」用，但**有年龄上限**（见 `STALE_MAX_MS`）。
- *
- * 返回年龄是给 `withStaleNote` 用的：退回旧缓存时页面要能说出这份状态是什么时候的。
- */
-async function readStale(file: string): Promise<{ status: LiveStatus; ageMs: number } | null> {
+/** 读缓存文件的内容与年龄（不判合不合用）。坏文件、半截 JSON 都当没有缓存。 */
+export async function readCachedStatus(file: string): Promise<{ status: LiveStatus; ageMs: number } | null> {
 	const hit = await readCacheJson<LiveStatus>(file);
-	if (!hit || hit.ageMs > STALE_MAX_MS) return null;
-	return { status: hit.value, ageMs: hit.ageMs };
+	return hit ? { status: hit.value, ageMs: hit.ageMs } : null;
 }
 
 /** 用旧缓存顶上时，把它有多旧写进 `note`：绿点仍是那次抓到的结论，读者得知道是什么时候下的。 */
-function withStaleNote(hit: { status: LiveStatus; ageMs: number }): LiveStatus {
+export function withStaleNote(hit: { status: LiveStatus; ageMs: number }): LiveStatus {
 	const minutes = Math.max(1, Math.round(hit.ageMs / 60_000));
 	const ago = minutes < 60 ? `${minutes} 分钟前` : `${Math.round(minutes / 60)} 小时前`;
 	const note = `本次没取到开播状态，这是 ${ago}的快照`;
 	return { ...hit.status, note: hit.status.note ? `${hit.status.note}；${note}` : note };
+}
+
+/**
+ * 旧缓存按这个场景的年龄上限能不能顶用：能顶就返回带 `note` 的状态，超龄返回 null（当没缓存）。
+ *
+ * 上限由调用方给，因为两个场景的要求不同：网络兜底只兜短暂故障（`STALE_MAX_MS`），
+ * 离线构建要真的用起 `.cache/`（`OFFLINE_STALE_MAX_MS`）。
+ */
+export function usableStale(hit: { status: LiveStatus; ageMs: number } | null, maxAgeMs: number): LiveStatus | null {
+	if (!hit || hit.ageMs > maxAgeMs) return null;
+	return withStaleNote(hit);
 }
 
 function writeCache(file: string, status: LiveStatus): Promise<void> {
@@ -205,18 +220,33 @@ function unknownStatus(note: string): LiveStatus {
 	return { state: 'unknown', ownerUnrecognized: false, note, fetchedAt: new Date().toISOString() };
 }
 
-async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
+/**
+ * 一个房间的结果，外加**它是怎么来的**。
+ *
+ * 构建摘要要分得清「这一轮真的联网抓到了」与「吃了缓存兜底」——只按进程级的抓取次数判断
+ * 会把兜底说成新数据（上游挂了两小时、旧缓存顶上时，摘要照旧写"联网抓取"）。
+ */
+interface LoadedRoom {
+	status: LiveStatus;
+	source: 'network' | 'cache';
+}
+
+async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
 	const file = path.join(CACHE_DIR, `${room.platform}-${room.roomId}.json`);
 	const cached = await readCache(file, TTL_SECONDS);
-	if (cached) return cached;
+	if (cached) return { status: cached, source: 'cache' };
 
 	if (OFFLINE) {
-		const stale = await readStale(file);
-		return stale ? withStaleNote(stale) : unknownStatus('离线构建且没有缓存');
+		const hit = await readCachedStatus(file);
+		const stale = usableStale(hit, OFFLINE_STALE_MAX_MS);
+		if (stale) return { status: stale, source: 'cache' };
+		// 「没有缓存」与「有缓存但太旧」分开说：后者说明缓存策略没问题，只是太久没构建过。
+		const why = hit ? `离线构建，缓存超过 ${OFFLINE_STALE_MAX_MS / 86_400_000} 天没用上` : '离线构建且没有缓存';
+		return { status: unknownStatus(why), source: 'cache' };
 	}
 
 	const url = apiUrl(room.platform, room.roomId);
-	if (!url) return unknownStatus('暂不支持该平台');
+	if (!url) return { status: unknownStatus('暂不支持该平台'), source: 'cache' };
 
 	const text = await fetchText(url);
 	if (text) {
@@ -232,7 +262,7 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 				fetchedAt: new Date().toISOString(),
 			};
 			await writeCache(file, status);
-			return status;
+			return { status, source: 'network' };
 		}
 
 		// 斗鱼关闭房间播放时给的是一张提示页，这里如实记成 closed。
@@ -249,7 +279,7 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 				fetchedAt: new Date().toISOString(),
 			};
 			await writeCache(file, status);
-			return status;
+			return { status, source: 'network' };
 		}
 	}
 
@@ -257,31 +287,34 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LiveStatus> {
 	// 于是可能出现"这个进程失败了、另一个进程刚抓到并写了缓存"。直接标未知会让同一个房间
 	// 在不同进程渲染出的页面里不一致，所以先等一下看看同伴有没有写进来。
 	const raced = await waitForPeerCache(file);
-	if (raced) return raced;
+	if (raced) return { status: raced, source: 'cache' };
 
 	// 退一步只读房间页标题，确认这个房间号现在显示的是谁，状态仍标未知。
 	if (room.platform === 'douyu') {
 		const page = await fetchText(`https://www.douyu.com/${room.roomId}`);
 		const pageOwner = page ? pageOwnerFromTitle(room.platform, page) : undefined;
 		if (pageOwner) {
-			return unknownStatus(`房间页显示的主播是「${pageOwner}」，但本次未取到开播状态`);
+			return { status: unknownStatus(`房间页显示的主播是「${pageOwner}」，但本次未取到开播状态`), source: 'network' };
 		}
 	}
 
-	const stale = await readStale(file);
-	return stale ? withStaleNote(stale) : unknownStatus('平台接口没有响应');
+	const stale = usableStale(await readCachedStatus(file), STALE_MAX_MS);
+	return { status: stale ?? unknownStatus('平台接口没有响应'), source: stale ? 'cache' : 'network' };
 }
 
 /**
  * 等一会儿再看缓存：并行的渲染进程可能刚好抓到了同一个房间。
  * 宁可慢一点，也不要把"这个进程没抓到"渲染成"状态未知"。
+ *
+ * **必须按 TTL 判**：这里等的是"同一个构建里另一个进程刚抓到并写了缓存"，只有 TTL 内的
+ * 才算"刚写的"。用更宽的门槛（`STALE_MAX_MS` 那档）会把上一轮构建留下的旧文件当成同伴的
+ * 结果直接返回，还跳过"这是旧快照"那句提示——那恰恰是这条兜底最该说出来的话。
  */
 async function waitForPeerCache(file: string): Promise<LiveStatus | null> {
 	for (let i = 0; i < PEER_WAIT_ROUNDS; i++) {
 		await sleep(PEER_WAIT_MS);
-		const cached = await readStale(file);
-		// 同伴进程刚写进来的那份就在 TTL 内；这里的年龄门槛挡的是「上一轮构建留下的旧文件」。
-		if (cached) return cached.status;
+		const cached = await readCache(file, TTL_SECONDS);
+		if (cached) return cached;
 	}
 	return null;
 }
@@ -300,8 +333,14 @@ export function fetchLiveSnapshot(): Promise<LiveSnapshot> {
 
 async function loadAll(): Promise<LiveSnapshot> {
 	const statuses: Record<string, LiveStatus> = {};
+	// 按房间记来源：进程级的抓取次数分不出"这一格是抓的"还是"吃了旧缓存兜底"。
+	let fromNetwork = 0;
+	let fromCache = 0;
 	await mapLimit(OB_ROOMS, CONCURRENCY, async (room) => {
-		statuses[room.key] = await loadRoom(room);
+		const loaded = await loadRoom(room);
+		statuses[room.key] = loaded.status;
+		if (loaded.source === 'network') fromNetwork += 1;
+		else fromCache += 1;
 	});
 
 	const counts = new Map<LiveState, number>();
@@ -316,14 +355,12 @@ async function loadAll(): Promise<LiveSnapshot> {
 		.map((state) => `${LIVE_STATE_LABEL[state]} ${counts.get(state)}`);
 	if (unrecognized > 0) parts.push(`平台昵称与旧叫法不同 ${unrecognized}`);
 
-	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0) + (counts.get('closed') ?? 0);
-	const note = fetchNote();
-
 	await reportSource(
 		'live',
 		'直播开播状态',
-		note ? 'fresh' : usable > 0 ? 'cache' : 'empty',
-		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}${note}`,
+		// 有一个房间吃了缓存就写 cache：那份状态是旧构建的结论，不该按"联网抓取"记。
+		fromCache > 0 ? 'cache' : fromNetwork > 0 ? 'fresh' : 'empty',
+		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}（本轮联网 ${fromNetwork} 个、吃缓存 ${fromCache} 个）`,
 	);
 
 	return { at: new Date().toISOString(), statuses };
