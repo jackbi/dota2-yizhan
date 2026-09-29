@@ -99,17 +99,25 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	const grace = Number(/const MEMBER_GRACE_MS = ([\d_]+)/.exec(worker)?.[1]?.replace(/_/g, ''));
 	assert.ok(Number.isFinite(grace) && grace > 0, '没解析出服务端的宽限期');
 	/*
-	 * 门槛是**单档最大间隔**，不是阶梯累加。
+	 * 门槛要盖住**第 6 次尝试**，并给那次尝试本身留出探测与建连的余量。
 	 *
-	 * 客户端封顶在最后一档之后就是每 20 秒一次、没有终点（`Math.min(retry, len - 1)`），
-	 * 所以"把六档全走一遍再也没了下文"那条时间线根本不会出现。按累加值 39.3 秒定门槛，
-	 * 只会拦下一次正确的缩小——60 秒那档本来就只是给每次失败的探测与建连留余量。
+	 * 客户端是**一次断线走完阶梯**：`scheduleReconnect` 每次失败取下一档（`roomSocketRetry` 只在
+	 * 连接成功时归零），于是尝试落在 0.6 / 1.8 / 4.3 / 9.3 / 19.3 / **39.3** 秒，之后才封顶每
+	 * 20 秒一次。所以「累加到 39.3 秒」不是虚构的时间线。
+	 *
+	 * 这里走过一次弯路：有评审说"六档永远不会走完"，门槛于是被放松成"大于单档最大间隔"
+	 * （20 秒）——那样 25 秒也能过，而 25 秒会在第 6 次尝试之前把人摘掉。
 	 */
+	const lastLadderAttemptAt = delays.reduce((sum, value) => sum + value, 0);
 	assert.ok(
-		grace > maxDelay,
-		`宽限期 ${grace}ms 盖不住单档最大的重连间隔（${maxDelay}ms）：人会在自己下一次尝试之前被摘掉`,
+		grace >= lastLadderAttemptAt,
+		`宽限期 ${grace}ms 盖不住阶梯的最后一次尝试（累加到 ${lastLadderAttemptAt}ms）：人会在自己下一次尝试之前被摘掉`,
 	);
-	ok(`宽限期（${grace}ms）盖得住单档最大的重连间隔（${maxDelay}ms）`);
+	assert.ok(
+		grace - maxDelay >= 15_000,
+		`宽限期 ${grace}ms 只比一次重连间隔（${maxDelay}ms）多 ${grace - maxDelay}ms：那次尝试自己还要等探测与建连，余量要 ≥15 秒`,
+	);
+	ok(`宽限期（${grace}ms）盖得住阶梯的最后一次尝试（${lastLadderAttemptAt}ms）并留出建连余量`);
 }
 
 // 4. 上报大厅：删房间那条也要发得出、且看 res.ok
