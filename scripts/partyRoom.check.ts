@@ -169,9 +169,23 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 		/Date\.now\(\) - \(this\.stored\.lobbyReportedAt \?\? 0\) < LOBBY_HEARTBEAT_MS/,
 		'心跳刷新要按上次上报时刻限速（否则每条 ping 都写一次 storage）',
 	);
+	/*
+	 * 盖戳时机要**先确认那一句还在**再比顺序：直接比 indexOf 的话，找不到时返回 -1，
+	 * `-1 < n` 恒真——整段删掉也照样绿（这正是上一版的问题）。
+	 */
+	const stampAt = tell.indexOf('this.stored.lobbyReportedAt = attemptedAt;');
+	const loopAt = tell.indexOf('for (let attempt');
+	assert.ok(stampAt > 0, 'tellLobby 要在发上报之前盖限速戳（这一句不能消失）');
+	assert.ok(loopAt > 0, '没找到 tellLobby 的重试循环，解析多半坏了');
+	assert.ok(stampAt < loopAt, '限速戳要在发上报之前盖上：只在 response.ok 里盖的话，大厅报错时闸门一直开着');
+	assert.match(
+		tell,
+		/this\.stored\.lobbyReportedAt = attemptedAt - LOBBY_HEARTBEAT_MS \+ LOBBY_REPORT_BACKOFF_MS;/,
+		'上报失败要把戳子往回拨一个短退避：否则一次瞬时 5xx 就让新建的房间在大厅里消失 15 分钟',
+	);
 	assert.ok(
-		tell.indexOf('this.stored.lobbyReportedAt = Date.now();') < tell.indexOf('for (let attempt'),
-		'限速戳要在发上报之前就盖上：只在 response.ok 里盖的话，大厅报错时闸门一直开着',
+		ms('LOBBY_REPORT_BACKOFF_MS') > 0 && ms('LOBBY_REPORT_BACKOFF_MS') * 3 < ms('LOBBY_HEARTBEAT_MS'),
+		'短退避要远小于节流间隔，否则"失败后快点再试"等于没写',
 	);
 	assert.ok(
 		!/if \(response\.ok\) \{[\s\S]{0,200}?lobbyReportedAt/.test(tell),

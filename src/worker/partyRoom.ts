@@ -100,6 +100,14 @@ const LOBBY_ROOM_TTL_MS = 6 * 3600_000;
  * 按这个间隔最多 15 分钟上报一次。
  */
 const LOBBY_HEARTBEAT_MS = 15 * 60_000;
+/**
+ * 上报**失败**之后隔多久允许再试。
+ *
+ * 15 分钟是"报成功之后"的节流，不是失败之后的惩罚：这条上报只有一次尝试（见 `tellLobby`），
+ * 一次瞬时 5xx 要是吃掉整段闸门，新建或刚变动的房间会在大厅列表里消失/停更 15 分钟。
+ * 比客户端的心跳间隔（25 秒）略长一点，下一次或再下一次 ping 就能带上重试。
+ */
+const LOBBY_REPORT_BACKOFF_MS = 30_000;
 
 const json = (body: unknown, status = 200): Response =>
 	new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -540,7 +548,11 @@ export class PartyRoom {
 	 *
 	 * 限速戳要在**发之前**就盖上，不能只在 response.ok 里盖：大厅 5xx、或者 stub 那层直接抛错时
 	 * 戳子不更新，15 分钟那道闸门就一直开着——每条心跳（客户端 25 秒一次）都会重发一遍，去砸那个
-	 * 已经在报错的大厅。宁可为一次失败等满 15 分钟，也不要把它变成持续重放。
+	 * 已经在报错的大厅。
+	 *
+	 * 但失败也不能吃掉**整段**闸门：这条上报只有一次尝试，一次瞬时 5xx 就把戳子留成"刚报过"的话，
+	 * 新建或刚变动的房间会在大厅列表里消失或停更 15 分钟——那比多试几次糟得多。所以失败时把戳子
+	 * 往回拨一个短退避（`LOBBY_REPORT_BACKOFF_MS`），下一次心跳就能再试。
 	 */
 	private async tellLobby(code: string, count: number): Promise<void> {
 		const name = count > 0 ? (this.stored?.name ?? '') : '';
@@ -548,8 +560,9 @@ export class PartyRoom {
 		const attempts = count > 0 ? 1 : LOBBY_REPORT_ATTEMPTS;
 		const lobby = this.env.PARTY_LOBBY.get(this.env.PARTY_LOBBY.idFromName('lobby'));
 
+		const attemptedAt = Date.now();
 		if (count > 0 && this.stored) {
-			this.stored.lobbyReportedAt = Date.now();
+			this.stored.lobbyReportedAt = attemptedAt;
 			await this.persist();
 		}
 
@@ -562,6 +575,12 @@ export class PartyRoom {
 				console.warn(`[party] 大厅上报失败：${code} count=${count} ${error instanceof Error ? error.message : error}`);
 			}
 			if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, LOBBY_REPORT_RETRY_MS));
+		}
+
+		// 走到这里说明这一轮全失败了（成功会提前 return）。
+		if (count > 0 && this.stored) {
+			this.stored.lobbyReportedAt = attemptedAt - LOBBY_HEARTBEAT_MS + LOBBY_REPORT_BACKOFF_MS;
+			await this.persist();
 		}
 	}
 
