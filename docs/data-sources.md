@@ -422,7 +422,7 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 
 ## 英雄胜率的口径
 
-英雄页与 BP 页的近一周数据来自 STRATZ 的 `heroStats.stats(bracketBasicIds: [DIVINE_IMMORTAL])`
+英雄页与 BP 页的上一完整自然周数据来自 STRATZ 的 `heroStats.stats(bracketBasicIds: [DIVINE_IMMORTAL])`
 （见 `src/lib/stratzApi.ts`），口径是**超凡入圣及以上**。
 
 **别把它写成「近 7 天」**：不传 `week` 时 STRATZ 给的是**上一个完整自然周**——实测不传与

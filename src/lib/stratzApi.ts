@@ -551,7 +551,7 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[]): Hero
 let heroMetaPromise: Promise<HeroMeta | null> | null = null;
 
 /**
- * 近一周的英雄出场/胜率/禁用。构建期多个页面共用一次请求。
+ * 上一完整自然周的英雄出场/胜率/禁用（窗口定义与三个消费方见 `metaWindow.ts`）。构建期多个页面共用一次请求。
  * 拿不到就返回 null，页面整块不展示。
  */
 export function fetchHeroMeta(): Promise<HeroMeta | null> {
