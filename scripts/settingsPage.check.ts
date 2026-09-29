@@ -43,6 +43,12 @@ for (const id of [
 	'settings-save',
 	'settings-test',
 	'settings-clear',
+	'settings-cancel',
+	'settings-list',
+	'settings-empty',
+	'settings-new',
+	'settings-label',
+	'settings-editor-title',
 ]) {
 	assert.ok(pageIds.has(id), `设置页缺少 #${id}`);
 	assert.ok(queriedIds.has(id), `#${id} 在页面上，但脚本没有接管它`);
@@ -148,5 +154,34 @@ assert.match(
 	/addEventListener\('mousedown'[\s\S]{0,120}?event\.preventDefault\(\)/,
 	'选项按下时不能让输入框先失焦：列表会在 click 之前被收掉，点起来像点空了',
 );
+
+// ---------------------------------------------------------------- 多份配置
+
+/*
+ * 「存两份、启用其中一份」是这一页现在的用法：新增的那份直接启用，换一份点它那行的「启用」。
+ * 会**静默出错**的三处：写回单份（新增第二份时把第一份顶掉）、列表用 innerHTML 拼
+ * （名字与地址都是用户输入的），以及删除不做二次确认（key 只在这台浏览器里，删了就真没了）。
+ */
+assert.match(script, /loadAiStore\(\)/, '要读"多份"那份存储，不是单份那一套');
+assert.match(script, /addAiProfile\(/, '「新增一份」要真的往列表里加');
+assert.match(script, /activateAiProfile\(/, '「启用」要能切换阵容分析用哪一份');
+assert.match(script, /removeAiProfile\(/, '要能删掉某一份');
+assert.match(script, /updateAiProfile\(/, '「保存这一份」要写回原来那份，而不是又加一份');
+assert.match(script, /saveAiStore\(store\)/, '改完要落盘');
+
+// 列表里那一行是用户自己的名字与地址拼出来的，拼 HTML 字符串等于给自己开一个 XSS 口子。
+assert.ok(!/\.innerHTML/.test(script), '列表与提示都不许写 innerHTML：名字、地址都是用户输入');
+
+assert.match(script, /pendingDeleteId === profile\.id \? '再点一次删除' : '删除'/, '删除要在按钮上二次确认');
+assert.match(script, /if \(pendingDeleteId !== id\)/, '第一次点删除只挂起，第二次才真删');
+assert.match(script, /setTimeout\(\(\) => \{\s*disarmDelete\(\);\s*renderList\(\);/, '挂起的删除要自己超时复原，不能一直悬着');
+
+assert.match(script, /editorTitle\.textContent/, '编辑器标题要跟着正在编的那一份走');
+assert.match(
+	script,
+	/saveButton\.textContent = profile \? '保存这一份' : '新增并启用'/,
+	'按钮文案要分得清"改一份"和"加一份"',
+);
+assert.match(script, /emptyEl\.style\.display = store\.profiles\.length > 0 \? 'none' : ''/, '一份都没有时要显示空状态');
 
 console.log('settingsPage.check 通过');

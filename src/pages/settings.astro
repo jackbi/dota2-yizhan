@@ -25,13 +25,45 @@ import { AI_PROVIDERS } from '../lib/aiProviders';
 	<div class="mx-auto max-w-2xl px-4 py-10 sm:px-6">
 		<h1 class="font-display text-2xl">AI 设置</h1>
 		<p class="mt-3 text-sm leading-relaxed text-muted">
-			这里是「阵容分析」用得到的模型配置。默认那家开箱可用，也可以填任何 OpenAI 兼容的服务——
-			地址、key、模型名都由你决定。<strong class="text-cream">key 只存在这台浏览器</strong>，
-			请求由浏览器直接发给你填的地址，本站不经手也不保存；公共电脑上别存。
+			这里是「阵容分析」用得到的模型配置。可以存<strong class="text-cream">多份</strong>（比如一家一把
+			key、团队一把自己一把），阵容分析用你启用着的那一份；任何 OpenAI 兼容的服务都能加。
+			<strong class="text-cream">key 只存在这台浏览器</strong>，请求由浏览器直接发给你填的地址，
+			本站不经手也不保存；公共电脑上别存。
 		</p>
 
-		<section class="mt-6 rounded-2xl border border-line bg-surface/60 p-4" aria-label="模型配置">
-			<h2 class="font-display text-lg">模型</h2>
+		<section class="mt-6 rounded-2xl border border-line bg-surface/60 p-4" aria-label="已保存的模型配置">
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<h2 class="font-display text-lg">模型</h2>
+				<button id="settings-new" type="button" class="filter-chip">新增一份</button>
+			</div>
+			<p class="mt-2 text-xs leading-relaxed text-muted">
+				阵容分析用<strong class="text-cream">正在使用</strong>的那一份：换一家点它那行的「启用」，
+				改内容点「编辑」。存多份互不影响，删掉任何一份都不动另外那些。
+			</p>
+			<!--
+				列表由脚本渲染：这些配置只存在这台浏览器里，构建期一个都不知道，服务端渲染不出东西来。
+				新增的行全部用 createElement + textContent 拼（名字是用户自己输的），见 settingsForm.ts。
+			-->
+			<p id="settings-empty" style="display: none" class="mt-3 text-xs leading-relaxed text-faint">
+				还没有配置。点右上角「新增一份」填一家——不配也能用：候选、胜率、复盘数字都由本站数据算出，
+				只有那段文字解释需要模型。
+			</p>
+			<ul id="settings-list" class="mt-3 space-y-2"></ul>
+		</section>
+
+		<section class="mt-4 rounded-2xl border border-line bg-surface/60 p-4" aria-label="编辑这一份配置">
+			<h3 id="settings-editor-title" class="font-display text-base">新增一份</h3>
+			<label class="mt-3 block text-xs text-muted">
+				名字
+				<input
+					id="settings-label"
+					type="text"
+					autocomplete="off"
+					placeholder="随便起，例如「公司那把」"
+					class="mt-1 w-full rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint"
+				/>
+				<span class="mt-1 block text-faint">只给你自己看。留空就按服务商名字。</span>
+			</label>
 			<!--
 				服务商是按「一键填好地址与建议模型」用的，不是绑定：地址输入框永远可以手改，
 				任何 OpenAI 兼容的服务（包括自建中转）都走「OpenAI 兼容（自定义）」那条。
@@ -130,9 +162,11 @@ import { AI_PROVIDERS } from '../lib/aiProviders';
 			</div>
 
 			<div class="mt-5 flex flex-wrap items-center gap-3">
-				<button id="settings-save" type="button" class="filter-chip">保存</button>
+				<button id="settings-save" type="button" class="filter-chip">保存这一份</button>
 				<button id="settings-test" type="button" class="filter-chip">测试连接</button>
-				<button id="settings-clear" type="button" class="filter-chip">清除 key</button>
+				<button id="settings-clear" type="button" class="filter-chip">清除这份的 key</button>
+				<!-- 编辑到一半想退回原来的样子；新增时没什么可退的，脚本会把它藏起来。 -->
+				<button id="settings-cancel" type="button" class="filter-chip" style="display: none">取消</button>
 				<span id="settings-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
 			</div>
 			<p id="settings-detail" class="mt-3 text-xs leading-relaxed text-faint"></p>

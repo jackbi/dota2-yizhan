@@ -1,12 +1,18 @@
-import type { AiConfig } from '../lib/aiConfig.ts';
+import type { AiConfig, AiProfile, AiStore } from '../lib/aiConfig.ts';
 import {
+	activateAiProfile,
+	addAiProfile,
 	aiStateLabel,
 	clearAiKey,
+	configOf,
+	emptyAiConfig,
 	isConfigured,
-	loadAiConfig,
+	loadAiStore,
 	modelsEndpointOf,
 	normalizeBaseUrl,
-	saveAiConfig,
+	removeAiProfile,
+	saveAiStore,
+	updateAiProfile,
 	validateBaseUrl,
 } from '../lib/aiConfig.ts';
 import { AI_PROVIDERS, headersFor, initialProviderId, modelIdsOf } from '../lib/aiProviders.ts';
@@ -14,7 +20,9 @@ import { AI_PROVIDERS, headersFor, initialProviderId, modelIdsOf } from '../lib/
 /**
  * `/settings` 的表单：读写都走 `lib/aiConfig.ts`，这里只管校验、发请求与文案。
  *
- * 两条与别处一致的边界：
+ * 三条与别处一致的边界：
+ * - **存多份、启用一份**。列表是这台浏览器里那几份配置，阵容分析只读 `activeId` 指的那一份；
+ *   新增的那份直接启用（刚填好就是要用的），换一份点它那行的「启用」。
  * - **测试连接也是保存**。测的就是表单里现在这套值；不把结果落库的话，BP 台没法显示
  *   「已配但还是连不上」，用户下次还得回来重测一遍才知道。
  * - 地址 / key / 模型**任意一项变了，上次的测试结果就作废**。留着它只会让状态栏说假话。
@@ -45,11 +53,28 @@ const providerHint = element<HTMLParagraphElement>('settings-provider-hint');
 const modelsState = element<HTMLSpanElement>('settings-models-state');
 const modelOptions = element<HTMLUListElement>('settings-model-options');
 const modelToggle = element<HTMLButtonElement>('settings-model-toggle');
+const listEl = element<HTMLUListElement>('settings-list');
+const emptyEl = element<HTMLParagraphElement>('settings-empty');
+const newButton = element<HTMLButtonElement>('settings-new');
+const labelInput = element<HTMLInputElement>('settings-label');
+const editorTitle = element<HTMLHeadingElement>('settings-editor-title');
+const cancelButton = element<HTMLButtonElement>('settings-cancel');
 
 /** 服务商那排按钮。按 `data-provider` 挂钩子，不走 id 对账那一套。 */
 const providerChips = [...document.querySelectorAll<HTMLButtonElement>('[data-provider]')];
 
-let config: AiConfig = loadAiConfig();
+/*
+ * 这台浏览器里存着哪几份配置，以及编辑器正在编哪一份。
+ *
+ * `editingId` 为空串 = 编辑器里是一份还没存过的新配置。`config` 始终是"编辑器里那套值"的副本：
+ * 保存 / 测试 / 清 key 都先落到它上面，再由 `persistConfig` 写回存储。
+ */
+let store: AiStore = loadAiStore();
+let editingId = '';
+let config: AiConfig = emptyAiConfig();
+/** 列表里哪一行已经被点过一次「删除」；再点一次才真删。 */
+let pendingDeleteId = '';
+let deleteTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * 上一次「拉取模型列表」的结果，以及它是给哪个地址拉的。
  *
@@ -174,7 +199,9 @@ function renderProviders(): void {
 
 function renderDetail(): void {
 	if (!detailEl) return;
-	const parts = [`当前：${aiStateLabel(config)}`];
+	const parts: string[] = [];
+	if (editingId && editingId === store.activeId) parts.push('这一份正在使用');
+	parts.push(aiStateLabel(config));
 	if (config.lastCheckedAt > 0) {
 		const when = new Date(config.lastCheckedAt).toLocaleString('zh-CN');
 		parts.push(`上次测试 ${when}：${config.lastCheckOk ? '连接正常' : '没通过'}`);
@@ -182,7 +209,7 @@ function renderDetail(): void {
 	detailEl.textContent = parts.join(' · ');
 }
 
-/** 回填表单。地址会被规范化，回填是为了让人看见实际存下来的那个值。 */
+/** 回填三个输入框。地址会被规范化，回填是为了让人看见实际存下来的那个值。 */
 function fillForm(): void {
 	if (baseUrlInput) baseUrlInput.value = config.baseUrl;
 	if (keyInput) keyInput.value = config.apiKey;
@@ -191,10 +218,108 @@ function fillForm(): void {
 	renderDetail();
 }
 
-function persist(next: AiConfig, message: string): void {
-	config = next;
-	saveAiConfig(config);
+function profileOf(id: string): AiProfile | null {
+	return store.profiles.find((profile) => profile.id === id) ?? null;
+}
+
+/** 列表上那一行显示的地址。认不出来就原样显示，别编一个。 */
+function hostOf(target: AiConfig): string {
+	try {
+		return new URL(normalizeBaseUrl(target.baseUrl)).hostname;
+	} catch {
+		return target.baseUrl || '没填地址';
+	}
+}
+
+function listButton(label: string, act: string): HTMLButtonElement {
+	const button = document.createElement('button');
+	button.type = 'button';
+	button.dataset.act = act;
+	button.className = 'filter-chip';
+	button.textContent = label;
+	return button;
+}
+
+/**
+ * 画那份"存了哪几份"的列表。
+ *
+ * 全部用 createElement + textContent：名字是用户自己输的、地址是他填的，拼 HTML 字符串等于
+ * 给自己开一个 XSS 口子（和页头 AuthEntry 里那条规矩一样）。
+ */
+function renderList(): void {
+	if (!listEl) return;
+	if (emptyEl) emptyEl.style.display = store.profiles.length > 0 ? 'none' : '';
+
+	listEl.replaceChildren(
+		...store.profiles.map((profile) => {
+			const on = profile.id === store.activeId;
+			const item = document.createElement('li');
+			item.dataset.profile = profile.id;
+			item.className = on
+				? 'rounded-xl border border-dota/60 bg-dota/10 p-3'
+				: 'rounded-xl border border-line bg-surface-2/60 p-3';
+
+			const head = document.createElement('div');
+			head.className = 'flex flex-wrap items-center gap-2';
+			const name = document.createElement('span');
+			name.className = 'text-sm font-medium text-cream';
+			name.textContent = profile.label;
+			const badge = document.createElement('span');
+			badge.className = on
+				? 'rounded-full bg-dota/20 px-2 py-0.5 text-[11px] text-dota-light'
+				: 'rounded-full bg-surface-3 px-2 py-0.5 text-[11px] text-faint';
+			badge.textContent = on ? '正在使用' : '未启用';
+			head.append(name, badge);
+			if (profile.id === editingId) {
+				const editing = document.createElement('span');
+				editing.className = 'text-[11px] text-faint';
+				editing.textContent = '正在编辑';
+				head.append(editing);
+			}
+
+			const meta = document.createElement('p');
+			meta.className = 'mt-1 text-xs text-faint';
+			meta.textContent = `${isConfigured(profile) ? profile.model : '还没填 key'} · ${hostOf(profile)}`;
+
+			const actions = document.createElement('div');
+			actions.className = 'mt-2 flex flex-wrap items-center gap-2';
+			if (!on) actions.append(listButton('启用', 'activate'));
+			actions.append(listButton('编辑', 'edit'));
+			// 删除要点两次，第二次的文案就写在按钮上——比弹一个原生 confirm 更贴这套界面。
+			actions.append(listButton(pendingDeleteId === profile.id ? '再点一次删除' : '删除', 'delete'));
+
+			item.append(head, meta, actions);
+			return item;
+		}),
+	);
+}
+
+/** 把一份配置装进编辑器；id 为空串 = 新增一份。 */
+function openEditor(id: string): void {
+	editingId = id;
+	const profile = profileOf(id);
+	config = profile ? configOf(profile) : emptyAiConfig();
+	if (labelInput) labelInput.value = profile?.label ?? '';
 	fillForm();
+	if (editorTitle) editorTitle.textContent = profile ? `编辑「${profile.label}」` : '新增一份';
+	if (saveButton) saveButton.textContent = profile ? '保存这一份' : '新增并启用';
+	if (cancelButton) cancelButton.style.display = profile ? '' : 'none';
+	renderList();
+	setStatus('');
+}
+
+/** 把编辑器里这套值写回存储：编辑中写回那一份，新增则加一份并启用它。 */
+function persistConfig(next: AiConfig, message: string): void {
+	const label = (labelInput?.value ?? '').trim();
+	if (editingId && profileOf(editingId)) {
+		store = updateAiProfile(store, editingId, next, label);
+	} else {
+		const added = addAiProfile(store, next, label);
+		store = added.store;
+		editingId = added.profile.id;
+	}
+	saveAiStore(store);
+	openEditor(editingId);
 	setStatus(message);
 }
 
@@ -204,12 +329,14 @@ saveButton?.addEventListener('click', () => {
 		setStatus(read.error);
 		return;
 	}
+	const isNew = !profileOf(editingId);
 	const changed =
 		read.config.baseUrl !== config.baseUrl || read.config.apiKey !== config.apiKey || read.config.model !== config.model;
-	persist(
+	const base = isNew ? '已新增并启用' : '已保存';
+	persistConfig(
 		// 换了地址、key 或模型，旧的测试结果就对应不上现在这套值了。
 		changed ? { ...read.config, lastCheckedAt: 0, lastCheckOk: false } : read.config,
-		read.config.apiKey ? '已保存' : '已保存；没填 key 时阵容分析仍可用，只是不会有模型解释',
+		read.config.apiKey ? base : `${base}；没填 key 时阵容分析仍可用，只是不会有模型解释`,
 	);
 });
 
@@ -241,14 +368,14 @@ async function testConnection(): Promise<void> {
 				: response.status === 404
 					? '地址可能不对：检查是否少了一段路径'
 					: '看看服务商那边的额度与限流';
-		persist(
+		persistConfig(
 			{ ...target, lastCheckedAt: checkedAt, lastCheckOk: response.ok },
 			response.ok ? '连接正常，已保存' : `没通过：HTTP ${response.status}（${hint}）`,
 		);
 	} catch {
 		// 跨域被挡也走这里。浏览器直连要求服务商放开 CORS，这一条不是配置能绕过去的，
 		// 所以文案里把它和网络问题并列说清楚。
-		persist(
+		persistConfig(
 			{ ...target, lastCheckedAt: checkedAt, lastCheckOk: false },
 			'请求发不出去：地址不通、网络/代理问题，或这家服务没放开跨域',
 		);
@@ -263,7 +390,78 @@ testButton?.addEventListener('click', () => {
 
 clearButton?.addEventListener('click', () => {
 	// 只清 key 与测试结果，地址与模型名留着——下一把 key 通常还是同一家。
-	persist(clearAiKey(config), '已清除 key');
+	persistConfig(clearAiKey(config), '已清除这份的 key');
+});
+
+newButton?.addEventListener('click', () => {
+	disarmDelete();
+	openEditor('');
+	labelInput?.focus();
+});
+
+// 编辑到一半想退回去：重新装一遍当前启用的那一份（一份都没有就回到"新增"）。
+cancelButton?.addEventListener('click', () => {
+	disarmDelete();
+	openEditor(store.activeId);
+});
+
+function disarmDelete(): void {
+	pendingDeleteId = '';
+	if (deleteTimer) clearTimeout(deleteTimer);
+	deleteTimer = null;
+}
+
+/*
+ * 列表上的三个动作。
+ *
+ * 事件挂在列表容器上而不是每一行上：行是每次重画时新建的，逐行挂监听等于每画一次就漏一堆
+ * 旧节点；委托给容器只需要挂一次（和页头那个渲染登录态的脚本是同一条思路）。
+ */
+listEl?.addEventListener('click', (event) => {
+	const button = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-act]');
+	const id = button?.closest<HTMLElement>('[data-profile]')?.dataset.profile;
+	const act = button?.dataset.act;
+	if (!id || !act) return;
+
+	if (act === 'activate') {
+		disarmDelete();
+		store = activateAiProfile(store, id);
+		saveAiStore(store);
+		renderList();
+		setStatus(`已启用「${profileOf(id)?.label ?? '这一份'}」，阵容分析接下来用它`);
+		return;
+	}
+
+	if (act === 'edit') {
+		disarmDelete();
+		openEditor(id);
+		return;
+	}
+
+	/*
+	 * 删除要点两次：key 只存在这台浏览器里，删掉就真没了，而这一行的按钮和「编辑」挨着。
+	 * 第一次点只是把按钮文案换成「再点一次删除」，四秒没下文就自己复原。
+	 */
+	if (pendingDeleteId !== id) {
+		pendingDeleteId = id;
+		if (deleteTimer) clearTimeout(deleteTimer);
+		deleteTimer = setTimeout(() => {
+			disarmDelete();
+			renderList();
+		}, 4000);
+		renderList();
+		setStatus('再点一次「删除」才会真的删掉');
+		return;
+	}
+
+	const label = profileOf(id)?.label ?? '这一份';
+	disarmDelete();
+	store = removeAiProfile(store, id);
+	saveAiStore(store);
+	// 删掉的正是编辑器里那一份：退回到当前启用的那份，别让「保存」写到一个已经没了的 id 上。
+	if (editingId === id) openEditor(store.activeId);
+	renderList();
+	setStatus(`已删除「${label}」`);
 });
 
 /**
@@ -283,6 +481,13 @@ for (const chip of providerChips) {
 		const current = (modelInput?.value ?? '').trim();
 		const knownDefault = AI_PROVIDERS.some((item) => item.models?.includes(current));
 		if (modelInput && provider.models?.[0] && (!current || knownDefault)) modelInput.value = provider.models[0];
+		/*
+		 * 名字同样只在"没起过名"或"还是别家的名字"时才跟着换：与模型名一个道理，
+		 * 用户自己起的名字比预设更可信（"公司那把"被改成"OpenAI"是最容易被骂回来的一种聪明）。
+		 */
+		const currentLabel = (labelInput?.value ?? '').trim();
+		const genericLabel = currentLabel === '' || AI_PROVIDERS.some((item) => item.label === currentLabel);
+		if (labelInput && genericLabel) labelInput.value = provider.label;
 		renderProviders();
 		setStatus('');
 	});
@@ -398,5 +603,5 @@ document.addEventListener('click', (event) => {
 	if (!inside) closeModelList();
 });
 
-fillForm();
-if (!isConfigured(config)) setStatus('还没配置；不配也能用，配置之后才会有模型写的那段解释');
+openEditor(store.activeId);
+if (store.profiles.length === 0) setStatus('还没有配置；不配也能用，配好之后才会有模型写的那段解释');

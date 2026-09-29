@@ -4,19 +4,28 @@ import {
 	DEFAULT_AI_BASE_URL,
 	DEFAULT_AI_MODEL,
 	LEGACY_STORE_KEY,
+	activateAiProfile,
+	activeProfile,
+	addAiProfile,
 	aiStateLabel,
 	clearAiKey,
+	emptyAiStore,
 	emptyAiConfig,
 	endpointOf,
 	isConfigured,
 	loadAiConfig,
+	loadAiStore,
 	modelsEndpointOf,
 	normalizeBaseUrl,
 	parseAiConfig,
+	parseAiStore,
+	removeAiProfile,
 	sameAiConfig,
 	sameAiTarget,
 	saveAiConfig,
+	saveAiStore,
 	stateOf,
+	updateAiProfile,
 	validateBaseUrl,
 } from '../src/lib/aiConfig.ts';
 import type { AiStorage } from '../src/lib/aiConfig.ts';
@@ -165,6 +174,76 @@ assert.deepEqual(
 	assert.equal(sameAiTarget(base, { ...base, apiKey: '' }), false, '清掉 key 要认出目标变了');
 	assert.equal(sameAiTarget(base, { ...base, baseUrl: 'https://api.openai.com/v1' }), false, '换地址要认出目标变了');
 	assert.equal(sameAiConfig(base, { ...base, apiKey: 'sk-b' }), false);
+}
+
+// ---------------------------------------------------------------- 多份配置
+
+/*
+ * 「存两份、启用其中一份」是设置页的主要用法。这里钉的是会**静默出错**的几条：
+ * 启用了一个不存在的 id、删掉启用着的那份之后没有接上、以及老的单份配置被搬丢。
+ */
+{
+	const base = fakeStorage();
+	const deepseek = parseAiConfig({ baseUrl: DEFAULT_AI_BASE_URL, apiKey: 'sk-d', model: 'deepseek-flash' });
+	const openai = parseAiConfig({ baseUrl: 'https://api.openai.com/v1', apiKey: 'sk-o', model: 'gpt-x' });
+
+	const first = addAiProfile(emptyAiStore(), deepseek);
+	assert.equal(first.profile.label, 'DeepSeek', '没起名字时按地址认出服务商，用它的名字');
+	assert.equal(first.store.activeId, first.profile.id, '新增的那一份要立刻启用');
+
+	const second = addAiProfile(first.store, openai, '公司那把');
+	assert.equal(second.profile.label, '公司那把', '起了名字就用名字，不再按地址推');
+	assert.equal(second.store.profiles.length, 2, '两份都要留着');
+	assert.equal(second.store.activeId, second.profile.id, '最新新增的那一份是启用的');
+	assert.equal(activeProfile(second.store)?.model, 'gpt-x', '启用的那一份要跟着 activeId 走');
+
+	// 切回第一份：这就是「新增了 deepseek 和 openai 然后启用 openai」反过来那一步。
+	const back = activateAiProfile(second.store, first.profile.id);
+	assert.equal(back.activeId, first.profile.id);
+	assert.equal(activeProfile(back)?.apiKey, 'sk-d');
+	assert.equal(activateAiProfile(back, '没有这个 id').activeId, first.profile.id, '启用一个不存在的 id 不能把启用状态弄没');
+
+	// 改一份不能碰到另一份。
+	const edited = updateAiProfile(back, first.profile.id, { ...deepseek, model: 'deepseek-v4-pro' });
+	assert.equal(activeProfile(edited)?.model, 'deepseek-v4-pro');
+	assert.equal(edited.profiles[1]?.model, 'gpt-x', '改一份不能动到另一份');
+
+	// 删掉启用着的那份要自动接到剩下的那份，否则界面会显示"启用中"却什么都没启用。
+	const removed = removeAiProfile(edited, first.profile.id);
+	assert.equal(removed.profiles.length, 1);
+	assert.equal(removed.activeId, second.profile.id, '删掉启用着的那份要落到剩下的那份');
+	assert.equal(activeProfile(removed)?.label, '公司那把');
+	assert.deepEqual(removeAiProfile(removed, second.profile.id), emptyAiStore(), '全删光就是没有配置');
+	assert.deepEqual(removeAiProfile(removed, '没有这个 id'), removed, '删一个不存在的 id 不该改动任何东西');
+
+	// 存进去再读出来：两份都在，启用的那份还是启用的。
+	saveAiStore(second.store, base);
+	const reloaded = loadAiStore(base);
+	assert.equal(reloaded.profiles.length, 2);
+	assert.equal(reloaded.activeId, second.profile.id);
+	assert.equal(activeProfile(reloaded)?.apiKey, 'sk-o', 'key 要能存住（只在这台浏览器里）');
+	assert.equal(activeProfile(reloaded)?.lastCheckOk, false, '测试结果一起存');
+
+	// 老的单份写法（这个键里是个裸配置对象）要搬成一份，而不是丢掉。
+	const old = fakeStorage({
+		[AI_STORE_KEY]: JSON.stringify({ baseUrl: DEFAULT_AI_BASE_URL, apiKey: 'sk-old', model: 'deepseek-flash' }),
+	});
+	const upgraded = loadAiStore(old);
+	assert.equal(upgraded.profiles.length, 1, '老的单份配置要搬成一份');
+	assert.equal(activeProfile(upgraded)?.apiKey, 'sk-old');
+	assert.equal(activeProfile(upgraded)?.label, 'DeepSeek', '搬过来的那份也要有能认的名字，否则列表上只剩"未命名"');
+
+	// 坏存储不能把页面搞挂，也不能凭空造出一份。
+	assert.deepEqual(loadAiStore(fakeStorage({ [AI_STORE_KEY]: '{"profiles": 3}' })), emptyAiStore(), 'profiles 不是数组就当没有');
+	assert.deepEqual(loadAiStore(fakeStorage({ [AI_STORE_KEY]: '{半截' })), emptyAiStore(), '半截 JSON 当没有');
+	// activeId 认不出来（比如那份被手改删了）时落到第一份，别让界面显示"启用中"却什么都没启用。
+	const unknownActive = parseAiStore({ activeId: '不存在', profiles: [{ apiKey: 'sk-1' }] });
+	assert.equal(unknownActive.activeId, unknownActive.profiles[0]?.id, 'activeId 认不出来时落到第一份');
+
+	// id 撞车要自己分开，否则两份共用一个键、后面那份会顶掉前面那份。
+	const dup = parseAiStore({ activeId: 'a', profiles: [{ id: 'a', apiKey: 'sk-1' }, { id: 'a', apiKey: 'sk-2' }] });
+	assert.equal(dup.profiles.length, 2);
+	assert.notEqual(dup.profiles[0]?.id, dup.profiles[1]?.id, 'id 撞车要让第二份另起一个');
 }
 
 console.log('aiConfig.check 通过');
