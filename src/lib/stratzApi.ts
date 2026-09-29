@@ -154,6 +154,14 @@ async function cached<T>(
 	key: string,
 	ttlSeconds: number | ((value: T) => number),
 	load: () => Promise<T | null>,
+	/**
+	 * 请求失败、当前键又没有缓存时，按顺序去读这些键（忽略 TTL）。
+	 *
+	 * 缓存键带上统计窗口起点之后，跨过桶边界的**第一轮构建**是个空窗：新键还没有文件，
+	 * 上游又刚好抽风或离线，`hit` 为 null 就整块数据没了——而上一桶那份可用数据还躺在磁盘上。
+	 * 离线构建的承诺就是用起 `.cache/`（见本函数第一段），所以这里留一条回退路。
+	 */
+	fallbacks: readonly string[] = [],
 ): Promise<T | null> {
 	const hit = await readCache<T>(key);
 	if (hit) {
@@ -165,7 +173,12 @@ async function cached<T>(
 		await writeCache(key, fresh);
 		return fresh;
 	}
-	return hit ? hit.value : null;
+	if (hit) return hit.value;
+	for (const fallback of fallbacks) {
+		const older = await readCache<T>(fallback);
+		if (older) return older.value;
+	}
+	return null;
 }
 
 // ---------------------------------------------------------------- 比赛明细
@@ -586,7 +599,7 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 			});
 			const rows = data?.heroStats?.stats;
 			return rows && rows.length > 0 ? rows : null;
-		});
+		}, ['hero-stats']);
 		if (!statRows || statRows.length === 0) {
 			await reportSource(
 				'stratz-hero',
@@ -611,7 +624,7 @@ export function fetchHeroMeta(): Promise<HeroMeta | null> {
 				});
 				const rows = data?.heroStats?.banDay;
 				return rows && rows.length > 0 ? rows : null;
-			})) ?? [];
+			}, ['hero-bans'])) ?? [];
 
 		const meta = buildHeroMeta(statRows, banRows, week);
 		if (meta) {

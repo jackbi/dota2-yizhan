@@ -99,6 +99,25 @@ const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 	assert.match(stratz, /take: \$\{BAN_TAKE_DAYS\}/, 'banDay 要说明取多少天');
 	const takeDays = Number(/const BAN_TAKE_DAYS = (\d+)/.exec(stratz)?.[1]);
 	assert.ok(takeDays >= 14, `日桶至少要覆盖 14 天（窗口最远 13 天前），现在是 ${takeDays}`);
+
+	/*
+	 * 版本化的缓存键不能把离线兜底打掉。
+	 *
+	 * 跨过桶边界的**第一轮构建**是个空窗：新键还没有文件，上游又刚好抽风或离线。这时 `hit`
+	 * 为 null，如果直接返回 null，整个「上一个完整统计周」板块连同英雄胜率榜一起消失——而上一桶
+	 * 那份可用数据还躺在磁盘上（旧键 `hero-stats` / `hero-bans`）。离线构建的承诺就是用起 `.cache/`。
+	 */
+	assert.match(stratz, /for \(const fallback of fallbacks\)/, 'cached 要真的去读回退键，而不是只声明一个参数');
+	assert.match(
+		stratz,
+		/`hero-stats:\$\{windowKey\}`, HERO_META_TTL_SECONDS,[\s\S]{0,600}?\}, \['hero-stats'\]\)/,
+		'hero-stats 的版本化键要留旧键兜底',
+	);
+	assert.match(
+		stratz,
+		/`hero-bans:\$\{windowKey\}`, HERO_META_TTL_SECONDS,[\s\S]{0,600}?\}, \['hero-bans'\]\)/,
+		'hero-bans 的版本化键要留旧键兜底',
+	);
 	ok('接线：版本提醒、被禁用数、stats 查询共用同一个窗口');
 }
 
