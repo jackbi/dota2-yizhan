@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 /**
  * `src/lib/itemApi.ts` 装备详情懒加载的自检：**失败的 promise 不能留在缓存里**。
@@ -64,5 +65,18 @@ assert.equal(details.blink?.nameLoc, '闪烁匕首');
 assert.deepEqual(details.blink?.requirements, ['recipe_blink']);
 assert.equal(await loadItemDetails(), details, '成功的结果要缓存复用（悬浮框会反复读）');
 assert.equal(created, 4, '命中缓存时不该再插 script');
+
+/*
+ * 另一半在页面上：模块清了失败缓存，但如果页面只调一次就认了（原先就是），
+ * 一次瞬时失败之后整页的悬浮框照样永远少一块。这里对着源码钉住"按需重试 + 有上限"。
+ */
+{
+	const page = readFileSync(new URL('../src/pages/items.astro', import.meta.url), 'utf8');
+	assert.match(page, /const loadDetails = \(\): void => \{/, '页面要有按需重试的入口');
+	assert.match(page, /if \(detailMap \|\| detailAttempts >= \d+\) return;/, '重试要有上限，别一直打接口');
+	const calls = page.match(/loadDetails\(\);/g) ?? [];
+	assert.ok(calls.length >= 3, `重试入口要在初始、悬浮、聚焦三条路上都调用，现在只看到 ${calls.length} 处`);
+	assert.ok(page.includes('showTip(lastTipAnchor)'), '详情晚到时要把当前那个悬浮框重画一遍');
+}
 
 console.log('itemApi.check 通过');

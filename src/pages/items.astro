@@ -241,6 +241,8 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 		document.body.appendChild(tip);
 
 		let hideTimer = 0;
+		/** 当前悬浮框是对着哪张卡画的：详情晚到 / 重试成功时要照着它重画一次。 */
+		let lastTipAnchor: HTMLElement | null = null;
 		const hideTip = () => {
 			window.clearTimeout(hideTimer);
 			tip.classList.add('opacity-0', 'pointer-events-none');
@@ -274,6 +276,7 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 		 * 详细文案（描述 / 效果 / 配方）还是要 `detailMap`，那是按需拉的。
 		 */
 		const showTip = (anchor: HTMLElement) => {
+			lastTipAnchor = anchor;
 			const key = anchor.dataset.item ?? '';
 			const d = detailMap?.[key];
 			const nameLoc = d?.nameLoc || anchor.dataset.loc || key;
@@ -337,23 +340,41 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 
 		// 卡片不再重建，所以每个只管挂一次监听。
 		for (const btn of cards) {
-			btn.addEventListener('mouseenter', () => showTip(btn));
+			btn.addEventListener('mouseenter', () => {
+				loadDetails();
+				showTip(btn);
+			});
 			btn.addEventListener('mouseleave', scheduleHide);
-			btn.addEventListener('focus', () => showTip(btn));
+			btn.addEventListener('focus', () => {
+				loadDetails();
+				showTip(btn);
+			});
 			btn.addEventListener('blur', hideTip);
 		}
 
 		search?.addEventListener('input', applyFilter);
 
 		/*
-		 * 详情按需拉一次就够，失败也不影响列表本身——那时悬浮框用卡片上的
-		 * data-* 渲染，只是少了描述与配方。
+		 * 详情按需拉，失败也不影响列表本身——那时悬浮框用卡片上的 data-* 渲染，只是少了描述与配方。
+		 *
+		 * 但**不能只拉一次就认了**：`itemApi` 那边会清掉失败缓存、让下一次调用重试，而这里是它
+		 * 唯一的调用点——不重试就等于一次瞬时失败之后，整页的悬浮框都少一块，而且页面上没有任何提示。
+		 * 所以悬浮/聚焦时按需再试几次（上限 3 次），拿到之后把当前那个悬浮框重画一遍。
 		 */
-		loadItemDetails()
-			.then((map) => {
-				detailMap = map;
-			})
-			.catch(() => {});
+		let detailAttempts = 0;
+		const loadDetails = (): void => {
+			if (detailMap || detailAttempts >= 3) return;
+			detailAttempts += 1;
+			loadItemDetails()
+				.then((map) => {
+					detailMap = map;
+					if (lastTipAnchor) showTip(lastTipAnchor);
+				})
+				.catch(() => {
+					// 失败不留缓存（见 itemApi.ts）：下一次悬浮会再试一次。
+				});
+		};
+		loadDetails();
 
 		// ---- 回到顶部 ----
 		const backTop = document.getElementById('back-top') as HTMLButtonElement | null;
