@@ -30,7 +30,11 @@ function load(path, { ttl = TTL_MS } = {}) {
 	if (entry && Date.now() - entry.at < ttl) return Promise.resolve(entry.value);
 
 	const pending = (async () => {
-		const response = await fetch(`${BASE}${path}`, { headers: { accept: 'application/json' } });
+		// 带超时：这里是 MCP 工具在等，站点没响应时不该把一次工具调用挂死。
+		const response = await fetch(`${BASE}${path}`, {
+			headers: { accept: 'application/json' },
+			signal: AbortSignal.timeout(15_000),
+		});
 		if (!response.ok) throw new Error(`${BASE}${path} 返回 HTTP ${response.status}`);
 		const value = await response.json();
 		cache.set(path, { at: Date.now(), value });

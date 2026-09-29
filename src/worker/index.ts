@@ -57,6 +57,9 @@ async function dispatchRebuild(env: Env): Promise<void> {
 			},
 			// 分支写死 main：重建永远基于已发布的那条线，不受本地开发现场影响。
 			body: JSON.stringify({ ref: 'main' }),
+			// 带超时：GitHub 那边挂住时，这次 cron 调用不该跟着挂——`waitUntil` 里的请求
+			// 一样会拖住这次调用，而日志里只会看到「什么都没发生」。
+			signal: AbortSignal.timeout(10_000),
 		});
 
 		if (response.status === 204) {
