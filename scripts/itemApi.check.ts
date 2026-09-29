@@ -121,12 +121,29 @@ assert.equal(created, 5, '命中缓存时不该再插 script');
 	assert.match(page, /if \(detailMap \|\| detailPending \|\| detailAttempts >= \d+\) return;/, '重试要有上限，且正在飞的那一发不算新的一次');
 	const calls = page.match(/loadDetails\(\);/g) ?? [];
 	assert.ok(calls.length >= 3, `重试入口要在初始、悬浮、聚焦三条路上都调用，现在只看到 ${calls.length} 处`);
-	assert.ok(page.includes('showTip(lastTipAnchor)'), '详情晚到时要把当前那个悬浮框重画一遍');
+	assert.ok(page.includes('if (lastTipAnchor) paintTip(lastTipAnchor)'), '详情晚到时要把当前那个悬浮框重画一遍');
 	assert.match(
 		page,
 		/const hideTip = \(\) => \{[\s\S]{0,200}?lastTipAnchor = null;/,
 		'关掉悬浮框要连"当前对着哪张卡"一起清掉：否则晚到的详情会把它弹回来并一直截走点击',
 	);
+	/*
+	 * 3. **晚到的详情不能取消已经排好的隐藏**。鼠标离开时排的是 120ms 后才执行的
+	 *    `scheduleHide`，这段窗口里指针已经走了、`lastTipAnchor` 还没清；重画若走 `showTip`
+	 *    （末尾那把 `clearTimeout`），弹回来的面板会连"即将隐藏"一起取消，之后没人再关它。
+	 *    所以重画单独走 `paintTip`，而它在"排着隐藏"时直接返回。
+	 */
+	assert.match(
+		page,
+		/const paintTip = \(anchor: HTMLElement\) => \{\s*if \(hidePending\) return;/,
+		'排着隐藏的时候不许重画（否则晚到的详情会把已排定的隐藏取消掉）',
+	);
+	assert.match(
+		page,
+		/const showTip = \(anchor: HTMLElement\) => \{\s*cancelHide\(\);\s*paintTip\(anchor\);/,
+		'只有指针真在卡上（进入/聚焦）才取消隐藏并重画',
+	);
+	assert.ok(!/if \(lastTipAnchor\) showTip\(lastTipAnchor\)/.test(page), '晚到那条路不能走 showTip：它会取消已经排好的隐藏');
 }
 
 console.log('itemApi.check 通过');

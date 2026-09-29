@@ -249,17 +249,24 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 		 * 事件会再关它——那一块就一直截走下面的点击。
 		 */
 		let lastTipAnchor: HTMLElement | null = null;
+		/** 已经排了一次隐藏、还没到点。见 `paintTip`：这种情况下不许再画。 */
+		let hidePending = false;
 		const hideTip = () => {
 			window.clearTimeout(hideTimer);
+			hidePending = false;
 			lastTipAnchor = null;
 			tip.classList.add('opacity-0', 'pointer-events-none');
 			tip.style.visibility = 'hidden';
 		};
 		const scheduleHide = () => {
 			window.clearTimeout(hideTimer);
+			hidePending = true;
 			hideTimer = window.setTimeout(hideTip, 120);
 		};
-		const cancelHide = () => window.clearTimeout(hideTimer);
+		const cancelHide = () => {
+			hidePending = false;
+			window.clearTimeout(hideTimer);
+		};
 
 		const positionTip = (anchor: HTMLElement) => {
 			const r = anchor.getBoundingClientRect();
@@ -282,7 +289,15 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 		 * 价格带在属性里了，没必要为了这些再在客户端留一份列表。
 		 * 详细文案（描述 / 效果 / 配方）还是要 `detailMap`，那是按需拉的。
 		 */
-		const showTip = (anchor: HTMLElement) => {
+		/*
+		 * 把面板画到某张卡旁边。
+		 *
+		 * **排着隐藏的时候不画**：鼠标离开时先排的是 120ms 后才执行的 `scheduleHide`，这期间
+		 * 指针已经走了、`lastTipAnchor` 还没清。详情恰好在这 120ms 里到达时，重画会把面板弹回来，
+		 * 而末尾那次 `clearTimeout` 又把已排定的隐藏一并取消——面板就再也没有事件去关了。
+		 */
+		const paintTip = (anchor: HTMLElement) => {
+			if (hidePending) return;
 			lastTipAnchor = anchor;
 			const key = anchor.dataset.item ?? '';
 			const d = detailMap?.[key];
@@ -339,7 +354,12 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 			tip.classList.remove('opacity-0', 'pointer-events-none');
 			tip.style.visibility = 'visible';
 			positionTip(anchor);
-			window.clearTimeout(hideTimer);
+		};
+
+		/** 指针真的落在卡上（进入 / 聚焦）时的入口：先把排着的隐藏取消，再画。 */
+		const showTip = (anchor: HTMLElement) => {
+			cancelHide();
+			paintTip(anchor);
 		};
 
 		tip.addEventListener('mouseenter', cancelHide);
@@ -378,7 +398,7 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 			loadItemDetails()
 				.then((map) => {
 					detailMap = map;
-					if (lastTipAnchor) showTip(lastTipAnchor);
+					if (lastTipAnchor) paintTip(lastTipAnchor);
 				})
 				.catch(() => {
 					// 失败不留缓存（见 itemApi.ts）：下一次悬浮会再试一次。
