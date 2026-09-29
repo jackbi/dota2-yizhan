@@ -53,6 +53,15 @@ type StoredRoom = {
 	 * 摘掉、名册随之变空，但房间的保留期这时才刚开始。只看"名册空不空"就会在那次唤醒上顺手删房间。
 	 */
 	emptySince?: number;
+	/**
+	 * 上次把房间状态报给大厅的时刻。
+	 *
+	 * 大厅那边按 `at` 兜底清理（6 小时没动过就当幽灵卡片），而 `at` 只在我们上报时更新。
+	 * 上报原先只发生在"有人进出或操作"时，于是一屋子人安安静静打一下午、只有心跳在跑，
+	 * 活房间会从大厅消失（只能靠手抄房间码加入）。这份时间戳让心跳也能刷新卡片。
+	 * 落盘是因为 WebSocket Hibernation 会回收内存：不落盘的话每次唤醒都会重报一遍。
+	 */
+	lobbyReportedAt?: number;
 };
 
 /** 每条连接自己的东西。限流计数放这儿：它天然属于连接，DO 被回收再唤醒也还在。 */
@@ -81,6 +90,13 @@ const LOBBY_REPORT_ATTEMPTS = 3;
 const LOBBY_REPORT_RETRY_MS = 250;
 /** 大厅卡片的兜底寿命；只用来把"永久幽灵卡片"变成"有上限"（见 `PartyLobby.pruneStale`）。 */
 const LOBBY_ROOM_TTL_MS = 6 * 3600_000;
+/**
+ * 有人在房里时，心跳最多多久顺手刷一次大厅卡片。
+ *
+ * 比上面的兜底寿命小得多，又不至于让每条心跳都写一次 storage：客户端每 20 秒 ping 一次，
+ * 按这个间隔最多 15 分钟上报一次。
+ */
+const LOBBY_HEARTBEAT_MS = 15 * 60_000;
 
 const json = (body: unknown, status = 200): Response =>
 	new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -148,6 +164,7 @@ export class PartyRoom {
 		}
 		if (message.t === 'ping') {
 			this.send(ws, { t: 'pong' });
+			await this.refreshLobbyCard();
 			return;
 		}
 		if (message.t === 'join') {
@@ -527,13 +544,32 @@ export class PartyRoom {
 		for (let attempt = 0; attempt < attempts; attempt += 1) {
 			try {
 				const response = await lobby.fetch('https://party.internal/rooms', { method: 'POST', body });
-				if (response.ok) return;
+				if (response.ok) {
+					// 记下这次上报的时刻（心跳靠它限速）。落盘：Hibernation 会把内存清掉。
+					if (count > 0 && this.stored) {
+						this.stored.lobbyReportedAt = Date.now();
+						await this.persist();
+					}
+					return;
+				}
 				console.warn(`[party] 大厅上报被拒：${code} count=${count} HTTP ${response.status}`);
 			} catch (error) {
 				console.warn(`[party] 大厅上报失败：${code} count=${count} ${error instanceof Error ? error.message : error}`);
 			}
 			if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, LOBBY_REPORT_RETRY_MS));
 		}
+	}
+
+	/**
+	 * 心跳顺带刷一下大厅卡片（限速）。
+	 *
+	 * 见 `StoredRoom.lobbyReportedAt`：没有这一步，安静但有人的房间会在 6 小时后被大厅当成
+	 * 幽灵卡片摘掉。
+	 */
+	private async refreshLobbyCard(): Promise<void> {
+		if (!this.stored || this.stored.state.members.length === 0) return;
+		if (Date.now() - (this.stored.lobbyReportedAt ?? 0) < LOBBY_HEARTBEAT_MS) return;
+		await this.tellLobby(this.stored.code, this.stored.state.members.length);
 	}
 }
 

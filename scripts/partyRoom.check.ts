@@ -115,6 +115,29 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	assert.ok(tell.includes('response.ok'), 'tellLobby 要看 res.ok：只看有没有抛异常会把 4xx/5xx 当成功');
 	assert.ok(/LOBBY_REPORT_ATTEMPTS/.test(tell), '"房间没了"那条上报要重试：删掉之后没有下一次机会了');
 	assert.ok(worker.includes('pruneStale'), '大厅要有按 at 的兜底清理，否则一次都没送达的上报会留一张永久卡片');
+
+	/*
+	 * 兜底清理的反面：安静但有人的房间不能被当成幽灵摘掉。
+	 *
+	 * `at` 只在"有人进出或操作"时更新，而心跳（每 20 秒一条 ping）原先只回 pong——一屋子人
+	 * 安安静静打一下午，卡片会在 6 小时后消失。所以心跳要顺手刷新卡片，并且限速。
+	 */
+	assert.match(worker, /await this\.refreshLobbyCard\(\);/, '心跳要顺手刷大厅卡片');
+	const ms = (name: string): number => {
+		const raw = new RegExp(`const ${name} = ([^;]+);`).exec(worker)?.[1]?.replace(/_/g, '').trim() ?? '';
+		const match = /^(\d+)(?:\s*\*\s*(\d+))?$/.exec(raw);
+		assert.ok(match, `没解析出 ${name}（现在是 ${raw}）`);
+		return Number(match?.[1] ?? 0) * Number(match?.[2] ?? 1);
+	};
+	assert.ok(
+		ms('LOBBY_HEARTBEAT_MS') > 0 && ms('LOBBY_HEARTBEAT_MS') < ms('LOBBY_ROOM_TTL_MS'),
+		'心跳间隔要小于大厅卡片的兜底寿命，否则刷了也白刷',
+	);
+	assert.match(
+		worker,
+		/Date\.now\(\) - \(this\.stored\.lobbyReportedAt \?\? 0\) < LOBBY_HEARTBEAT_MS/,
+		'心跳刷新要按上次上报时刻限速（否则每条 ping 都写一次 storage）',
+	);
 	ok('大厅上报与兜底清理');
 }
 
