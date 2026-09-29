@@ -108,7 +108,13 @@ let detailCache: Promise<Record<string, ItemDetail>> | null = null;
 /**
  * JSONP 加载：items/json 是 JSONP 接口，响应没有 Access-Control-Allow-Origin，
  * fetch 会被 CORS 拦截，因此用 <script> 注入方式加载（绕过跨域）。
+ *
+ * **必须自己挂超时**：`<script>` 的 `onerror` 只在真正加载失败时才来，一个卡住的响应
+ * （连上了但一直不返回、被拦截器吊着）既不回调也不报错。没有超时的话，`loadItemDetails`
+ * 留在缓存里的那个 promise 就永远挂着——页面上那几次"重试"只是重新挂到同一个 promise 上，
+ * 描述与配方整场都不会出现，而页面上没有任何提示。
  */
+const JSONP_TIMEOUT_MS = 30_000;
 function loadJsonp(url: string, callbackName: string): Promise<any> {
 	return new Promise((resolve, reject) => {
 		const script = document.createElement('script');
@@ -116,14 +122,23 @@ function loadJsonp(url: string, callbackName: string): Promise<any> {
 		script.async = true;
 		const win = window as any;
 		const prev = win[callbackName];
-		win[callbackName] = (data: any) => {
+		let settled = false;
+		const timer = window.setTimeout(() => {
 			cleanup();
-			resolve(data);
-		};
+			reject(new Error('装备详情加载超时'));
+		}, JSONP_TIMEOUT_MS);
 		const cleanup = () => {
+			// 成功、失败、超时三条路都可能先到，只认第一个。
+			if (settled) return;
+			settled = true;
+			window.clearTimeout(timer);
 			delete win[callbackName];
 			if (prev) win[callbackName] = prev;
 			script.remove();
+		};
+		win[callbackName] = (data: any) => {
+			cleanup();
+			resolve(data);
 		};
 		script.onerror = () => {
 			cleanup();

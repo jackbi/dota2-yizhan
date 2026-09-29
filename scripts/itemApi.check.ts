@@ -16,11 +16,27 @@ import { readFileSync } from 'node:fs';
  */
 
 let created = 0;
-let mode: 'error' | 'ok' = 'error';
+let mode: 'error' | 'ok' | 'hang' = 'error';
 let payload: unknown = null;
 
+/**
+ * 假计时器：真计时器会让这个脚本为了一个 30 秒的超时白等半分钟。
+ * 存下回调，由用例自己决定什么时候"到点"。
+ */
+const timers = new Map<number, () => void>();
+let timerSeq = 1;
+
 const globals = globalThis as unknown as { window: Record<string, unknown>; document: unknown };
-globals.window = {};
+globals.window = {
+	setTimeout: (fn: () => void) => {
+		const id = timerSeq++;
+		timers.set(id, fn);
+		return id;
+	},
+	clearTimeout: (id: number) => {
+		timers.delete(id);
+	},
+};
 globals.document = {
 	createElement: () => {
 		created += 1;
@@ -31,7 +47,8 @@ globals.document = {
 			// 真实场景：脚本被网络/拦截器挡住，或者回调带着坏数据回来。
 			queueMicrotask(() => {
 				if (mode === 'error') script.onerror?.(new Error('脚本加载失败'));
-				else (globals.window as { HeropediaDFReceive?: (data: unknown) => void }).HeropediaDFReceive?.(payload);
+				else if (mode === 'ok') (globals.window as { HeropediaDFReceive?: (data: unknown) => void }).HeropediaDFReceive?.(payload);
+				// mode === 'hang'：连上了但一直不返回——既不回调也不报错。
 			});
 		},
 	},
@@ -57,14 +74,34 @@ await assert.rejects(
 );
 assert.equal(created, 3, '坏数据也不能留在缓存里');
 
-// 3. 成功之后要留住：同一份数据不再插第二个 script
+/*
+ * 3. 卡住的加载要有超时。
+ *
+ * JSONP 的 `<script>` 只在真正加载失败时触发 onerror；被拦截器吊住、或者连上了不返回的
+ * 响应既不回调也不报错，promise 就永远挂着。那样 `detailCache` 里留的是同一个 pending
+ * promise，页面上的"重试"只是重新挂上去——描述与配方整场都不会出现。
+ */
+{
+	mode = 'hang';
+	const hung = loadItemDetails();
+	await Promise.resolve();
+	assert.equal(timers.size, 1, 'JSONP 要挂一个超时回调：卡住的时候才有出路');
+	assert.equal(created, 4, '卡住的那次也真的插了 script');
+	[...timers.values()][0]?.();
+	timers.clear();
+	await assert.rejects(() => hung, '卡住的加载超时后要按失败处理，不能永远挂着');
+	assert.equal(timers.size, 0, '超时之后不该还留着计时器');
+	mode = 'ok';
+}
+
+// 4. 成功之后要留住：同一份数据不再插第二个 script
 payload = { itemdata: { blink: { dname: '闪烁匕首', en: 'Blink Dagger', cost: 2250, requirements: ['recipe_blink'] } } };
 const details = await loadItemDetails();
-assert.equal(created, 4, '第三次失败之后又重试了一次');
+assert.equal(created, 5, '超时那次之后又重试了一次');
 assert.equal(details.blink?.nameLoc, '闪烁匕首');
 assert.deepEqual(details.blink?.requirements, ['recipe_blink']);
 assert.equal(await loadItemDetails(), details, '成功的结果要缓存复用（悬浮框会反复读）');
-assert.equal(created, 4, '命中缓存时不该再插 script');
+assert.equal(created, 5, '命中缓存时不该再插 script');
 
 /*
  * 另一半在页面上：模块清了失败缓存，但如果页面只调一次就认了（原先就是），
