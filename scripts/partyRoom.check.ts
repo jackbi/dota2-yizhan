@@ -122,7 +122,26 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	 * `at` 只在"有人进出或操作"时更新，而心跳（每 20 秒一条 ping）原先只回 pong——一屋子人
 	 * 安安静静打一下午，卡片会在 6 小时后消失。所以心跳要顺手刷新卡片，并且限速。
 	 */
-	assert.match(worker, /await this\.refreshLobbyCard\(\);/, '心跳要顺手刷大厅卡片');
+	/*
+	 * 钉精确形状，不是"整个文件里有这么一句"：挪出 ping 分支、或者挪到限流之前，都还是那句。
+	 * 另外两条同源——
+	 * 1. `at` 是列表的排序键，只有真的变了才能往前走。心跳跟着盖戳的话，安静但有人的房间
+	 *    每 15 分钟被重新盖一次，插到真正活跃的房间前面，还让所有订阅者重收一遍列表；
+	 * 2. 限速戳要在**发之前**盖。只在 response.ok 里盖的话，大厅 5xx、或者 stub 直接抛错时
+	 *    戳子不更新，闸门一直开着——每条心跳（25 秒一次）都重发一遍。
+	 */
+	assert.match(worker, /message\.t === 'ping'[\s\S]{0,200}?await this\.refreshLobbyCard\(\);/, '心跳要顺手刷大厅卡片');
+	assert.match(
+		worker,
+		/prev && beat && prev\.name === name && prev\.count === count \? prev\.at : Date\.now\(\)/,
+		'心跳要保住 at：列表排序按"最后一次变动"',
+	);
+	assert.match(worker, /seenAt: Date\.now\(\)/, '存活要另开一个 seenAt 字段记');
+	assert.match(
+		worker,
+		/now - \(room\.seenAt \?\? room\.at\) > LOBBY_ROOM_TTL_MS/,
+		'兜底清理要按最后一次上报（含心跳）判，不能按最后一次变动',
+	);
 	const ms = (name: string): number => {
 		const raw = new RegExp(`const ${name} = ([^;]+);`).exec(worker)?.[1]?.replace(/_/g, '').trim() ?? '';
 		const match = /^(\d+)(?:\s*\*\s*(\d+))?$/.exec(raw);
