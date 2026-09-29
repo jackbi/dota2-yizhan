@@ -62,8 +62,15 @@ const label = LIVE_STATE_LABEL[live?.state ?? "unknown"];
 							? 'bg-gold'
 							: 'bg-zinc-500',
 				]}
-			/>
-			{label}
-		</p>
-	</div>
-</a>
+				/>
+				{label}
+			</p>
+			{
+				/*
+				 * 构建期写下的那句说明得露出来：旧缓存兜底时它写着「这是 N 分钟前的快照」，
+				 * 没有这句，绿点就等于在说"此刻正在直播"。
+				 */
+				live?.note && <p class="mt-1 line-clamp-2 text-[11px] leading-relaxed text-gold/80">{live.note}</p>
+			}
+		</div>
+	</a>

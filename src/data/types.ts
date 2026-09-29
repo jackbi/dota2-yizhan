@@ -133,6 +133,11 @@ export interface RoomRef {
 	/** OB 成员才有：构建期抓到的开播状态 */
 	live?: LiveState;
 	/**
+	 * 开播状态的补充说明（`LiveStatus.note`）：旧缓存兜底时写着"这是什么时候的快照"，
+	 * 平台关了播放时写着"房间还在、播放被关了"。有就必须画出来，否则读者只看到一个绿点。
+	 */
+	note?: string;
+	/**
 	 * 主播头像。和在 `LiveStatus` 里一样：解析阶段是平台 CDN 地址
 	 * （斗鱼分区页的 `av`、虎牙榜单的 `avatar180`），页面渲染前由
 	 * `localizeAvatars()` 换成本站的 `/avatars/xxx.jpg`；拿不到就是 undefined，

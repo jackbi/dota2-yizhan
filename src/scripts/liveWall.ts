@@ -485,8 +485,13 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 						播放这一格
 					</button>
 					<span class="tile-hint px-3 text-center text-[11px] leading-relaxed text-faint">
-					点开才会加载直播间画面${r.live ? '' : '（榜单房间，抓取时在播）'}
+						点开才会加载直播间画面${r.live ? '' : '（榜单房间，抓取时在播）'}
 					</span>
+					${
+						// 构建期给的那句说明（旧快照有多旧、平台关了播放…）就画在这里：
+						// 它决定读者信不信这个"在播"，藏起来等于把绿点当成了实时状态。
+						r.note ? `<span class="px-3 text-center text-[11px] leading-relaxed text-gold/80">${esc(r.note)}</span>` : ''
+					}
 				</div>
 			</div>
 			${cropControl(r, index)}
