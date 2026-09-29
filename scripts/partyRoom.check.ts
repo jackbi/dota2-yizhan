@@ -138,7 +138,7 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	/*
 	 * 兜底清理的反面：安静但有人的房间不能被当成幽灵摘掉。
 	 *
-	 * `at` 只在"有人进出或操作"时更新，而心跳（每 20 秒一条 ping）原先只回 pong——一屋子人
+	 * `at` 只在"有人进出或操作"时更新，而心跳（每 25 秒一条 ping）原先只回 pong——一屋子人
 	 * 安安静静打一下午，卡片会在 6 小时后消失。所以心跳要顺手刷新卡片，并且限速。
 	 */
 	/*
@@ -227,7 +227,7 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 {
 	/*
 	 * 这两个数字不改任何判定，但它们是别人调 `LOBBY_HEARTBEAT_MS`（"15 分钟够不够"）时的依据，
-	 * 而 docs/ 是口径记录——写错就是把人往错的方向带。上一版就是照着"每 20 秒"写的。
+	 * 而 docs/ 是口径记录——写错就是把人往错的方向带。上一版就是照着 20 秒那个数字写的。
 	 */
 	const ping = Number(/const PING_MS = ([\d_]+)/.exec(client)?.[1]?.replace(/_/g, ''));
 	assert.ok(Number.isFinite(ping) && ping > 0, '没解析出客户端的 PING_MS');
@@ -235,6 +235,21 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	const docs = readFileSync(new URL('../docs/party.md', import.meta.url), 'utf8');
 	assert.ok(docs.includes(`每 ${seconds} 秒一次 ping`), `docs/party.md 要写「每 ${seconds} 秒一次 ping」（现在 PING_MS=${ping}）`);
 	assert.ok(workerRaw.includes(`客户端每 ${seconds} 秒 ping 一次`), `partyRoom.ts 的心跳注释要写「客户端每 ${seconds} 秒 ping 一次」`);
+	/*
+	 * 这个自检文件自己也要扫：group 4 的说明里曾经留下过一个过期的间隔数字，而这段原先只扫
+	 * docs 与 worker，扫不到自己——同一份文件里两个数字打架，谁都没报错。
+	 */
+	const self = readFileSync(new URL('./partyRoom.check.ts', import.meta.url), 'utf8');
+	for (const [name, text] of [
+		['docs/party.md', docs],
+		['src/worker/partyRoom.ts', workerRaw],
+		['scripts/partyRoom.check.ts', self],
+	] as const) {
+		assert.ok(
+			!new RegExp(`每 20 秒[^\\n]{0,6}ping`).test(text),
+			`${name} 里还留着过期的间隔数字：心跳间隔是 ${seconds} 秒（PING_MS=${ping}）`,
+		);
+	}
 	ok(`心跳间隔（${seconds} 秒）在文档、注释与客户端三处一致`);
 }
 
