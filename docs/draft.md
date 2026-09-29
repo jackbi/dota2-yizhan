@@ -497,6 +497,14 @@ pnpm probe:providers --only=openai,anthropic          # 只看几家
 
 - 比赛下拉是**构建期快照**，跟站内赛程页一样不会自己刷新；选不到就手输队名，留空也能用。
 - 职业样本太小，页面上只按实数展示出场与被禁次数，不换算成百分比。
+- **没有引入任何第三方阵容分析库，是自己算的。** 2026-09-28 在 GitHub 上按 draft /
+  recommendation / win prediction / synergy 等关键词查过一轮：`odota/core`（1.6k★）是数据平台
+  本体（本站已在用）、`mdiller/dotabase`（61★）把游戏文件导成 SQLite 但不含分析、
+  `vpus/dota2-win-rate-prediction-v1`（27★）2018 年停更、`dojeon-ai/DraftRec`（18★）是论文原型，
+  其余（`dota2-draft-analysis` / `DraftML` / `LatentDraft` / `dota2_ai_drafter` 等）都是学生作业
+  与个人玩具，没有可调用的包或 API。根因是**BP 分析的价值绑在当期版本的对局样本上**，数据一过期
+  库就废——数据层开源、分析层各做各的，学术产出论文多于代码。所以号位胜率与结构分都在
+  `draftScore.ts` 里自己算（那是纯函数，有独立自检）。
 - 有对位数据之后，「禁用」建议会一起看"对面拿走它会不会正好克我们的人"；但**同队协同**
   （谁和谁搭档强）还没有：公开源里没有现成的两人同队胜率，要用 OpenDota 的 SQL 自己聚合，
   而那边 30 天内解析过的对局里，单个对位最多只有几十场，纯噪声。
