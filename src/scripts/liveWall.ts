@@ -485,6 +485,16 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 				<button type="button" class="tile-remove shrink-0 rounded px-1.5 py-0.5 text-faint transition hover:bg-surface-3 hover:text-cream focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
 					data-tile="${index}" aria-label="把 ${esc(r.name)} 从第 ${index + 1} 格移出">✕</button>
 			</div>
+			${
+				/*
+				 * 构建期给的那句说明（旧快照有多旧、平台关了播放…）有两个地方**不能**放：
+				 * 一是待播遮罩里（点播放时那层会被整个移除），二是格子底边那一带——那是控制条的地盘
+				 * （取景微调与播放控制都是 `bottom-2 left-2 z-10`，斗鱼的「打开直播间」是
+				 * `bottom-2 right-2 z-10` 且底色近乎不透明），贴上去会被按钮糊掉。
+				 * 所以放在标题栏与画面之间：常驻、整行、不与任何浮层重叠。
+				 */
+				r.note ? `<div class="tile-note border-b border-gold/20 bg-gold/10 px-2 py-1 text-[11px] leading-snug text-gold/90">${esc(r.note)}</div>` : ''
+			}
 			<div class="tile-body relative flex-1 overflow-hidden bg-black">
 				<div class="tile-idle absolute inset-0 flex flex-col items-center justify-center gap-2 bg-ink-2/80">
 					<button type="button" class="tile-play flex items-center gap-2 rounded-lg bg-dota px-4 py-2 text-sm font-medium text-white transition hover:bg-dota-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold"
@@ -497,14 +507,6 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 					</span>
 				</div>
 			</div>
-			${
-				/*
-				 * 构建期给的那句说明（旧快照有多旧、平台关了播放…）**不能画在待播遮罩里**：
-				 * 点播放时那一层会被整个移除，说明跟着消失；而沉浸模式下左列表被面板盖住，
-				 * 画面上就再也没有任何提示了。所以挂在遮罩外面，作为格子自己的一条常驻横幅。
-				 */
-				r.note ? `<div class="tile-note border-t border-gold/20 bg-gold/10 px-2 py-1 text-[11px] leading-snug text-gold/90">${esc(r.note)}</div>` : ''
-			}
 			${cropControl(r, index)}
 			${huya ? '' : openLink('absolute bottom-2 right-2 z-10 rounded-md bg-dota/90 px-2 py-1 text-[11px] font-medium text-white backdrop-blur transition hover:bg-dota focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold')}
 		</div>`;

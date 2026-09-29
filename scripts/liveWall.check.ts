@@ -56,9 +56,19 @@ const ok = (label: string): void => {
 	const idleBlock = wall.slice(idleStart, idleEnd);
 	assert.ok(idleBlock.length > 0 && idleBlock.length < 3000, '没切出待播遮罩块，解析多半坏了');
 	assert.ok(!idleBlock.includes('r.note'), '说明不能画在待播遮罩里：点播放时遮罩被整体移除，说明跟着消失');
-	assert.ok(wall.slice(idleEnd).includes('r.note'), '格子里的说明要在遮罩之外常驻');
 	assert.match(wall, /class="tile-note[^"]*"/, '格子里的说明要有一个自己的常驻元素');
-	ok('列表行与格子各画一处、都转义，且格子那处不随遮罩消失');
+
+	/*
+	 * 也不能贴格子底边：那一带是控制条的地盘——取景微调与播放控制都是 `bottom-2 left-2 z-10`，
+	 * 斗鱼的「打开直播间」是 `bottom-2 right-2 z-10` 配近乎不透明的底色。横幅原先挂在
+	 * `.tile-body` 之后（最后一条流内元素），正好落进这二十几像素里，文字被按钮糊住：
+	 * 说明留在了 DOM 里，人还是看不见。所以它必须在画面**之前**。
+	 */
+	const noteAt = wall.indexOf('class="tile-note');
+	const bodyAt = wall.indexOf('class="tile-body');
+	assert.ok(noteAt > 0 && bodyAt > 0, '没找到说明横幅或画面容器，解析多半坏了');
+	assert.ok(noteAt < bodyAt, '说明横幅要画在画面之前：格子底边被控制条占着，贴上去会被糊住');
+	ok('列表行与格子各画一处、都转义，格子那处在遮罩之外且在控制条之上');
 }
 
 // 3. 首页那条（SSR，走 LiveCard）也不能只给绿点
