@@ -150,8 +150,15 @@ export function encRounds(raw: unknown): number | null {
  * `is_special === 1` 时不挂房间号（特殊房间，实测少见）。
  */
 export function douyuAuth(key: string, randStr: string, encTime: number, isSpecial: number, roomId: string, ts: number): string {
-	// 轮数过一道 `encRounds`（见 `MAX_ENC_TIME`）：这是热循环，不能只靠调用方守规矩。
-	const rounds = encRounds(encTime) ?? 0;
+	/*
+	 * 轮数过一道 `encRounds`（见 `MAX_ENC_TIME`）：这是热循环，不能只靠调用方守规矩。
+	 *
+	 * 不可信就**抛**，而不是悄悄按 0 轮算：0 轮会算出一个看着正常、实际是错的 auth，
+	 * 拿去打下一个接口得到的失败原因更难查。调用方（`resolveDouyu`）本来就先挡了一道，
+	 * 这里是第二道，两处口径一致：宁可解析失败，也不"转一个大概对的东西"。
+	 */
+	const rounds = encRounds(encTime);
+	if (rounds === null) throw new Error(`斗鱼签名的 enc_time 不可信：${String(encTime)}`);
 	let f = randStr;
 	for (let i = 0; i < rounds; i++) f = md5Hex(f + key);
 	return md5Hex(f + key + (isSpecial === 1 ? '' : roomId + ts));

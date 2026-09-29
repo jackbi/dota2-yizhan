@@ -129,16 +129,19 @@ const payload = (data: unknown, status = 200) => ({ status, data });
 }
 
 {
-	// 一条异常响应（这里给 10 亿）不能比「0 轮」多烧任何一次哈希：两者必须算出同一个签名。
-	const absurd = douyuAuth('key', 'rand', 1e9, 0, '9999', 1700000000);
+	// 一条异常响应（这里给 10 亿）既不能真的去串十亿次 MD5，也不能悄悄按 0 轮算出一个错签名。
+	assert.throws(
+		() => douyuAuth('key', 'rand', 1e9, 0, '9999', 1700000000),
+		/enc_time/,
+		'超出上限的轮数要直接失败（与 resolveDouyu 的处理一致），不能悄悄降级',
+	);
 	const zero = douyuAuth('key', 'rand', 0, 0, '9999', 1700000000);
-	assert.equal(absurd, zero, '超出上限的轮数要按 0 轮算，不能真的去串十亿次 MD5');
 	assert.notEqual(
 		douyuAuth('key', 'rand', 2, 0, '9999', 1700000000),
 		zero,
 		'正常轮数要真的参与计算：签名必须随 enc_time 变化',
 	);
-	ok('签名：轮数超上限时不比 0 轮多算一次');
+	ok('签名：轮数不可信时直接失败，正常轮数照常参与');
 }
 
 console.log(`liveStream 全部断言通过（${cases} 组）`);
