@@ -1,7 +1,7 @@
 import type { AstroCookies } from 'astro';
 import { heroRefMap, itemRefMap, type HeroRef, type ItemRef } from './gameRefs';
 import { readSession, type SessionUser } from './session';
-import { loadPlayerProfile, stratzPlayerConfigured, StratzError, type PlayerProfile } from './stratzPlayer';
+import { loadPlayerProfile, stratzConfigProblem, stratzPlayerConfigured, StratzError, type PlayerProfile } from './stratzPlayer';
 
 /**
  * 七个 `/me` 路由共用的登录守卫。
@@ -24,7 +24,8 @@ export async function requirePlayer(cookies: AstroCookies): Promise<SessionUser 
  * 六个个人页共用的「取资料 + 分清失败原因」逻辑。
  *
  * 页面必须区分三种情况，因为它们要显示的话完全不同：
- * - `not-configured`：站点没配 `STRATZ_TOKEN`，是部署问题，提示去看 README；
+ * - `not-configured`：站点没接上 STRATZ（缺 token，或者只配了中转的一半），是部署问题，
+ *   提示去看 README——具体缺哪一半由 `stratzConfigProblem()` 说出来，别一律写成"没配 token"；
  * - `not-found`：token 正常但查不到这个人（STRATZ 没有该账号的任何比赛）；
  * - `upstream-error`：限流 / 超时 / 挑战页，是临时的，值得让用户刷新重试。
  *
@@ -39,7 +40,7 @@ export async function loadPlayer(accountId: number): Promise<PlayerLoad> {
 		return {
 			ok: false,
 			reason: 'not-configured',
-			message: '站点未配置 STRATZ_TOKEN，个人战绩暂时不可用。',
+			message: `站点没接上 STRATZ（${stratzConfigProblem()}），个人战绩暂时不可用。`,
 		};
 	}
 

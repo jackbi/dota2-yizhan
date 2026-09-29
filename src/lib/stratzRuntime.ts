@@ -23,6 +23,17 @@ export function stratzRuntimeConfigured(): boolean {
 	return ENDPOINT.mode !== 'none';
 }
 
+/**
+ * 「没接上 STRATZ」时给用户（与自部署的运维）看的那一句原因。
+ *
+ * 运行时与构建期用的是同一份端点判断，文案也得共用：只配了中转形态（`STRATZ_RELAY_URL`，
+ * Worker 上推荐的那种）时写死「未配置 STRATZ_TOKEN」，运维照着那句话去补 token
+ * 永远修不好——`ENDPOINT.problem` 知道到底缺哪一半。
+ */
+export function stratzConfigProblem(): string {
+	return ENDPOINT.problem ?? '未配置 STRATZ_TOKEN 或 STRATZ_RELAY_URL';
+}
+
 /** 上游故障时抛错，调用方据此区分「取不到」与「这项数据本来就没有」。 */
 export class StratzError extends Error {}
 
@@ -38,7 +49,7 @@ interface GraphQLBody<T> {
 export async function stratzGql<T>(document: string, variables: Record<string, unknown>): Promise<T> {
 	// 没配 token 也没配中转是「没开这个功能」，与请求失败不是一回事，交给调用方按未配置处理。
 	if (ENDPOINT.mode === 'none') {
-		throw new StratzError(ENDPOINT.problem ?? '未配置 STRATZ_TOKEN');
+		throw new StratzError(stratzConfigProblem());
 	}
 
 	let lastError = '请求失败';

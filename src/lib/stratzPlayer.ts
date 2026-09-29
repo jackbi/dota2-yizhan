@@ -1,5 +1,5 @@
 import { cached } from './ssrCache';
-import { StratzError, stratzGql as gql, stratzRuntimeConfigured } from './stratzRuntime';
+import { StratzError, stratzConfigProblem, stratzGql as gql, stratzRuntimeConfigured } from './stratzRuntime';
 
 /**
  * 运行时（SSR）个人战绩数据层。
@@ -27,7 +27,7 @@ export function stratzPlayerConfigured(): boolean {
 	return stratzRuntimeConfigured();
 }
 
-export { StratzError };
+export { StratzError, stratzConfigProblem };
 
 // ---------------------------------------------------------------- 缓存时长
 

@@ -6,7 +6,7 @@ import PlayerLayout from '../../../layouts/PlayerLayout.astro';
 import { gameModeLabel, lobbyLabel, rankInfo } from '../../../lib/dotaLabels';
 import { formatClock, formatDayWithWeekday } from '../../../lib/format';
 import { loadPlayer, loadRefs, noticeProps, requirePlayer, thousands } from '../../../lib/playerContext';
-import { loadMatchDetail, StratzError, stratzPlayerConfigured, type MatchDetail } from '../../../lib/stratzPlayer';
+import { loadMatchDetail, StratzError, stratzConfigProblem, stratzPlayerConfigured, type MatchDetail } from '../../../lib/stratzPlayer';
 
 export const prerender = false;
 
@@ -28,7 +28,7 @@ type MatchLoad =
 
 async function loadMatch(id: number): Promise<MatchLoad> {
 	if (!stratzPlayerConfigured()) {
-		return { ok: false, reason: 'not-configured', message: '站点未配置 STRATZ_TOKEN，对局详情暂时不可用。' };
+		return { ok: false, reason: 'not-configured', message: `站点没接上 STRATZ（${stratzConfigProblem()}），对局详情暂时不可用。` };
 	}
 	try {
 		const match = await loadMatchDetail(id);
