@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { writeCacheBytes } from './buildCache';
+import { inspectImageFile, writeCacheBytes } from './buildCache';
 import { mapLimit } from './concurrency';
 import { PROXY_MODE } from './fetchText';
 
@@ -165,12 +165,13 @@ export async function localizeImages(
 		const file = path.join(cacheDir, imageFileName(item.key, item.slug, item.url));
 
 		let has = false;
-		try {
-			await fs.access(file);
-			has = true;
-		} catch {
-			has = false;
-		}
+		/*
+		 * 命中判定不能只看"文件在不在"：一个被 kill 掉的构建、或 CI 把 `.cache/` 的滚动缓存
+		 * 还原到一半，留下的半张 JPG 会被当成命中——刷一下 mtime 就照旧拷进 `dist/`，
+		 * 变成一张永远修不好的破图（原子写只护住了新产生的文件，读侧得自己看一眼头尾）。
+		 * 认不出的格式（GIF/WebP）按完整处理，不然它们每轮都要重下一遍。
+		 */
+		has = (await inspectImageFile(file)) !== 'incomplete';
 
 		if (has) {
 			reused += 1;
@@ -185,7 +186,7 @@ export async function localizeImages(
 				return;
 			}
 			try {
-				// 先写临时文件再 rename：半张 JPG 一旦落到 file 上，下一轮的 fs.access 会当它是命中，
+				// 先写临时文件再 rename：半张 JPG 一旦落到 file 上，下一轮的命中判定会当它是缓存，
 				// 还会被拷进 dist，变成一张永远修不好的破图（见 buildCache.writeCacheBytes）。
 				await writeCacheBytes(file, bytes);
 				downloaded += 1;

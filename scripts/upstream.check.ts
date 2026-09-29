@@ -86,6 +86,10 @@ for (const [label, dir, ext] of [
 const localImages = lib('localImages.ts');
 assert.ok(localImages.includes('writeCacheBytes('), 'localImages 的图片缓存要走原子写（buildCache.writeCacheBytes）');
 assert.ok(!/fs\.writeFile\(/.test(localImages), 'localImages 不该自己就地写文件：半张图会被当成命中');
+// 读侧也要看一眼：原子写只护住了新产生的文件，被 kill 的构建或还原到一半的滚动缓存
+// 留下的半张 JPG，光看"文件在不在"照样当命中。
+assert.ok(localImages.includes('inspectImageFile('), '命中判定要看图写完了没有，不能只看文件在不在');
+assert.ok(!/fs\.access\(/.test(localImages), 'fs.access 只回答"在不在"：半张 JPG 会被当成已有缓存');
 
 // ---------------------------------------------------------------- 3. 正文读完再清超时
 

@@ -127,6 +127,67 @@ export async function writeCacheBytes(file: string, data: Uint8Array): Promise<v
 	}
 }
 
+/** 图片缓存文件的完整程度。 */
+export type ImageIntegrity = 'complete' | 'incomplete' | 'unknown';
+
+const JPEG_SOI = [0xff, 0xd8];
+const JPEG_EOI = [0xff, 0xd9];
+const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** PNG 的结束块：`IEND` + 4 字节 CRC。 */
+const PNG_IEND = [0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+
+const endsWith = (bytes: Uint8Array, tail: number[]): boolean =>
+	bytes.length >= tail.length && tail.every((byte, index) => bytes[bytes.length - tail.length + index] === byte);
+const startsWith = (bytes: Uint8Array, head: number[]): boolean =>
+	bytes.length >= head.length && head.every((byte, index) => bytes[index] === byte);
+
+/**
+ * 从头尾两小段判断这张图写完了没有。
+ *
+ * 只认构建期真的会存的两种（JPEG 与 PNG），**其它格式一律 'unknown'**：认不出来的不该当成坏了，
+ * 否则 GIF/WebP 那张每轮都会被重下一遍。调用方把 unknown 当"完整"用。
+ */
+export function imageIntegrity(head: Uint8Array, tail: Uint8Array): ImageIntegrity {
+	if (startsWith(head, JPEG_SOI)) return endsWith(tail, JPEG_EOI) ? 'complete' : 'incomplete';
+	if (startsWith(head, PNG_SIG)) return endsWith(tail, PNG_IEND) ? 'complete' : 'incomplete';
+	return 'unknown';
+}
+
+/** 读文件的一段；文件不在、读不了都返回 null。`fromEnd` 为真时读最后 `length` 个字节。 */
+async function readRange(file: string, length: number, fromEnd = false): Promise<Uint8Array | null> {
+	let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+	try {
+		handle = await fs.open(file, 'r');
+		const size = (await handle.stat()).size;
+		const offset = fromEnd ? Math.max(0, size - length) : 0;
+		const take = Math.min(length, Math.max(0, size - offset));
+		if (take === 0) return new Uint8Array();
+		const buffer = new Uint8Array(take);
+		await handle.read(buffer, 0, take, offset);
+		return buffer;
+	} catch {
+		return null;
+	} finally {
+		await handle?.close().catch(() => undefined);
+	}
+}
+
+/**
+ * 看一个图片缓存文件是不是**写完整了**。
+ *
+ * 命中判定原先只问"文件在不在"（`fs.access`）：一个被 kill 掉的构建、或者 CI 用滚动缓存
+ * 还原到一半的 `.cache/`，留下的半张 JPG 每轮都会被当成命中、被刷 mtime、被拷进 `dist/`——
+ * 成了那张永远修不好的破图。原子写只护住了新产生的文件，读侧得自己看一眼。
+ *
+ * 读不到（文件没了）算 'incomplete'：调用方会去重下，而重下正好是我们要的结果。
+ */
+export async function inspectImageFile(file: string): Promise<ImageIntegrity> {
+	const head = await readRange(file, 16);
+	const tail = await readRange(file, 16, true);
+	if (!head || !tail) return 'incomplete';
+	return imageIntegrity(head, tail);
+}
+
 /**
  * 年龄是否还在 TTL 内。
  *

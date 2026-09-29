@@ -2,7 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { isFresh, readCacheJson, readCacheText, writeCacheBytes, writeCacheFile } from '../src/lib/buildCache.ts';
+import {
+	imageIntegrity,
+	inspectImageFile,
+	isFresh,
+	readCacheJson,
+	readCacheText,
+	writeCacheBytes,
+	writeCacheFile,
+} from '../src/lib/buildCache.ts';
 
 /**
  * `src/lib/buildCache.ts` 的自检。
@@ -113,10 +121,41 @@ try {
 			() => writeCacheBytes(path.join(file, 'inner.bin'), new Uint8Array([1])),
 			'二进制缓存写失败必须抛给调用方，图片那边要按失败计数',
 		);
-		cases += 1;
-	}
+			cases += 1;
+		}
 } finally {
 	await fs.rm(dir, { recursive: true, force: true });
+}
+
+/*
+ * 图片缓存的**读侧**：命中判定不能只看"文件在不在"。
+ *
+ * 原子写只护住了新产生的文件；被 kill 掉的构建、或 CI 把 `.cache/` 的滚动缓存还原到一半，
+ * 留下的半张 JPG 会被当成命中，刷一下 mtime 就照旧拷进 `dist/`。所以这里按头尾两小段判。
+ */
+{
+	const jpegHead = [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10];
+	const jpegTail = [0x00, 0x11, 0xff, 0xd9];
+	const pngHead = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+	const pngTail = [0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+	const u8 = (bytes: number[]): Uint8Array => new Uint8Array(bytes);
+
+	assert.equal(imageIntegrity(u8(jpegHead), u8(jpegTail)), 'complete', 'JPEG 的 FFD9 收尾 = 写完');
+	assert.equal(imageIntegrity(u8(jpegHead), u8([0x00, 0x11])), 'incomplete', '没有 FFD9 就是半张');
+	assert.equal(imageIntegrity(u8(pngHead), u8(pngTail)), 'complete', 'PNG 的 IEND 块 = 写完');
+	assert.equal(imageIntegrity(u8(pngHead), u8([1, 2, 3])), 'incomplete');
+	assert.equal(imageIntegrity(u8([0x47, 0x49, 0x46, 0x38]), u8([0x3b])), 'unknown', '认不出的格式别当坏了：否则每轮重下一遍');
+
+	const imgDir = await fs.mkdtemp(path.join(os.tmpdir(), 'buildcache-img-'));
+	const file = path.join(imgDir, 'integrity.jpg');
+	await writeCacheBytes(file, u8([...jpegHead, 0x01, 0x02, ...jpegTail]));
+	assert.equal(await inspectImageFile(file), 'complete');
+	// 半张：只有头，没有收尾（模拟构建被 kill / 缓存还原到一半）
+	await fs.writeFile(file, u8(jpegHead));
+	assert.equal(await inspectImageFile(file), 'incomplete', '半张 JPG 必须被认出来，否则它会一直当命中');
+	assert.equal(await inspectImageFile(path.join(os.tmpdir(), 'no-such-image-check.jpg')), 'incomplete', '文件不在也算没写完');
+	await fs.rm(imgDir, { recursive: true, force: true });
+	cases += 1;
 }
 
 console.log(`buildCache.check: ${cases} 组用例通过`);
