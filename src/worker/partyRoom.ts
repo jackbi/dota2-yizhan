@@ -19,6 +19,7 @@ import * as L from '../lib/partyLogic';
 import {
 	decodeClientMessage,
 	encodeMessage,
+	nextLobbyCard,
 	parseRoomPath,
 	type ClientMessage,
 	type LobbyRoom,
@@ -539,12 +540,10 @@ export class PartyRoom {
 	 * 限速戳要在**发之前**就盖上，不能只在 response.ok 里盖：大厅 5xx、或者 stub 那层直接抛错时
 	 * 戳子不更新，15 分钟那道闸门就一直开着——每条心跳（客户端 25 秒一次）都会重发一遍，去砸那个
 	 * 已经在报错的大厅。宁可为一次失败等满 15 分钟，也不要把它变成持续重放。
-	 *
-	 * `beat` 是心跳那条路带上来的：它只是"这个房间还活着"，不是"房间变了"，大厅据此保住 `at`。
 	 */
-	private async tellLobby(code: string, count: number, beat = false): Promise<void> {
+	private async tellLobby(code: string, count: number): Promise<void> {
 		const name = count > 0 ? (this.stored?.name ?? '') : '';
-		const body = JSON.stringify(beat ? { code, name, count, beat: true } : { code, name, count });
+		const body = JSON.stringify({ code, name, count });
 		const attempts = count > 0 ? 1 : LOBBY_REPORT_ATTEMPTS;
 		const lobby = this.env.PARTY_LOBBY.get(this.env.PARTY_LOBBY.idFromName('lobby'));
 
@@ -574,7 +573,7 @@ export class PartyRoom {
 	private async refreshLobbyCard(): Promise<void> {
 		if (!this.stored || this.stored.state.members.length === 0) return;
 		if (Date.now() - (this.stored.lobbyReportedAt ?? 0) < LOBBY_HEARTBEAT_MS) return;
-		await this.tellLobby(this.stored.code, this.stored.state.members.length, true);
+		await this.tellLobby(this.stored.code, this.stored.state.members.length);
 	}
 }
 
@@ -656,7 +655,7 @@ export class PartyLobby {
 		}
 
 		if (request.method === 'POST') {
-			let body: { code?: unknown; name?: unknown; count?: unknown; beat?: unknown };
+			let body: { code?: unknown; name?: unknown; count?: unknown };
 			try {
 				body = (await request.json()) as typeof body;
 			} catch {
@@ -665,27 +664,22 @@ export class PartyLobby {
 			const code = L.normalizeCode(typeof body.code === 'string' ? body.code : '');
 			if (!L.isValidCode(code)) return json({ ok: false }, 400);
 			const count = Math.max(0, Math.floor(Number(body.count) || 0));
-			// 心跳只是"这个房间还活着"，不是"房间变了"（见 `LobbyRoom.at`）。
-			const beat = body.beat === true;
 			let changed = false;
 			if (count === 0) {
 				changed = this.rooms.delete(code);
 			} else {
-				const name = L.sanitizeName(typeof body.name === 'string' ? body.name : '') || '开黑房间';
 				const prev = this.rooms.get(code);
 				/*
-				 * `at` 是列表的排序键，只有真的变了才往前走。心跳跟着盖戳的话，一个安静但有人的
-				 * 房间每 15 分钟就会被顶到真正活跃的房间前面，而且每次都让所有订阅者重收一遍列表。
+				 * 记账规则（含 `at` 只有真变了才往前走）在 `nextLobbyCard` 里，那边能被自检直接跑；
+				 * 这里只负责判断要不要重推列表。
 				 */
-				const at = prev && beat && prev.name === name && prev.count === count ? prev.at : Date.now();
-				changed = !prev || prev.at !== at || prev.count !== count || prev.name !== name;
-				this.rooms.set(code, {
-					code,
-					name,
+				const card = nextLobbyCard(code, prev, {
+					name: L.sanitizeName(typeof body.name === 'string' ? body.name : '') || '开黑房间',
 					count,
-					at,
-					seenAt: Date.now(),
+					now: Date.now(),
 				});
+				changed = !prev || prev.at !== card.at || prev.count !== card.count || prev.name !== card.name;
+				this.rooms.set(code, card);
 			}
 			await this.persist();
 			if (changed) this.broadcast();

@@ -24,6 +24,31 @@ export type LobbyRoom = {
 	seenAt?: number;
 };
 
+/**
+ * 收到一条上报之后，这张大厅卡片该怎么记。
+ *
+ * 放在这里而不是房间 DO 里，是为了**能自检**：下面这几行不碰任何 workerd API（DO 在本地跑不起来）。
+ *
+ * - `at` 是**列表的排序键**，只有真的变了（房名或人数）才往前走。心跳隔 15 分钟来一次，
+ *   跟着盖戳的话，一个安静但有人的房间会被反复顶到真正活跃的房间前面，而且每次都让所有订阅者
+ *   重收一遍列表（心跳与"有人进出"在上报里是同一个形状，靠名字与人数就分得清）；
+ * - `seenAt` 每次上报都刷新，兜底清理（`PartyLobby.pruneStale`）按它判这张卡片是不是幽灵。
+ */
+export function nextLobbyCard(
+	code: string,
+	prev: LobbyRoom | undefined,
+	update: { name: string; count: number; now: number },
+): LobbyRoom {
+	const changed = !prev || prev.name !== update.name || prev.count !== update.count;
+	return {
+		code,
+		name: update.name,
+		count: update.count,
+		at: changed ? update.now : prev.at,
+		seenAt: update.now,
+	};
+}
+
 /** 客户端 → 房间。 */
 export type ClientMessage =
 	| {

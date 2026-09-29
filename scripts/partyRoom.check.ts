@@ -142,12 +142,13 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	 *    戳子不更新，闸门一直开着——每条心跳（25 秒一次）都重发一遍。
 	 */
 	assert.match(worker, /message\.t === 'ping'[\s\S]{0,200}?await this\.refreshLobbyCard\(\);/, '心跳要顺手刷大厅卡片');
+	// 记账规则（`at` 只有真变了才往前走）本身在 `partyProtocol.nextLobbyCard`，行为断言在
+	// `partyProtocol.check.ts`；这里只钉大厅确实走了那条路，而不是自己在 fetch 里又盖一次戳。
 	assert.match(
 		worker,
-		/prev && beat && prev\.name === name && prev\.count === count \? prev\.at : Date\.now\(\)/,
-		'心跳要保住 at：列表排序按"最后一次变动"',
+		/const card = nextLobbyCard\(code, prev, \{[\s\S]{0,200}?now: Date\.now\(\)/,
+		'大厅卡片要走 nextLobbyCard 记账（at 只在真变了时往前走）',
 	);
-	assert.match(worker, /seenAt: Date\.now\(\)/, '存活要另开一个 seenAt 字段记');
 	assert.match(
 		worker,
 		/now - \(room\.seenAt \?\? room\.at\) > LOBBY_ROOM_TTL_MS/,

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { decodeClientMessage, decodeLobbyMessage, decodeServerMessage, encodeMessage, parseRoomPath } from '../src/lib/partyProtocol.ts';
+import { decodeClientMessage, decodeLobbyMessage, decodeServerMessage, encodeMessage, nextLobbyCard, parseRoomPath } from '../src/lib/partyProtocol.ts';
 
 /**
  * `src/lib/partyProtocol.ts` 的自检（纯函数，不联网）。
@@ -186,7 +186,39 @@ ok('chat：空/非字符串被拒，超长裁剪');
 	]) {
 		assert.equal(parseRoomPath(path), null, `${path} 应当按"房间码不对"处理`);
 	}
-	ok('房间码：坏编码 / 前缀不对都返回 null，不抛');
+		ok('房间码：坏编码 / 前缀不对都返回 null，不抛');
+}
+
+// 大厅卡片怎么记账：`at` 是列表排序键，只有真的变了才往前走
+{
+	const T = 1_000_000;
+	const base = { code: 'ABCDE', name: '开黑房间', count: 5, at: T, seenAt: T };
+
+	/*
+	 * 心跳（每 15 分钟一次、与"有人进出"在上报里形状完全相同）不能把 `at` 往前推：它是列表的
+	 * 排序键，跟着盖戳的话，一个安静但有人的房间会被反复顶到真正活跃的房间前面，
+	 * 而且每次都让所有订阅者重收一遍列表。
+	 */
+	const beat = nextLobbyCard('ABCDE', base, { name: '开黑房间', count: 5, now: T + 900_000 });
+	assert.equal(beat.at, T, '房名与人数都没变：at 要保住原值');
+	assert.equal(beat.seenAt, T + 900_000, '存活时间每次上报都要刷新（兜底清理按它判）');
+	assert.equal(beat.count, 5);
+
+	const joined = nextLobbyCard('ABCDE', base, { name: '开黑房间', count: 6, now: T + 900_000 });
+	assert.equal(joined.at, T + 900_000, '人数变了要往前走，卡片才会浮到列表前面');
+	const renamed = nextLobbyCard('ABCDE', base, { name: '换了个名字', count: 5, now: T + 900_000 });
+	assert.equal(renamed.at, T + 900_000, '改了房名也算变动');
+
+	const fresh = nextLobbyCard('ABCDE', undefined, { name: '开黑房间', count: 2, now: T });
+	assert.equal(fresh.at, T, '第一次上报（建房）本身就是变动');
+	assert.equal(fresh.seenAt, T);
+	assert.equal(fresh.code, 'ABCDE', 'DO 的名字要从路由那份代码带过来');
+
+	// 老数据没有 seenAt：兜底清理那边退回 at（见 partyRoom.check 的接线）。
+	const legacy = nextLobbyCard('ABCDE', { code: 'ABCDE', name: '开黑房间', count: 5, at: T }, { name: '开黑房间', count: 5, now: T + 1 });
+	assert.equal(legacy.at, T, '老卡片也要按同一条规则记账');
+	assert.equal(legacy.seenAt, T + 1);
+	ok('大厅卡片：at 只在人数/房名变了时前进，心跳只刷 seenAt');
 }
 
 console.log(`partyProtocol 全部断言通过（${cases} 组）`);
