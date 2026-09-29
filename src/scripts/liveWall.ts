@@ -388,6 +388,13 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 					<span class="min-w-0 flex-1">
 						<span class="block truncate text-sm text-cream">${esc(r.name)}</span>
 						<span class="block truncate text-[11px] text-faint">${meta.label} ${esc(r.roomId)}${r.title ? ' · ' + esc(r.title) : ''}</span>
+						${
+							/*
+							 * 构建期给的那句说明（旧快照有多旧、平台关了播放…）在**挑房间**这一步最要紧，
+							 * 所以列表行也画一条。格子里那份挂在待播遮罩上，开播后会被移除（那时已经在看画面了）。
+							 */
+							r.note ? `<span class="block truncate text-[11px] text-gold/80" title="${esc(r.note)}">${esc(r.note)}</span>` : ''
+						}
 					</span>
 					${
 						hotText
@@ -488,8 +495,8 @@ if (listEl && wallEl && countEl && searchEl && filterEl && layoutEl) {
 						点开才会加载直播间画面${r.live ? '' : '（榜单房间，抓取时在播）'}
 					</span>
 					${
-						// 构建期给的那句说明（旧快照有多旧、平台关了播放…）就画在这里：
-						// 它决定读者信不信这个"在播"，藏起来等于把绿点当成了实时状态。
+						// 构建期给的那句说明（旧快照有多旧、平台关了播放…）：格子这里画在待播遮罩上
+						// （点播放遮罩会被移除，那时已经在看画面了），左列表行另有一处常驻的。
 						r.note ? `<span class="px-3 text-center text-[11px] leading-relaxed text-gold/80">${esc(r.note)}</span>` : ''
 					}
 				</div>
