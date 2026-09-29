@@ -84,21 +84,30 @@ const client = stripComments(readFileSync(new URL('../src/scripts/partyRoom.ts',
 	ok('重连节拍让位于退避阶梯');
 }
 
-// 3. 跨文件：宽限期要盖得住客户端阶梯的最后一次尝试
+// 3. 跨文件：宽限期要盖得住客户端两次尝试之间的间隔
 {
 	const ladder = /const RECONNECT_DELAYS_MS = \[([^\]]+)\]/.exec(client)?.[1];
 	assert.ok(ladder, '没解析出客户端的退避阶梯');
 	const delays = ladder.split(',').map((part) => Number(part.trim().replace(/[_\s]/g, '')));
 	assert.ok(delays.length >= 3 && delays.every((value) => Number.isFinite(value) && value > 0), `退避阶梯解析异常：${ladder}`);
-	const lastAttemptAt = delays.reduce((sum, value) => sum + value, 0);
+	const maxDelay = Math.max(...delays);
+	assert.equal(delays[delays.length - 1], maxDelay, '退避阶梯要递增：客户端封顶在最后一档');
+	assert.match(client, /RECONNECT_DELAYS_MS\[Math\.min\(/, '客户端走完阶梯要停在最后一档（不是走完就不重连了）');
 
 	const grace = Number(/const MEMBER_GRACE_MS = ([\d_]+)/.exec(worker)?.[1]?.replace(/_/g, ''));
 	assert.ok(Number.isFinite(grace) && grace > 0, '没解析出服务端的宽限期');
+	/*
+	 * 门槛是**单档最大间隔**，不是阶梯累加。
+	 *
+	 * 客户端封顶在最后一档之后就是每 20 秒一次、没有终点（`Math.min(retry, len - 1)`），
+	 * 所以"把六档全走一遍再也没了下文"那条时间线根本不会出现。按累加值 39.3 秒定门槛，
+	 * 只会拦下一次正确的缩小——60 秒那档本来就只是给每次失败的探测与建连留余量。
+	 */
 	assert.ok(
-		grace >= lastAttemptAt,
-		`宽限期 ${grace}ms 盖不住最后一次重连尝试（阶梯累加到 ${lastAttemptAt}ms）：人会在自己下一次尝试之前被摘掉`,
+		grace > maxDelay,
+		`宽限期 ${grace}ms 盖不住单档最大的重连间隔（${maxDelay}ms）：人会在自己下一次尝试之前被摘掉`,
 	);
-	ok(`宽限期（${grace}ms）盖得住阶梯的最后一次尝试（${lastAttemptAt}ms）`);
+	ok(`宽限期（${grace}ms）盖得住单档最大的重连间隔（${maxDelay}ms）`);
 }
 
 // 4. 上报大厅：删房间那条也要发得出、且看 res.ok
