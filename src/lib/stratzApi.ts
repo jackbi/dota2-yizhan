@@ -3,6 +3,7 @@ import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCa
 import { reportSource } from './dataHealth';
 import { LANE_MIN_GAMES, LANE_POSITIONS, buildLaneSlice, type HeroLanes, type LaneData } from './draftLanes';
 import type { HeroMatchups } from './draftMatchup';
+import { dayInWeek, previousWeek } from './metaWindow';
 import { createPace } from './pace';
 import { resolveStratzEndpoint } from './stratzEndpoint';
 import { byStartTime } from './matchSeries.ts';
@@ -54,7 +55,7 @@ const TEAM_MATCHES_TTL_SECONDS = 3600;
 /** 英雄数据的分段：高分局最能反映版本强度。 */
 export const HERO_META_BRACKET = 'DIVINE_IMMORTAL';
 export const HERO_META_BRACKET_LABEL = '超凡入圣及以上';
-/** 英雄数据的统计窗口（天）。banDay 会多给几天，按天索引裁到窗口内。 */
+/** 英雄数据的统计窗口（天）。`banDay` 会多给几天，按天索引裁进**同一个**自然周（见 `metaWindow`）。 */
 export const HERO_META_WINDOW_DAYS = 7;
 /*
  * 窗口的「人话」说法，页面上直接用它，别再写成「近 N 天」。
@@ -492,7 +493,6 @@ const HERO_BANS_DOCUMENT = `query HeroBans($bracket: [RankBracketBasicEnum], $da
 }`;
 
 const BAN_COVERAGE_MIN_HEROES = 50;
-const SECONDS_PER_DAY = 24 * 3600;
 
 const POSITION_RE = /^POSITION_([1-5])$/;
 
@@ -524,9 +524,15 @@ function buildHeroMeta(statRows: RawPositionStat[], banRows: RawBanStat[]): Hero
 
 	const banHeroes = new Set(banRows.map((row) => row.heroId).filter((id): id is number => typeof id === 'number'));
 	if (banHeroes.size >= BAN_COVERAGE_MIN_HEROES) {
-		const oldestDay = Math.floor(Date.now() / 1000 / SECONDS_PER_DAY) - HERO_META_WINDOW_DAYS + 1;
+		/*
+		 * 裁进与出场 / 胜率**同一个**窗口（上一个完整自然周）。
+		 *
+		 * 原先这里是"今天往前 7 天"的滚动窗口，而卡片标签写的是「上一完整自然周」：同一张卡片上
+		 * 两个数字差着一天到一周，读者拿它当同一批数据看。口径统一比多算一天更要紧。
+		 */
+		const week = previousWeek(Date.now());
 		for (const row of banRows) {
-			if (typeof row.heroId !== 'number' || typeof row.day !== 'number' || row.day < oldestDay) continue;
+			if (typeof row.heroId !== 'number' || typeof row.day !== 'number' || !dayInWeek(row.day, week)) continue;
 			const entry = heroes.get(row.heroId);
 			if (entry) entry.bans += row.matchCount ?? 0;
 		}

@@ -16,6 +16,7 @@ import {
 } from './stratzApi';
 import type { HeroMatchups } from './draftMatchup';
 import { LANE_MIN_GAMES } from './draftLanes';
+import { inWeek, previousWeek } from './metaWindow';
 
 /**
  * 阵容分析要用的一份数据。
@@ -229,15 +230,18 @@ export function loadDraftData(): Promise<DraftData> {
 }
 
 /**
- * 取最新的版本号，并判断统计窗口里是不是跨了一次版本更新。
+ * 取最新的版本号，并判断**统计窗口**里是不是跨了一次版本更新。
  *
  * 版本列表按时间倒序，第一条就是当前版本。`date` 是官方给的发布日（UTC 当天零点），
  * 拿不到日期时不算跨版本，因为"不知道"不该说成"跨了"。
+ *
+ * 判据必须对着统计窗口本身（`previousWeek`），而不是"现在往前 7 天"：窗口是上一个完整自然周，
+ * 最坏情况下离现在有 7~13 天，按滚动 7 天算会对窗口外的补丁误报、又对窗口里的补丁漏报。
  */
-function toPatch(list: readonly { version: string; date: string }[]): DraftPatch {
+function toPatch(list: readonly { version: string; date: string }[], now = Date.now()): DraftPatch {
 	const latest = list[0];
 	if (!latest) return { version: '', date: '', straddles: false };
 	const releasedAt = Date.parse(`${latest.date}T00:00:00Z`);
-	const straddles = Number.isFinite(releasedAt) && Date.now() - releasedAt <= HERO_META_WINDOW_DAYS * 24 * 3600 * 1000;
+	const straddles = Number.isFinite(releasedAt) && inWeek(releasedAt, previousWeek(now));
 	return { version: latest.version, date: latest.date, straddles };
 }

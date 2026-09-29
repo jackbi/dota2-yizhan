@@ -268,6 +268,28 @@ for (const file of ['draftScore.ts', 'draftPrompt.ts', 'draftVerdict.ts']) {
 for (const page of ['heroes.astro', 'heroes/[id].astro']) {
 	const source = readFileSync(new URL(`../src/pages/${page}`, import.meta.url), 'utf8');
 	assert.ok(!/近 ?\{[^}]*windowDays[^}]*\} ?天/.test(source), `${page} 的统计窗口不能写成「近 N 天」`);
+	// 字面量也要查：上面那条只匹配模板插值，写死一句「近一周」照样能过。
+	assert.ok(!/近 ?一周/.test(source), `${page} 里不该写死「近一周」，窗口标签由 HERO_META_WINDOW_LABEL 给`);
+}
+
+/*
+ * MCP 工具那几段说明同样是**给模型读的**，而且会被原样复述给用户，口径必须跟页面一致。
+ * 它不在 src/ 下，之前那几条扫描都没覆盖到。
+ */
+{
+	const tools = readFileSync(new URL('../mcp/tools.mjs', import.meta.url), 'utf8');
+	// 注释里可以写「这样说为什么错」，所以只查非注释行（与上面扫 src/ 的口径一致）。
+	const code = tools
+		.split('\n')
+		.filter((line) => {
+			const trimmed = line.trim();
+			return !trimmed.startsWith('//') && !trimmed.startsWith('*') && !trimmed.startsWith('/*');
+		})
+		.join('\n');
+	assert.ok(!/近 \$\{[^}]*windowDays[^}]*\} 天/.test(code), 'MCP 的口径行不能写成「近 N 天」');
+	assert.ok(!/近 \d+ 天/.test(code), 'MCP 里不该出现「近 N 天」这种写法');
+	assert.ok(!/这 7 天里/.test(code), 'MCP 的跨版本提醒不能写死「这 7 天」：窗口是上一完整自然周，不是最近 7 天');
+	assert.match(code, /data\.windowLabel/, 'MCP 的口径行要用数据里带的 windowLabel');
 }
 
 const allowed = started.candidates.map((candidate) => candidate.heroId);

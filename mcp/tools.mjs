@@ -44,12 +44,19 @@ function shortfall(row, value) {
 	return row.lowerIsBetter ? Math.max(0, (value - row.target) / row.target) : Math.max(0, (row.target - value) / row.target);
 }
 
-/** 一行口径说明。每个工具的输出结尾都带上它，模型才知道这批数字是什么时候的。 */
+/**
+ * 一行口径说明。每个工具的输出结尾都带上它，模型才知道这批数字是什么时候的。
+ *
+ * 窗口写成 `windowLabel`（「上一完整自然周」），不写「近 N 天」：STRATZ 不传 `week` 时给的
+ * 是上一个完整自然周，最坏离现在 7~13 天，说成"近 7 天"就是错的——而这段文字是给模型读的，
+ * 它会照着复述。
+ */
 function caliber(data) {
 	const patch = data.patch?.version ? `版本 ${data.patch.version}` : '版本未知';
-	const straddle = data.patch?.straddles ? '（这 7 天里跨了一次版本更新，胜率是新旧混算的）' : '';
+	const window = data.windowLabel ? ` · ${data.windowLabel}` : '';
+	const straddle = data.patch?.straddles ? `（${data.windowLabel ?? '统计窗口'}里跨了一次版本更新，胜率是新旧混算的）` : '';
 	return [
-		`数据口径：${patch}${straddle} · 近 ${data.windowDays} 天 · ${data.bracketLabel}`,
+		`数据口径：${patch}${straddle}${window} · ${data.bracketLabel}`,
 		`每个号位至少 ${num(data.minPositionMatches)} 场 · 对位至少 ${num(data.matchupMinGames)} 场 · 抓取于 ${data.updatedAt}`,
 	].join('\n');
 }

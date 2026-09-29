@@ -38,7 +38,7 @@ const { id, name, nameEn, prevId, prevName, nextId, nextName } = Astro.props as 
 	nextName: string;
 };
 
-/** 近一周数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
+/** 上一完整自然周的数据在构建期取一次，所有英雄页共用；取不到就整块不展示。 */
 const meta = await fetchHeroMeta();
 
 /*
@@ -91,7 +91,7 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 		{
 			metaUnavailable ? (
 				<p class="mb-6 rounded-2xl border border-line bg-surface/60 px-5 py-4 text-sm text-muted">
-					本次构建没有取到近一周数据，下方为官方接口的英雄数值。
+					本次构建没有取到{HERO_META_WINDOW_LABEL}数据，下方为官方接口的英雄数值。
 				</p>
 			) : null
 		}
