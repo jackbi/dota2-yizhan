@@ -69,14 +69,27 @@ assert.equal(created, 4, '命中缓存时不该再插 script');
 /*
  * 另一半在页面上：模块清了失败缓存，但如果页面只调一次就认了（原先就是），
  * 一次瞬时失败之后整页的悬浮框照样永远少一块。这里对着源码钉住"按需重试 + 有上限"。
+ *
+ * 两处容易写着写着就写回去的地方：
+ * 1. **关掉悬浮框要把"当前对着哪张卡"一起清掉**。清不掉的话，晚到的详情会把一个已经隐藏的
+ *    面板重新弹出来（`showTip` 会恢复 `pointer-events`）并一直截走下面的点击——而那个时刻
+ *    指针早就离开卡片了，此后没有任何事件会再关它。
+ * 2. **在飞的请求不能算一次重试额度**。`itemApi` 对在飞的那一发复用同一个 promise，页面上
+ *    一悬浮就 `detailAttempts += 1` 的话，鼠标扫过三张卡就把 3 次额度用光，等它失败之后
+ *    整个会话再也不重试——正是这段重试要治的症状。
  */
 {
 	const page = readFileSync(new URL('../src/pages/items.astro', import.meta.url), 'utf8');
 	assert.match(page, /const loadDetails = \(\): void => \{/, '页面要有按需重试的入口');
-	assert.match(page, /if \(detailMap \|\| detailAttempts >= \d+\) return;/, '重试要有上限，别一直打接口');
+	assert.match(page, /if \(detailMap \|\| detailPending \|\| detailAttempts >= \d+\) return;/, '重试要有上限，且正在飞的那一发不算新的一次');
 	const calls = page.match(/loadDetails\(\);/g) ?? [];
 	assert.ok(calls.length >= 3, `重试入口要在初始、悬浮、聚焦三条路上都调用，现在只看到 ${calls.length} 处`);
 	assert.ok(page.includes('showTip(lastTipAnchor)'), '详情晚到时要把当前那个悬浮框重画一遍');
+	assert.match(
+		page,
+		/const hideTip = \(\) => \{[\s\S]{0,200}?lastTipAnchor = null;/,
+		'关掉悬浮框要连"当前对着哪张卡"一起清掉：否则晚到的详情会把它弹回来并一直截走点击',
+	);
 }
 
 console.log('itemApi.check 通过');

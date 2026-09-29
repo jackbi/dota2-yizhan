@@ -241,10 +241,17 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 		document.body.appendChild(tip);
 
 		let hideTimer = 0;
-		/** 当前悬浮框是对着哪张卡画的：详情晚到 / 重试成功时要照着它重画一次。 */
+		/**
+		 * 当前悬浮框是对着哪张卡画的：详情晚到 / 重试成功时要照着它重画一次。
+		 *
+		 * `null` 表示**现在没有悬浮框在显示**。关掉时要一起清掉，否则晚到的详情会把一个
+		 * 已经隐藏的面板重新弹出来（恢复 `pointer-events` 并盖在页面上），而此后没有任何
+		 * 事件会再关它——那一块就一直截走下面的点击。
+		 */
 		let lastTipAnchor: HTMLElement | null = null;
 		const hideTip = () => {
 			window.clearTimeout(hideTimer);
+			lastTipAnchor = null;
 			tip.classList.add('opacity-0', 'pointer-events-none');
 			tip.style.visibility = 'hidden';
 		};
@@ -362,9 +369,12 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 		 * 所以悬浮/聚焦时按需再试几次（上限 3 次），拿到之后把当前那个悬浮框重画一遍。
 		 */
 		let detailAttempts = 0;
+		/** 有一发请求在飞：这时再浮到别的卡上不算一次新的重试（`itemApi` 会复用同一个 promise）。 */
+		let detailPending = false;
 		const loadDetails = (): void => {
-			if (detailMap || detailAttempts >= 3) return;
+			if (detailMap || detailPending || detailAttempts >= 3) return;
 			detailAttempts += 1;
+			detailPending = true;
 			loadItemDetails()
 				.then((map) => {
 					detailMap = map;
@@ -372,6 +382,9 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 				})
 				.catch(() => {
 					// 失败不留缓存（见 itemApi.ts）：下一次悬浮会再试一次。
+				})
+				.finally(() => {
+					detailPending = false;
 				});
 		};
 		loadDetails();
