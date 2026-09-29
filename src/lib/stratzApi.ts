@@ -864,6 +864,11 @@ export function fetchHeroTimeline(): Promise<HeroTimeline | null> {
  * 3. `isWith` 是必填参数：`false` 是线上的**对手**，`true` 是**同一条线上的搭档**。
  *    行形状完全一样，所以整理逻辑共用一份（`buildHeroLanes`）。
  *
+ * 4. **`week` 和 `stats` 一样要显式传**。实测（2026-09-29）：不传 `week` 时 `laneOutcome` 给的是
+ *    **当前那个没走完的桶**（一号位全池 689,028 场），显式传上一桶的锚点才是完整周
+ *    （1,121,659 场、10,250 行）。同一个页面上「线上对位」与「号位胜率」必须是同一个窗口，
+ *    否则对比表里的净对线与它旁边的胜率差着一个残缺周。
+ *
  * 数据本身是「某英雄打某号位时，线上遇到的对手/搭档」，与 `heroStats.matchUp`（整局、不分路）
  * 是两回事，别混用。按 `LANE_MIN_GAMES` 裁剪后约 7,600 格 / 0.2MB，单独出一份静态 JSON。
  */
@@ -878,9 +883,9 @@ interface RawLaneRow {
 	lossCount?: number | null;
 }
 
-const LANE_DOCUMENT = `query HeroLanes($isWith: Boolean!, $positions: [MatchPlayerPositionType]) {
+const LANE_DOCUMENT = `query HeroLanes($isWith: Boolean!, $positions: [MatchPlayerPositionType], $week: Long) {
 	heroStats {
-		laneOutcome(isWith: $isWith, bracketBasicIds: [${HERO_META_BRACKET}], positionIds: $positions) {
+		laneOutcome(isWith: $isWith, bracketBasicIds: [${HERO_META_BRACKET}], positionIds: $positions, week: $week) {
 			heroId1
 			heroId2
 			position
@@ -900,13 +905,16 @@ let lanesPromise: Promise<LaneData | null> | null = null;
 export function fetchHeroLanes(): Promise<LaneData | null> {
 	lanesPromise ??= (async () => {
 		const before = networkFetches;
-	const data = await cached<LaneData>('hero-lanes-v3', LANE_TTL_SECONDS, async () => {
+		// 窗口与 `fetchHeroMeta` 同源（`metaWindow`），并且写进缓存键：两者必须是同一个桶。
+		const week = previousStatWeek(Date.now());
+	const data = await cached<LaneData>(`hero-lanes-v4:${week.startMs}`, LANE_TTL_SECONDS, async () => {
 		/*
 		 * 一个方向：五个号位各问一次，按**请求的号位**建表。
 		 *
 		 * 不能用行里的 `position`：批量查询时那个字段永远是 `POSITION_1`（见 `buildLaneSlice`）。
 		 * 缓存键跟着口径升级：`hero-lanes` 是那份落错号位的表，`v2` 的分母是没记结果的
-		 * `matchCount`（把净对线稀释了约 13%），`v3` 才是「记了结果的场次」。
+		 * `matchCount`（把净对线稀释了约 13%），`v3` 才是「记了结果的场次」，
+		 * `v4` 起把统计窗口一起写进键（不传 week 拿到的是当前那个没走完的桶）。
 		 */
 		const collect = async (isWith: boolean): Promise<HeroLanes> => {
 			const out: HeroLanes = {};
@@ -914,6 +922,7 @@ export function fetchHeroLanes(): Promise<LaneData | null> {
 				const one = await query<{ heroStats: { laneOutcome: RawLaneRow[] | null } }>(LANE_DOCUMENT, {
 					isWith,
 					positions: [`POSITION_${position}`],
+					week: weekAnchorSeconds(week),
 				});
 				const list = one?.heroStats?.laneOutcome;
 				if (!list) return {};
@@ -926,7 +935,7 @@ export function fetchHeroLanes(): Promise<LaneData | null> {
 		const withLanes = await collect(true);
 		if (Object.keys(vs).length === 0 || Object.keys(withLanes).length === 0) return null;
 		return { vs, with: withLanes };
-	});
+	}, ['hero-lanes-v3']);
 		if (!data) {
 			await reportSource('stratz-lanes', 'STRATZ 线上对位', 'empty', '请求未拿到数据（限流、挑战页或接口异常）');
 			return null;

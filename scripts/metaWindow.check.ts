@@ -118,6 +118,24 @@ const shanghai = (iso: string): number => Date.parse(`${iso}+08:00`);
 		/`hero-bans:\$\{windowKey\}`, HERO_META_TTL_SECONDS,[\s\S]{0,600}?\}, \['hero-bans'\]\)/,
 		'hero-bans 的版本化键要留旧键兜底',
 	);
+
+	/*
+	 * 线上对位也要显式要上一桶。
+	 *
+	 * 它的查询原先根本没有 `week`，而界面、依据与提示词都写着「上一个完整统计周」，
+	 * `draft-lanes.json` 甚至导出 `windowDays: 7`——于是同一个页面上的净对线与号位胜率是两个窗口。
+	 * 2026-09-29 实测：不传 week 的 `laneOutcome` 给的是当前那个没走完的桶（一号位全池 689,028 场），
+	 * 传上一桶的锚点才是完整周（1,121,659 场 / 10,250 行）。
+	 */
+	assert.match(
+		stratz,
+		/laneOutcome\(isWith: \$isWith, bracketBasicIds: \[\$\{HERO_META_BRACKET\}\], positionIds: \$positions, week: \$week\)/,
+		'线上对位也要显式传 week：不传给的是当前那个没走完的桶',
+	);
+	assert.ok(
+		(stratz.match(/week: weekAnchorSeconds\(week\)/g) ?? []).length >= 2,
+		'stats 与 laneOutcome 两处要用同一个锚点',
+	);
 	ok('接线：版本提醒、被禁用数、stats 查询共用同一个窗口');
 }
 
