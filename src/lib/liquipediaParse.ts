@@ -1,6 +1,7 @@
 import type { EsportsMatch, LeagueTier } from '../data/types';
-// 只借类型：`playerHeroes` 引了 node:fs，而本模块要被纯 node 的自检直接 import（见文件头注释）。
-import type { PlayerHeroPool } from './playerHeroes.ts';
+// 只借类型，而且只从纯函数模块借：本模块要被纯 node 的自检直接 import（见文件头注释），
+// 所以不能指向 `playerHeroes.ts`——它引了 node:fs，且它自己也没有导出这个类型。
+import type { PlayerHeroPool } from './heroPool.ts';
 import { routeSlug } from './routeSlug.ts';
 
 /**
