@@ -86,19 +86,27 @@ const ok = (label: string): void => {
 	ok('虎牙列表：房间号取 profileRoom，字段归一');
 }
 
-// 4. 虎牙：热度里混着非数字字符时只取数字；状态不是 200 就是空
+// 4. 虎牙：热度按单位换算（不是把非数字字符删掉）；认不出来就当没有
 {
-	const rooms = parseHuyaCategory({
-		status: 200,
-		data: { datas: [{ profileRoom: '1', nick: 'a', totalCount: '1.2万' }] },
-	});
-	assert.equal(rooms[0]?.hot, 12, 'totalCount 里的非数字要去掉（虎牙给的是带单位的串）');
+	const hot = (totalCount: unknown): number | undefined =>
+		parseHuyaCategory({ status: 200, data: { datas: [{ profileRoom: '1', nick: 'a', totalCount }] } })[0]?.hot;
+
+	// 实测缓存里就是这个形状（`.cache/roomlist/huya.json`：28317~53586）。
+	assert.equal(hot('47807'), 47807, '纯整数原样');
+	assert.equal(hot(47807), 47807, '上游偶尔给数字而不是字符串');
+	// 带单位时按万/亿换算：删掉非数字字符会得到 12，差一千倍且不会报错。
+	assert.equal(hot('1.2万'), 12_000, '「1.2万」是一万二，不是十二');
+	assert.equal(hot('3万'), 30_000);
+	assert.equal(hot('0'), undefined, '0 不写成热度');
+	assert.equal(hot('abc'), undefined, '认不出来就当没有热度，别猜');
+	assert.equal(hot(''), undefined);
+	assert.equal(hot(undefined), undefined);
 
 	assert.deepEqual(parseHuyaCategory({ status: 403, data: { datas: [{ profileRoom: '1', nick: 'a' }] } }), []);
 	assert.deepEqual(parseHuyaCategory({ status: 200 }), []);
 	assert.deepEqual(parseHuyaCategory({ status: 200, data: { datas: 'nonsense' } }), []);
 	assert.deepEqual(parseHuyaCategory(null), []);
-	ok('虎牙：热度归一，非 200 与坏形状返回空');
+	ok('虎牙：热度按单位换算，非 200 与坏形状返回空');
 }
 
 console.log(`roomList 全部断言通过（${cases} 组）`);

@@ -88,6 +88,24 @@ export function parseDouyuCategory(html: string): Omit<RoomRef, 'key' | 'source'
 	return rooms;
 }
 
+/**
+ * 虎牙给的热度（`totalCount`）。
+ *
+ * 它是**字符串**字段。实测缓存里是纯整数（28317~53586 这种，见 `.cache/roomlist/huya.json`），
+ * 但按非数字字符做减法（`.replace(/\D/g, '')`）有个不出声的坑：真带上「1.2万」这种写法时会
+ * 读成 12——差一千倍，数字看着还挺正常。所以按单位换算，认不出来就当没有热度。
+ *
+ * 热度只用来做同平台内的提示，不参与排序，所以"拿不到"比"拿错"划算。
+ */
+function huyaHot(raw: unknown): number | undefined {
+	const text = String(raw ?? '').trim();
+	const match = /^([\d.]+)\s*(万|亿)?/.exec(text);
+	if (!match) return undefined;
+	const base = Number(match[1]);
+	if (!Number.isFinite(base) || base <= 0) return undefined;
+	return Math.round(base * (match[2] === '亿' ? 100_000_000 : match[2] === '万' ? 10_000 : 1));
+}
+
 /** 虎牙分区列表解析。`profileRoom` 才是接口认的房间号。 */
 export function parseHuyaCategory(json: unknown): Omit<RoomRef, 'key' | 'source'>[] {
 	const root = json as { status?: unknown; data?: { datas?: Record<string, unknown>[] } } | null;
@@ -98,7 +116,7 @@ export function parseHuyaCategory(json: unknown): Omit<RoomRef, 'key' | 'source'
 		const name = String(row.nick ?? '').trim();
 		if (!roomId || !name) continue;
 		const title = String(row.roomName ?? '').trim();
-		const hot = Number(String(row.totalCount ?? '').replace(/\D/g, '')) || undefined;
+		const hot = huyaHot(row.totalCount);
 		const avatar = String(row.avatar180 ?? '').trim();
 		rooms.push({
 			platform: 'huya',
