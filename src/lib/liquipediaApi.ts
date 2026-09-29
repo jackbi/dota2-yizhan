@@ -203,7 +203,7 @@ async function loadEventMatches(pagePaths: string[]): Promise<EsportsMatch[]> {
 			carry();
 			continue;
 		}
-			next[pagePath] = { v: CACHE_VERSION, at: Date.now(), matches };
+		next[pagePath] = { v: CACHE_VERSION, at: Date.now(), matches };
 		out.push(...matches);
 	}
 
