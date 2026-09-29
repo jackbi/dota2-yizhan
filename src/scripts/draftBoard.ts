@@ -1470,8 +1470,15 @@ if (data) {
 			 * 换了地址 / key / 模型：台头会立刻改成新状态，但上一份建议还是按旧配置问出来的，
 			 * 再挂在面板上就是"假装有 AI"（清掉 key 之后尤其明显：上面写「未配置模型」，
 			 * 下面还列着上一个模型的 picks 与「AI：…」摘要）。只改测试结果不算换配置，那份建议仍然有效。
+			 *
+			 * 复盘面板那段文字（`verdictAi`）是同一件事的另一半，得一起撤；它不挂在 `renderAll()`
+			 * 里，还要专门重画一次，否则文字会留在原地。
 			 */
-			if (!sameAiTarget(next, ai)) aiResult = null;
+			if (!sameAiTarget(next, ai)) {
+				aiResult = null;
+				verdictAi = null;
+				renderVerdict();
+			}
 			ai = next;
 			shape = shapeFor(ai.baseUrl);
 			aiSide = isConfigured(ai) && aiSidePref;
