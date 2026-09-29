@@ -172,6 +172,15 @@ if (data) {
 	let query = '';
 	let adviceOpen = false;
 	let aiResult: { picks: { heroId: number; position: number; reason: string; risk: string }[]; summary: string } | null = null;
+	/**
+	 * 模型配置的世代号：每次「换了目标」（地址 / key / 模型）加一。
+	 *
+	 * 请求是异步的，最长能跑 30 秒。这中间另一个标签页保存了新配置时，`refreshAiConfig` 只会
+	 * 清掉**当时**已经落在面板上的文字；在飞的那一份回来照样会把自己写回去，于是台头写着
+	 * 「未配置模型」、下面却挂着上一个模型的分析——正是这次修复要挡的那一幕。
+	 * 所以发请求前记下世代号，回来先对一眼，变了就整份丢掉。
+	 */
+	let aiGeneration = 0;
 	/** AI 正在替对面决策，避免自动出招被重复触发。 */
 	let aiBusy = false;
 	/** 自动出招的定时器；撤销、清空、关掉开关都要能取消它。 */
@@ -872,9 +881,12 @@ if (data) {
 
 			if (verdictStatus) verdictStatus.textContent = '模型分析中…';
 			if (verdictBtn) verdictBtn.disabled = true;
+			const generation = aiGeneration;
 			try {
 				const messages = buildVerdictMessages({ verdict: built, data: draft, selfTeam: ourTeam, foeTeam: theirTeam, foeForm });
 				const reply = await requestChat(messages, VERDICT_MAX_TOKENS);
+				// 配置在这 30 秒里被别的标签页改了：这份回复是按旧配置问的，不能再写回面板。
+				if (generation !== aiGeneration) return;
 				if (!reply.ok) {
 					if (verdictStatus) {
 						verdictStatus.textContent = reply.status
@@ -1475,6 +1487,7 @@ if (data) {
 			 * 里，还要专门重画一次，否则文字会留在原地。
 			 */
 			if (!sameAiTarget(next, ai)) {
+				aiGeneration += 1;
 				aiResult = null;
 				verdictAi = null;
 				renderVerdict();
@@ -1568,8 +1581,11 @@ if (data) {
 			});
 			setStatus('模型思考中…');
 			if (adviceAi) adviceAi.disabled = true;
+			const generation = aiGeneration;
 			try {
 				const reply = await requestChat(messages);
+				// 与复盘那条同理：配置在飞行中被改了，这份按旧配置问来的解释不能挂到面板上。
+				if (generation !== aiGeneration) return;
 				if (!reply.ok) {
 					setStatus(
 						reply.status === 0

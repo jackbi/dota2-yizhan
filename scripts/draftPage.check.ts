@@ -115,10 +115,21 @@ assert.match(script, /event\.key === AI_STORE_KEY/, '另一个标签页改了配
 assert.match(script, /if \(sameAiConfig\(next, ai\)\) return;/, '重读配置后要按全部字段判等（含上次测试结果）');
 // 换了地址/key/模型要把**两处**模型产物都撤掉：建议面板（aiResult）与复盘文字（verdictAi）。
 // 上一版只撤了前者，复盘面板还挂着上个模型的文字，而 renderAll() 不会重画它。
-assert.match(
-	script,
-	/if \(!sameAiTarget\(next, ai\)\) \{\s*aiResult = null;\s*verdictAi = null;\s*renderVerdict\(\);/,
-	'换了地址/key/模型要撤掉上一份 AI 建议与复盘文字，并重画复盘面板',
+	assert.match(
+		script,
+		/if \(!sameAiTarget\(next, ai\)\) \{\s*aiGeneration \+= 1;\s*aiResult = null;\s*verdictAi = null;\s*renderVerdict\(\);/,
+		'换了地址/key/模型要撤掉上一份 AI 建议与复盘文字、重画复盘面板，并推进配置世代号',
+	);
+/*
+ * 只撤"当时已经落在面板上"的那份还不够：请求是异步的，最长能跑 30 秒。这中间另一个标签页
+ * 保存了新配置时，在飞的那一份回来照样会把自己写回去——台头写「未配置模型」、下面挂着上一个
+ * 模型的分析。所以两处 await 之后都要先对一眼世代号。
+ */
+	assert.match(script, /let aiGeneration = 0;/, '要有配置世代号');
+	assert.equal(
+		(script.match(/if \(generation !== aiGeneration\) return;/g) ?? []).length,
+		2,
+	'复盘与建议两条 await 之后都要丢弃过期回复',
 );
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
 assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
