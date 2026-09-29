@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { OFFLINE_STALE_MAX_MS, STALE_MAX_MS, readCachedStatus, usableStale } from '../src/lib/liveApi.ts';
+import { OFFLINE_STALE_MAX_MS, STALE_MAX_MS, readCachedStatus, sourceSummary, usableStale } from '../src/lib/liveApi.ts';
 
 /**
  * `src/lib/liveApi.ts` 旧缓存兜底那一段的自检（只碰文件，不联网）。
@@ -75,6 +75,29 @@ const live: import('../src/data/types.ts').LiveStatus = { state: 'live', ownerUn
 	assert.equal(await readCachedStatus(broken), null, '半截 JSON 当没有缓存，不能让整轮构建挂在这里');
 	assert.equal(await readCachedStatus(path.join(dir, 'nope.json')), null, '文件不存在也一样');
 	ok('真文件：按 mtime 算年龄，坏文件与缺失都当没有');
+}
+
+// 4. 构建汇总那行：一份缓存都没读到时不许写"吃缓存"，全未知时这一源就是没拿到
+{
+	const allNetwork = sourceSummary(['network', 'network'], 2);
+	assert.equal(allNetwork.status, 'fresh');
+	assert.ok(allNetwork.text.includes('本轮联网 2 个') && allNetwork.text.includes('吃缓存 0 个'), allNetwork.text);
+	assert.ok(!allNetwork.text.includes('没取到'), '没有"没取到"的房间就别提它');
+
+	const mixed = sourceSummary(['network', 'cache'], 2);
+	assert.equal(mixed.status, 'cache', '有房间吃了缓存，整源就不能写 fresh');
+
+	// 一份缓存都没读到（离线构建且没有缓存 / 上游没响应且没有缓存）：这些是 'none'，
+	// 原先被算进 'cache'，摘要于是印出"吃缓存 11 个"——而一份缓存都没读。
+	const noCache = sourceSummary(['none', 'none', 'none'], 0);
+	assert.equal(noCache.status, 'empty', '一个能用的状态都没有就是没拿到');
+	assert.ok(noCache.text.includes('吃缓存 0 个'), `没读到缓存就不能写吃缓存：${noCache.text}`);
+	assert.ok(noCache.text.includes('没取到 3 个'), noCache.text);
+
+	const partial = sourceSummary(['network', 'cache', 'none'], 2);
+	assert.equal(partial.status, 'cache');
+	assert.ok(partial.text.includes('没取到 1 个'), partial.text);
+	ok('汇总：没读到缓存不算吃缓存，全未知算没拿到');
 }
 
 console.log(`liveApi 全部断言通过（${cases} 组）`);

@@ -228,7 +228,32 @@ function unknownStatus(note: string): LiveStatus {
  */
 interface LoadedRoom {
 	status: LiveStatus;
-	source: 'network' | 'cache';
+	/** `none` = 既没联网拿到、也没有缓存可用（离线构建且没有缓存、上游没响应且没有缓存）。 */
+	source: RoomSource;
+}
+
+/** 一个房间的状态是从哪来的。 */
+export type RoomSource = 'network' | 'cache' | 'none';
+
+/**
+ * 构建汇总那一行里的"怎么来的"。
+ *
+ * 单独抽出来是为了能自检——原先这段逻辑 inline 在 `loadAll` 里，只能靠肉眼看：
+ *
+ * - `usable === 0` 时这一源就是**没拿到**（全房间状态未知），不能因为"发过请求"写 fresh；
+ * - 有房间吃了缓存就写 `cache`（那份状态是旧构建的结论）；
+ * - 「没有缓存可用」那批**不算吃缓存**：一份缓存都没读到却印出"吃缓存 11 个"就是假账。
+ */
+export function sourceSummary(
+	sources: readonly RoomSource[],
+	usable: number,
+): { status: 'fresh' | 'cache' | 'empty'; text: string } {
+	const network = sources.filter((source) => source === 'network').length;
+	const cache = sources.filter((source) => source === 'cache').length;
+	const none = sources.filter((source) => source === 'none').length;
+	const parts = [`本轮联网 ${network} 个`, `吃缓存 ${cache} 个`];
+	if (none > 0) parts.push(`没取到 ${none} 个`);
+	return { status: usable === 0 ? 'empty' : cache > 0 ? 'cache' : 'fresh', text: parts.join('、') };
 }
 
 async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
@@ -242,11 +267,11 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
 		if (stale) return { status: stale, source: 'cache' };
 		// 「没有缓存」与「有缓存但太旧」分开说：后者说明缓存策略没问题，只是太久没构建过。
 		const why = hit ? `离线构建，缓存超过 ${OFFLINE_STALE_MAX_MS / 86_400_000} 天没用上` : '离线构建且没有缓存';
-		return { status: unknownStatus(why), source: 'cache' };
+		return { status: unknownStatus(why), source: 'none' };
 	}
 
 	const url = apiUrl(room.platform, room.roomId);
-	if (!url) return { status: unknownStatus('暂不支持该平台'), source: 'cache' };
+	if (!url) return { status: unknownStatus('暂不支持该平台'), source: 'none' };
 
 	const text = await fetchText(url);
 	if (text) {
@@ -299,7 +324,7 @@ async function loadRoom(room: (typeof OB_ROOMS)[number]): Promise<LoadedRoom> {
 	}
 
 	const stale = usableStale(await readCachedStatus(file), STALE_MAX_MS);
-	return { status: stale ?? unknownStatus('平台接口没有响应'), source: stale ? 'cache' : 'network' };
+	return { status: stale ?? unknownStatus('平台接口没有响应'), source: stale ? 'cache' : 'none' };
 }
 
 /**
@@ -334,13 +359,11 @@ export function fetchLiveSnapshot(): Promise<LiveSnapshot> {
 async function loadAll(): Promise<LiveSnapshot> {
 	const statuses: Record<string, LiveStatus> = {};
 	// 按房间记来源：进程级的抓取次数分不出"这一格是抓的"还是"吃了旧缓存兜底"。
-	let fromNetwork = 0;
-	let fromCache = 0;
+	const sources: RoomSource[] = [];
 	await mapLimit(OB_ROOMS, CONCURRENCY, async (room) => {
 		const loaded = await loadRoom(room);
 		statuses[room.key] = loaded.status;
-		if (loaded.source === 'network') fromNetwork += 1;
-		else fromCache += 1;
+		sources.push(loaded.source);
 	});
 
 	const counts = new Map<LiveState, number>();
@@ -358,13 +381,13 @@ async function loadAll(): Promise<LiveSnapshot> {
 	// 「拿没拿到」看的是**能用**的状态有几个：全是「状态未知」时这一源就是没拿到，
 	// 不能因为"这一轮确实发过请求"就写成 fresh（上游挂掉那一轮正是这个形状）。
 	const usable = (counts.get('live') ?? 0) + (counts.get('replay') ?? 0) + (counts.get('offline') ?? 0) + (counts.get('closed') ?? 0);
+	const summary = sourceSummary(sources, usable);
 
 	await reportSource(
 		'live',
 		'直播开播状态',
-		// 有一个房间吃了缓存就写 cache：那份状态是旧构建的结论，不该按"联网抓取"记。
-		usable === 0 ? 'empty' : fromCache > 0 ? 'cache' : 'fresh',
-		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}（本轮联网 ${fromNetwork} 个、吃缓存 ${fromCache} 个）`,
+		summary.status,
+		`${OB_ROOMS.length} 个房间：${parts.join('、') || '无数据'}（${summary.text}）`,
 	);
 
 	return { at: new Date().toISOString(), statuses };
