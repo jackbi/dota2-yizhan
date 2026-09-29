@@ -185,7 +185,7 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 
 		<header class="sticky top-0 z-50 border-b border-line bg-ink/80 backdrop-blur-xl">
 			<div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-				<a href="/" class="group flex items-center gap-2.5">
+				<a href="/" class="group flex shrink-0 items-center gap-2.5 whitespace-nowrap">
 					{/*
 						站点 logo 是 public/logo.webp：由母版 src/assets/logo.png 转出来的 128px WebP（4.7 KB），
 						换 logo 跑 scripts/logo-assets.sh。母版刻意不放 public/，否则那张 1254px 原图会跟着发布产物走。
@@ -202,6 +202,18 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 					<span class="font-display text-lg tracking-wide">DOTA2 驿站</span>
 				</a>
 
+				{/*
+					导航项一律 `whitespace-nowrap`，横向内边距在 lg 收窄、到 xl 才放开。
+
+					原因是实测出来的一件旧事：1024px（lg 断点）下这一排本来就装不下——页头里
+					品牌、导航、右侧那一组（源码 / 赞赏 / AI 设置 / 登录）加起来比容器宽，而 flex
+					默认是**压缩子项**而不是溢出，于是每个导航项被压到 49px、文字全部折成两行，
+					看起来像"导航坏了"。把「战队」加进来之前就是这样，加它只是又紧了 24px。
+
+					两处改动各自解决一半：`whitespace-nowrap` 保证**再怎么挤也不会折行**，
+					收窄内边距则是把这一排真的放进 1024px。改完要在 1024 下复测，
+					判据是每条链接高度 ≤ 40px 且 `scrollWidth <= clientWidth`。
+				*/}
 				<nav class="hidden items-center gap-1 lg:flex" aria-label="主导航">
 					{
 						NAV.map((item) => {
@@ -211,7 +223,7 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 									href={item.href}
 									aria-current={active ? 'page' : undefined}
 									class:list={[
-										'rounded-md px-3 py-2 text-sm font-medium transition',
+										'whitespace-nowrap rounded-md px-2 py-2 text-sm font-medium transition xl:px-3',
 										active ? 'bg-dota/15 text-dota-light' : 'text-muted hover:bg-surface-2 hover:text-cream',
 									]}
 								>
