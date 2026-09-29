@@ -5,8 +5,9 @@
 
 ## 社区热帖：来源与口径
 
-资讯页（`src/pages/news.astro`）有**五个**来源页签：官网新闻、Reddit 热帖（r/DotA2）、
-Reddit 赛事讨论（r/compDota2）、NGA 热帖、虎扑新帖。两个中文社区来源聚合在
+资讯页（`src/pages/news.astro`）有**六条**来源页签：官网新闻、完美世界电竞、
+Reddit 热帖（r/DotA2）、Reddit 赛事讨论（r/compDota2）、NGA 热帖、虎扑新帖
+（条数以页面里 `SOURCES` 那份清单为准，别在这里写死一个数）。两个中文社区来源聚合在
 `src/lib/communityFeed.ts`：NGA 走 `src/lib/ngaApi.ts`（APP 接口免鉴权返回 JSON），
 虎扑走 `src/lib/hupuApi.ts`（`bbs.hupu.com/dota2` 直连就是服务端渲染好的 HTML）。
 「社区」原本是独立一页（`/community`），并进资讯页之后那条路由只剩一个 301
