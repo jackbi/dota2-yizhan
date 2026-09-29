@@ -88,7 +88,13 @@ function writePoolCache(cache: PoolCache): Promise<void> {
 	return writeCacheFile(CACHE_FILE, JSON.stringify(cache));
 }
 
-/** 当前版本：官方更新日志里最新的那一条。拿不到就是空版本 + 0 起点，调用方会退化成整窗口。 */
+/**
+ * 当前版本：官方更新日志里最新的那一条。
+ *
+ * 拿不到就是**空版本 + 0 起点**——那不表示"版本从 1970 年开始"，而是"这一轮没有版本信息"：
+ * 取数只取回退窗口，统计口径标成跨版本（`summarizeHeroPool` 里那条判据），页面上于是写
+ * 「近 90 天」，而不是拼出一个空的「 版本」。
+ */
 async function currentPatch(): Promise<{ version: string; startTime: number }> {
 	const updates = await fetchPatchUpdates().catch(() => []);
 	const latest = updates[0];
@@ -122,8 +128,15 @@ export async function loadPlayerHeroPools(accountIds: number[]): Promise<Map<num
 
 	const patch = await currentPatch();
 	const nowSec = Math.floor(Date.now() / 1000);
-	// 一次取够：既覆盖本版本，也覆盖回退窗口。版本比窗口还老时按版本起点取。
-	const since = Math.min(patch.startTime, nowSec - FALLBACK_WINDOW_DAYS * 24 * 3600);
+	/*
+	 * 一次取够：既覆盖本版本，也覆盖回退窗口。版本比窗口还老时按版本起点取。
+	 *
+	 * 没有版本信息时（`patch.startTime` 是 0）只取窗口——照 `Math.min` 一路取下去会取到
+	 * 1970 年，而那种情况本来就会被标成「近 90 天」（见 `summarizeHeroPool`），
+	 * 取多了只是白拿一批用不上的对局。
+	 */
+	const windowStart = nowSec - FALLBACK_WINDOW_DAYS * 24 * 3600;
+	const since = patch.startTime > 0 ? Math.min(patch.startTime, windowStart) : windowStart;
 
 	const cache = await readPoolCache();
 	const next: PoolCache = {};

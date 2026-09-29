@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import type { PlayerMatchRow } from '../src/lib/heroPool.ts';
 import { summarizeHeroPool } from '../src/lib/heroPool.ts';
 
@@ -8,6 +9,8 @@ import { summarizeHeroPool } from '../src/lib/heroPool.ts';
  * 这块最容易悄悄错的是**版本口径**：本版本样本不够时要回退到更长的窗口，而回退之后
  * 必须如实标成跨版本——标错了页面上照样显示得好好的，只是那个名单其实不是本版本的。
  * 第二条是英雄门槛：只打过一场的英雄上榜就是噪音，而这个错读者是能感觉到的（"这也算擅长？"）。
+ * 第三条是「没有版本信息」那一档——它同样只表现为页面上多一个「 版本」的空标签。
+ * 最后钉一下页面接线：战队页只该本地化它真正要画的那几个图标（多取会把整套图标拷进 `dist/`）。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/playerHeroes.check.ts`）。
  */
@@ -87,6 +90,30 @@ function games(heroId: number, count: number, wins: number, beforePatch = false)
 {
 	assert.equal(summarizeHeroPool([], OPTIONS), null);
 	ok('一场都没有：返回 null，页面不显示这一块');
+}
+
+// 5. 没有版本信息（更新日志那一源没取到）时，不能装作是本版本
+{
+	const pool = summarizeHeroPool([...games(1, 3, 2), ...games(2, 3, 1)], { patchStart: 0, version: '' });
+	assert.ok(pool);
+	assert.equal(pool.scope, 'window', '`patchStart` 为 0 是"没有版本信息"，不是"版本从 1970 年开始"');
+	assert.equal(pool.games, 6, '没有版本边界时样本全算窗口');
+	// 页面上「7.41f 版本」/「近 90 天」这两个标签是照 `scope` 写的：
+	// 标成 patch 而版本号是空串，渲染出来就是「 版本」。
+	ok('没有版本信息：口径标成跨版本，标签才写得准');
+}
+
+// 6. 接线：`/teams/<队>` 只本地化这一页真要画的图标
+{
+	const page = readFileSync(new URL('../src/pages/teams/[id].astro', import.meta.url), 'utf8');
+	assert.doesNotMatch(
+		page,
+		/heroes:\s*\[\.\.\.heroById\.values\(\)\]/,
+		'不能把整份英雄列表交给 localizePatchIcons：那会把 127 张图标全量拉回来、并拷进 dist',
+	);
+	assert.match(page, /localizePatchIcons\(\{[^}]*poolHeroes/s, '图标要按名单里实际出现的英雄取');
+	assert.match(page, /poolHeroes\.length > 0/, '守卫要看"这一页有没有英雄"，不是"英雄列表拿没拿到"');
+	ok('接线：战队页只取本页用到的英雄图标');
 }
 
 console.log(`playerHeroes 全部断言通过（${cases} 组）`);

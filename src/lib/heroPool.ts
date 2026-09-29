@@ -20,7 +20,7 @@ export interface PlayerHeroStat {
 }
 
 export interface PlayerHeroPool {
-	/** `patch`：样本全在当前版本内；`window`：回退了，跨版本。 */
+	/** `patch`：样本全在当前版本内；`window`：回退了，跨版本（含"压根没有版本信息"那一档）。 */
 	scope: 'patch' | 'window';
 	/** 当前版本号（`7.41f`），页面上要标出来。 */
 	version: string;
@@ -42,12 +42,15 @@ export interface PlayerMatchRow {
 /**
  * 挑招牌英雄。
  *
- * 两条判据，各自对应界面上的一句话：
+ * 三条判据，各自对应界面上的一句话：
  *
  * 1. **本版本优先**：样本 ≥ `MIN_PATCH_GAMES` 就只算本版本，否则回退到整个窗口；
- * 2. **口径如实**：选中的样本里只要有一场在版本之前，`scope` 就是 `window`——
- *    页面上那两个标签（「7.41f 版本」/「近 90 天」）就是照它写的，标错了页面照样好看，
- *    只是那个名单其实不是本版本的。
+ * 2. **口径如实**：选中的样本里只要有一场在版本之前，`scope` 就是 `window`；
+ * 3. **没有版本信息就不装**：`patchStart` 为 0（更新日志那一源没取到）时一律按 `window` 算，
+ *    页面标「近 90 天」，不拼一个空的版本号出来。
+ *
+ * 第 2、3 条都是为了让页面上那两个标签（「7.41f 版本」/「近 90 天」）说得准——
+ * 标签是照 `scope` 写的，标错了页面照样好看，只是那个名单其实不是它说的口径。
  *
  * 返回 null 表示"没有可说的"：一场没打、或者每个英雄都只打过一场。
  */
@@ -56,9 +59,16 @@ export function summarizeHeroPool(
 	options: { patchStart: number; version: string },
 ): PlayerHeroPool | null {
 	if (rows.length === 0) return null;
-	const inPatch = rows.filter((row) => row.startTime >= options.patchStart);
+	/*
+	 * `patchStart` 为 0 是**调用方没拿到版本信息**，不是"版本从 1970 年开始"。那种情况下
+	 * 「每一场都在本版本内」是句废话，所以干脆不进本版本那条路：样本全算窗口，口径标 `window`。
+	 * 实测过不这么分的后果——标签会渲染成「 版本」（版本号是空串）。
+	 */
+	const hasPatch = Number.isFinite(options.patchStart) && options.patchStart > 0;
+	const inPatch = hasPatch ? rows.filter((row) => row.startTime >= options.patchStart) : [];
 	const chosen = inPatch.length >= MIN_PATCH_GAMES ? inPatch : rows;
-	const scope: PlayerHeroPool['scope'] = chosen.some((row) => row.startTime < options.patchStart) ? 'window' : 'patch';
+	const scope: PlayerHeroPool['scope'] =
+		!hasPatch || chosen.some((row) => row.startTime < options.patchStart) ? 'window' : 'patch';
 
 	const perHero = new Map<number, { games: number; wins: number }>();
 	for (const row of chosen) {

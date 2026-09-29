@@ -65,13 +65,19 @@ try {
 	// 拿不到就退化成"没有招牌英雄"，下面两处都会自然跳过。
 }
 
+/*
+ * 只取**这一页真要画的那几个**图标。以前这里传的是 `heroById` 的全量（整份英雄列表），
+ * 后果不只是多算几步：`localizeImages()` 命中也会把 mtime 刷成当前时间，而构建末尾的
+ * `publishImages()` 正是按 mtime 判断"本轮用到过"——于是每张战队页都把 127 张图标全量
+ * 拷进 `dist/patch-heroes/`，连一个英雄都不显示的队伍（没有名单）也不例外。
+ * 判据本来就算好了，用它。
+ */
+const poolHeroes = poolHeroIds.flatMap((heroId) => {
+	const hero = heroById.get(heroId);
+	return hero ? [{ key: hero.key, name: hero.name }] : [];
+});
 const heroIcons =
-	heroById.size > 0
-		? await localizePatchIcons({
-				heroes: [...heroById.values()].map((hero) => ({ key: hero.key, name: hero.name })),
-				items: [],
-			})
-		: new Map<string, string>();
+	poolHeroes.length > 0 ? await localizePatchIcons({ heroes: poolHeroes, items: [] }) : new Map<string, string>();
 
 /** 一位选手的招牌英雄（名字 + 图标都备好）。英雄列表拿不到时返回空数组。 */
 function heroChips(member: RosterMember): { name: string; icon?: string; games: number; wins: number }[] {
