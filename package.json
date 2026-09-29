@@ -1,7 +1,7 @@
 {
   "name": "dota2-yizhan",
   "type": "module",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "license": "Apache-2.0",
   "private": true,
   "engines": {
