@@ -1,4 +1,4 @@
-import type { EsportsMatch } from '../data/types';
+import type { EsportsMatch, LeagueTier } from '../data/types';
 import { routeSlug } from './routeSlug.ts';
 
 /**
@@ -87,6 +87,47 @@ export function eventPathOf(pagePath: string): string {
 	const last = segments.at(-1)?.toLowerCase() ?? '';
 	if (segments.length > 2 && STAGE_SEGMENTS.has(last)) return segments.slice(0, -1).join('/');
 	return pagePath;
+}
+
+/** 一届赛事的档位。`showmatch` 与档位并存，不是二选一（见下）。 */
+export interface LeagueTierInfo {
+	tier: LeagueTier;
+	showmatch?: boolean;
+}
+
+/**
+ * 赛事页 Infobox 里的 `Liquipedia Tier` 一行。
+ *
+ * 取渲染后的 HTML 而不是 wikitext，是因为我们抓的就是渲染结果（`action=parse` 的 text）——
+ * 同一份字节里既有对阵也有档位，不用为它多发一次请求。
+ *
+ * **一个坑：阶段子页上没有这一行。** 实测 `PGL/Wallachia/9/Group_Stage` 没有 Infobox
+ * （档位在父页面 `PGL/Wallachia/9` 上），而我们的 `sourceUrl` 恰恰常常指向阶段子页，
+ * 所以调用方要按 `eventPathOf()` 归到根页面再去取，别拿子页的 HTML 硬解析。
+ *
+ * **另一个坑：档位与"表演赛"是两个字段。** Liquipedia 的 wikitext 是
+ * `liquipediatier=3` + `liquipediatiertype=showmatch` 两条，渲染出来是
+ * `Showmatch (Tier 3)`——也就是说表演赛**仍然有正式档位**，不是"没有档位"。
+ * 所以这里两个都读出来，由调用方决定怎么用（一线队只看档位）。
+ *
+ * 认不出的值返回 undefined（页面不显示档位），不猜。实测 Liquipedia 用的是 1–4。
+ */
+const TIER_CELL_RE = /Liquipedia Tier:?<\/div>\s*<div>([\s\S]*?)<\/div>/;
+
+export function parseLeagueTier(html: string): LeagueTierInfo | undefined {
+	const cell = html.match(TIER_CELL_RE)?.[1];
+	if (!cell) return undefined;
+	const text = cell
+		// 去掉标签之后只剩文字，`title="Tier 1 Tournaments"` 这类属性也就不会误命中。
+		.replace(/<[^>]*>/g, ' ')
+		.replace(/&nbsp;|&#160;/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+	const numbered = text.match(/Tier\s*([1-4])\b/i);
+	if (!numbered) return undefined;
+	const tier = Number(numbered[1]) as LeagueTier;
+	// 有类型才带上这个键：这份对象会被缓存成 JSON，留一个 undefined 的键读写两轮形状就不一样了。
+	return /showmatch/i.test(text) ? { tier, showmatch: true } : { tier };
 }
 
 /**

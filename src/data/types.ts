@@ -174,6 +174,14 @@ export type DataSource = 'liquipedia' | 'opendota' | 'seed';
 /** postponed 表示延期/中断的对局；赛事层面的 completed 判定会忽略它。 */
 export type MatchStatus = 'live' | 'upcoming' | 'completed' | 'postponed';
 
+/**
+ * Liquipedia 给赛事定的档位，1 最高。
+ *
+ * 站点用它来回答"这支队算不算一线队"（见 `lib/leagueTier.ts`）——Dota 2 没有升降级分区、
+ * DPC 也停了，赛事档位是唯一有权威来源、又能自动拿到的层级信息。
+ */
+export type LeagueTier = 1 | 2 | 3 | 4;
+
 export interface TeamRef {
 	id: string;
 	name: string;
@@ -213,6 +221,14 @@ export interface EsportsEvent {
 	source: DataSource;
 	/** 数据源里对应的页面地址，用于署名回链。 */
 	sourceUrl?: string;
+	/** Liquipedia 的档位；取不到时缺省，页面不显示档位徽章。 */
+	tier?: LeagueTier;
+	/**
+	 * 表演赛。**它同时仍有正式档位**（Liquipedia 是 `liquipediatier` 与 `liquipediatiertype`
+	 * 两个字段，实测 BetBoom Streamers Battle 15 是 `tier=3` + `type=showmatch`），所以两者分开放：
+	 * 算不算一线队只看档位，这个标记只是让读者知道那不是一场正式比赛。
+	 */
+	showmatch?: boolean;
 }
 
 export interface DataSourceStatus {

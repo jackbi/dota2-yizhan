@@ -413,6 +413,41 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 要修得走战队页那条线（那里的 Infobox 同时给 `image=` 与 `imagedark=`），或者直接用 STRATZ 按队伍 id
 给的队标——两件事都要先把队伍 slug 映射到 Valve 队伍 id。
 
+### 赛事档位，以及「一线队」是怎么定的
+
+Liquipedia 会给每届赛事定档，Infobox 上渲染成 `Liquipedia Tier: Tier 2` 这样一行。
+解析在 `src/lib/liquipediaParse.ts` 的 `parseLeagueTier`，**不用多发请求**——我们为了补全对阵
+抓的就是那份渲染后的 HTML，档位就在同一份字节里。
+
+**Dota 2 没有官方的一线队名单**：没有升降级分区，DPC 也停了；Liquipedia 的档位只标在赛事上
+（`Category:Tier 1 Teams` 是空的，战队门户页是按赛区平铺的字母序名单）。所以站点的口径是
+从赛事反推队伍：**窗口内打过 T1 或 T2 赛事的队伍算一线队**（`src/lib/leagueTier.ts`，
+判据有 `scripts/leagueTier.check.ts` 守着）。这是近似——打进 T1 预选赛的队伍会被算进来
+（实测 Level UP 就是），休赛期没打 T1/T2 的强队会被漏掉。页面上把这句话写给了读者，
+而不是只挂一个「一线队」的牌子。
+
+**OpenDota 的队伍评分试过，不能用**：52 支里只匹配得到 24 支，而且排序明显失真——
+OG 1178 分，排在我们按档位算作三线的 PuckChamp（1265）后面；Team Liquid 1407 分低于
+PARIVISION 的 1507。别再往那个方向试。
+
+四个实测出来的坑：
+
+- **阶段子页上没有那一行**。`PGL/Wallachia/9/Group_Stage` 没有 Infobox，档位在父页面
+  `PGL/Wallachia/9` 上，而 `sourceUrl` 恰恰常常指向子页。所以 `fetchLiquipediaEventTiers()`
+  按 `eventPathOf()` 归到根页面再去取。
+- **档位与「表演赛」是两个字段**。wikitext 里是 `liquipediatier=3` 与
+  `liquipediatiertype=showmatch` 两条，渲染成 `Showmatch (Tier 3)`——表演赛**仍然有正式档位**，
+  不是"没有档位"。站内两个都存（`event.tier` 与 `event.showmatch`），但算不算一线队只看档位，
+  表演赛那一届整个跳过：那种比赛的参赛队是主播队，跟职业层级没关系。
+- **这条流要单独限速**。第一次跑就中了一招：5 个赛事的档位请求里 1 个没拿到页面（路径在输入里、
+  缓存里没有），那一届整轮没有徽章。两条流各自节流，对方看到的是两批加起来的频率，所以
+  档位这条用 2 秒间隔（比赛事页补全的 1.2 秒慢），并且失败重试一次。
+- **认不出的值不显示**。只认 `Tier 1`–`Tier 4`，其余（包括没抓到页面的）一律不挂徽章——
+  不猜一个默认档位。
+
+档位缓存一周（`.cache/liquipedia/tiers.json`）：Liquipedia 定档之后就不动了。取不到档位的
+赛事**不写缓存**，下一轮会重试。
+
 ## 对阵页的阵容：按小局取
 
 日历上的一条是**系列**（BO3/BO5），而 Valve 的每个比赛 id 只对应其中**一局**。所以对阵页

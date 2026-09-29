@@ -2,7 +2,13 @@ import path from 'node:path';
 import { seedEvents } from '../data/tournaments';
 import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
-import { LIQUIPEDIA_LABEL, fetchLiquipediaEventMatches, fetchLiquipediaMatches } from './liquipediaApi';
+import type { LeagueTierInfo } from './liquipediaParse';
+import {
+	LIQUIPEDIA_LABEL,
+	fetchLiquipediaEventMatches,
+	fetchLiquipediaEventTiers,
+	fetchLiquipediaMatches,
+} from './liquipediaApi';
 import { routeSlug } from './routeSlug';
 import { isPlaceholderLogo } from './teamLogoSource';
 import { localizeTeamLogos } from './teamLogos';
@@ -369,6 +375,8 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 	let calendarMatches: EsportsMatch[] = [];
 	let opendotaLive: EsportsMatch[] = [];
 	let proMatches: EsportsMatch[] = [];
+	/** 赛事 id → 档位。取不到就是空表，页面上不显示档位徽章。 */
+	const eventTiers = new Map<string, LeagueTierInfo>();
 
 	// `TOURNAMENTS_OFFLINE=1` 跳过所有网络请求，直接走缓存/兜底，
 	// 便于在无网络环境下构建，也用于验证降级链路。
@@ -398,6 +406,21 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 				calendarMatches = dedupeMatches([...calendarMatches, ...complete]);
 			} catch {
 				// 上游抖动：照旧用主表那份。
+			}
+
+			/*
+			 * 赛事档位。同样是上面那批页面，但**按赛事根页面取**——阶段子页上没有 Infobox
+			 * （实测 `PGL/Wallachia/9/Group_Stage` 就没有那一行），`fetchLiquipediaEventTiers`
+			 * 内部会归到根页面。
+			 *
+			 * 档位是附加信息：取不到就算了，日历与对阵照常展示，只是没有档位徽章。
+			 */
+			try {
+				const tiers = await fetchLiquipediaEventTiers(pages);
+				// 键统一成站内赛事 id，和 `parseMatchBlock` 里的 `eventId` 是同一条规则。
+				for (const [page, info] of tiers) eventTiers.set(routeSlug(page), info);
+			} catch {
+				// 同上，不影响日历。
 			}
 		}
 
@@ -445,8 +468,16 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 		};
 	}
 
+	const events = sortEvents(buildEvents(calendarMatches));
+	for (const event of events) {
+		const info = eventTiers.get(event.id);
+		if (!info) continue;
+		event.tier = info.tier;
+		if (info.showmatch) event.showmatch = true;
+	}
+
 	const bundle: TournamentsBundle = {
-		events: sortEvents(buildEvents(calendarMatches)),
+		events,
 		live: dedupeMatches([...calendarMatches.filter((m) => m.status === 'live'), ...opendotaLive]),
 		updatedAt,
 		degraded: !calendarFromPrimary,

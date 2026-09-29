@@ -23,6 +23,7 @@
 | `.cache/stratz/` | BP 与选手明细、一周英雄数据 | 1 小时 – 30 天 |
 | `.cache/translate/` | 机器翻译结果 | 永久 |
 | `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
+| `.cache/liquipedia/tiers.json` | 各届赛事的档位（Tier 1–4） | 7 天 |
 | `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
 | `.cache/avatars/` | 主播头像的字节（构建结束拷进 `dist/avatars/`） | 永久，30 天没用到就清理 |

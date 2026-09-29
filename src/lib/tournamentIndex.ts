@@ -1,4 +1,4 @@
-import type { EsportsEvent, EsportsMatch, MatchStatus, TeamRef } from '../data/types';
+import type { EsportsEvent, EsportsMatch, LeagueTier, MatchStatus, TeamRef } from '../data/types';
 import { getTournaments } from './tournamentsApi';
 
 /**
@@ -15,6 +15,9 @@ export interface TeamEventRef {
 	status: MatchStatus;
 	startTime: number;
 	endTime: number;
+	/** 这一届的档位；取不到时缺省。战队页靠它判断这支队算不算一线队。 */
+	tier?: LeagueTier;
+	showmatch?: boolean;
 }
 
 export interface TeamDetail {
@@ -60,7 +63,15 @@ async function buildIndex(): Promise<TournamentIndex> {
 		matches.set(match.id, match);
 
 		const eventRef: TeamEventRef | undefined = event
-			? { id: event.id, name: event.name, status: event.status, startTime: event.startTime, endTime: event.endTime }
+			? {
+					id: event.id,
+					name: event.name,
+					status: event.status,
+					startTime: event.startTime,
+					endTime: event.endTime,
+					tier: event.tier,
+					showmatch: event.showmatch,
+				}
 			: undefined;
 		const home = touchTeam(match.home, eventRef);
 		const away = touchTeam(match.away, eventRef);

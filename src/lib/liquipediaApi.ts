@@ -1,7 +1,8 @@
 import path from 'node:path';
 import type { EsportsMatch } from '../data/types';
 import { readCacheJson, writeCacheFile } from './buildCache';
-import { parseBracketMatches, parseMatches } from './liquipediaParse';
+import type { LeagueTierInfo } from './liquipediaParse';
+import { eventPathOf, parseBracketMatches, parseLeagueTier, parseMatches } from './liquipediaParse';
 
 /**
  * Liquipedia 赛事日历（MediaWiki `action=parse`）。
@@ -193,5 +194,113 @@ async function loadEventMatches(pagePaths: string[]): Promise<EsportsMatch[]> {
 	}
 
 	await writeEventCache(next);
+	return out;
+}
+
+/*
+ * ---- 赛事档位 --------------------------------------------------------------------
+ *
+ * 档位（Tier 1–4）在赛事页的 Infobox 里，用来回答"这支队算不算一线队"——
+ * 判据与理由见 `lib/leagueTier.ts`。
+ *
+ * **抓根页面，不抓阶段子页**：实测阶段子页上没有 Infobox（`PGL/Wallachia/9/Group_Stage`
+ * 就没有），而 `sourceUrl` 恰恰常常指向子页。所以这里统一按 `eventPathOf()` 归到根页面。
+ */
+
+const TIER_CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'tiers.json');
+/**
+ * 档位几乎不变（Liquipedia 定档之后就不动了），缓存给一周。
+ *
+ * 第一次引入这个字段时每届赛事多一次请求，之后就都是命中缓存——所以
+ * `EVENT_PAGE_GAP_MS` 那条节流也照旧用，不因为"反正只有一次"就把节奏放开。
+ */
+const TIER_TTL_SECONDS = 7 * 24 * 3600;
+/**
+ * 档位请求之间的间隔。**刻意比 `EVENT_PAGE_GAP_MS`（1.2s）长**：两条流各自节流，
+ * 赛事页补全那批刚跑完，这边紧接着又是一串，对方看到的是两批加起来的频率。
+ * 第一次跑就中过一招——5 个赛事里有 1 个在这一条流上没拿到页面（路径在输入里、缓存里没有），
+ * 赛事页上那届于是整轮没有档位徽章。
+ */
+const TIER_PAGE_GAP_MS = 2000;
+/**
+ * 取不到页面时再试一次。
+ *
+ * 失败**不写缓存**，所以下一轮本来就会补上——但"下一轮"对读者来说就是这一届赛事一直不显示
+ * 档位，而档位筛选里它还会被归到「其他」。多花一次请求换当场补上，划算。
+ */
+const TIER_FETCH_ATTEMPTS = 2;
+
+interface TierCacheEntry {
+	at: number;
+	/** 取到了页面、但页面上没有档位时也记一笔，免得每轮都白问一次。 */
+	tier?: LeagueTierInfo;
+}
+
+type TierCache = Record<string, TierCacheEntry>;
+
+async function readTierCache(): Promise<TierCache> {
+	const hit = await readCacheJson<TierCache>(TIER_CACHE_FILE, (value) => typeof value === 'object' && value !== null);
+	return hit?.value ?? {};
+}
+
+function writeTierCache(cache: TierCache): Promise<void> {
+	return writeCacheFile(TIER_CACHE_FILE, JSON.stringify(cache));
+}
+
+let eventTiersPromise: Promise<Map<string, LeagueTierInfo>> | null = null;
+
+/**
+ * 赛事档位，键是**赛事根页面路径**（如 `PGL/Wallachia/9`，阶段子页归到它）。
+ *
+ * 拿不到的赛事不会出现在返回值里——调用方据此不显示档位徽章，这不算故障。
+ * 页面数量与赛事页补全共用同一个上限（见 `MAX_EVENT_PAGES`）：都是在别人的重接口上花钱。
+ */
+export function fetchLiquipediaEventTiers(pagePaths: string[]): Promise<Map<string, LeagueTierInfo>> {
+	eventTiersPromise ??= loadEventTiers(pagePaths);
+	return eventTiersPromise;
+}
+
+async function loadEventTiers(pagePaths: string[]): Promise<Map<string, LeagueTierInfo>> {
+	const roots = [...new Set(pagePaths.map(eventPathOf))].filter(Boolean).slice(0, MAX_EVENT_PAGES);
+	const out = new Map<string, LeagueTierInfo>();
+	if (roots.length === 0) return out;
+
+	const cache = await readTierCache();
+	const next: TierCache = {};
+	let fetched = 0;
+
+	for (const root of roots) {
+		const cached = cache[root];
+		const carry = (): void => {
+			if (!cached) return;
+			next[root] = cached;
+			if (cached.tier) out.set(root, cached.tier);
+		};
+
+		if (cached && Date.now() - cached.at < TIER_TTL_SECONDS * 1000) {
+			carry();
+			continue;
+		}
+		if (OFFLINE) {
+			carry();
+			continue;
+		}
+		let html: string | null = null;
+		for (let attempt = 0; attempt < TIER_FETCH_ATTEMPTS && !html; attempt += 1) {
+			// 第一次请求起就等（`fetched` 计数跨赛事累加），重试也照等。
+			if (fetched > 0) await sleep(TIER_PAGE_GAP_MS);
+			fetched += 1;
+			html = await fetchPage(root);
+		}
+		if (!html) {
+			carry();
+			continue;
+		}
+		const tier = parseLeagueTier(html);
+		next[root] = { at: Date.now(), tier };
+		if (tier) out.set(root, tier);
+	}
+
+	await writeTierCache(next);
 	return out;
 }

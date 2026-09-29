@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parseBracketMatches, parseMatches } from '../src/lib/liquipediaParse.ts';
+import { parseBracketMatches, parseLeagueTier, parseMatches } from '../src/lib/liquipediaParse.ts';
 
 /**
  * Liquipedia 赛程解析的自检。
@@ -66,4 +66,24 @@ assert.deepEqual([bracket[0]?.home.score, bracket[0]?.away.score], [1, 2]);
 assert.equal(bracket[0]?.status, 'completed');
 assert.equal(bracket[0]?.eventId, 'pgl-wallachia-9');
 
-console.log('liquipedia.check: 赛程解析 4 组用例通过');
+/*
+ * 档位：`Liquipedia Tier` 那一行。夹具照抄实测到的两种写法——
+ * 正式赛事是一个带链接的 `Tier N`，表演赛会先写类型再在括号里给档位（两个字段）。
+ */
+const TIER_T1 = '<div class=""><div class="infobox-cell-2 infobox-description">Liquipedia Tier:</div><div><a href="/dota2/Tier_1_Tournaments" title="Tier 1 Tournaments">Tier 1</a></div></div>';
+const TIER_SHOWMATCH =
+	'<div class=""><div class="infobox-cell-2 infobox-description">Liquipedia Tier:</div><div><a href="/dota2/Show_Matches" title="Show Matches">Showmatch</a>&#160;(<a href="/dota2/Tier_3_Tournaments" class="mw-redirect" title="Tier 3 Tournaments">Tier 3</a>)</div></div>';
+/** 阶段子页没有 Infobox——档位要去根页面取，这里钉住"别把子页的空当成人家的档位"。 */
+const TIER_ABSENT = '<div class="infobox"><div>Patch:</div><div>7.41f</div></div>';
+
+assert.deepEqual(parseLeagueTier(TIER_T1), { tier: 1 }, '正式赛事读档位');
+assert.deepEqual(
+	parseLeagueTier(TIER_SHOWMATCH),
+	{ tier: 3, showmatch: true },
+	'表演赛的档位与类型是两个字段：`liquipediatiertype` 也在，但档位照样要读出来',
+);
+assert.equal(parseLeagueTier(TIER_ABSENT), undefined, '没有那一行就是没有档位，不要猜一个默认值');
+// `title="Tier 1 Tournaments"` 是属性，去掉标签之后不该被当成档位文字。
+assert.equal(parseLeagueTier('<div>Liquipedia Tier:</div><div><a title="Tier 1 Tournaments">Misc</a></div>'), undefined);
+
+console.log('liquipedia.check 通过：赛程解析与档位解析');
