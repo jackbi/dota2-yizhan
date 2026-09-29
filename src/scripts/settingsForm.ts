@@ -59,6 +59,9 @@ const newButton = element<HTMLButtonElement>('settings-new');
 const labelInput = element<HTMLInputElement>('settings-label');
 const editorTitle = element<HTMLHeadingElement>('settings-editor-title');
 const cancelButton = element<HTMLButtonElement>('settings-cancel');
+const editor = element<HTMLDialogElement>('settings-editor');
+const editorClose = element<HTMLButtonElement>('settings-editor-close');
+const noticeEl = element<HTMLParagraphElement>('settings-notice');
 
 /** 服务商那排按钮。按 `data-provider` 挂钩子，不走 id 对账那一套。 */
 const providerChips = [...document.querySelectorAll<HTMLButtonElement>('[data-provider]')];
@@ -86,6 +89,11 @@ let fetchedFor = '';
 
 function setStatus(text: string): void {
 	if (statusEl) statusEl.textContent = text;
+}
+
+/** 列表上方那行反馈。弹窗关掉之后，它是"刚才那下成了没有"的唯一说明。 */
+function setNotice(text: string): void {
+	if (noticeEl) noticeEl.textContent = text;
 }
 
 /** 表单里当下这套值；校验不过就返回一句给用户看的话。拉模型列表时不要求先填模型名。 */
@@ -294,7 +302,7 @@ function renderList(): void {
 	);
 }
 
-/** 把一份配置装进编辑器；id 为空串 = 新增一份。 */
+/** 把一份配置装进弹窗并打开；id 为空串 = 新增一份。 */
 function openEditor(id: string): void {
 	editingId = id;
 	const profile = profileOf(id);
@@ -303,13 +311,33 @@ function openEditor(id: string): void {
 	fillForm();
 	if (editorTitle) editorTitle.textContent = profile ? `编辑「${profile.label}」` : '新增一份';
 	if (saveButton) saveButton.textContent = profile ? '保存这一份' : '新增并启用';
-	if (cancelButton) cancelButton.style.display = profile ? '' : 'none';
 	renderList();
 	setStatus('');
+	// showModal 已经打开时再调会抛，所以只在关着的时候开。
+	if (editor && !editor.open) editor.showModal();
 }
 
-/** 把编辑器里这套值写回存储：编辑中写回那一份，新增则加一份并启用它。 */
-function persistConfig(next: AiConfig, message: string): void {
+/** 弹窗关掉之后的收尾：不再"正在编辑"任何一份，列表重画。 */
+function afterEditorClosed(): void {
+	editingId = '';
+	renderList();
+}
+
+/** 关掉弹窗。不保存时用它，也用于存完之后的收尾。 */
+function closeEditor(): void {
+	if (editor?.open) editor.close();
+	else afterEditorClosed();
+}
+
+/** 关掉弹窗、不保存。取消按钮、右上角关闭、Esc 与点遮罩都是这一个动作。 */
+function dismissEditor(): void {
+	disarmDelete();
+	closeEditor();
+	setNotice('已取消，没有保存');
+}
+
+/** 把弹窗里这套值写回存储：编辑中写回那一份，新增则加一份并启用它。返回那一份的 id。 */
+function persistConfig(next: AiConfig): string {
 	const label = (labelInput?.value ?? '').trim();
 	if (editingId && profileOf(editingId)) {
 		store = updateAiProfile(store, editingId, next, label);
@@ -319,8 +347,7 @@ function persistConfig(next: AiConfig, message: string): void {
 		editingId = added.profile.id;
 	}
 	saveAiStore(store);
-	openEditor(editingId);
-	setStatus(message);
+	return editingId;
 }
 
 saveButton?.addEventListener('click', () => {
@@ -332,12 +359,12 @@ saveButton?.addEventListener('click', () => {
 	const isNew = !profileOf(editingId);
 	const changed =
 		read.config.baseUrl !== config.baseUrl || read.config.apiKey !== config.apiKey || read.config.model !== config.model;
-	const base = isNew ? '已新增并启用' : '已保存';
-	persistConfig(
-		// 换了地址、key 或模型，旧的测试结果就对应不上现在这套值了。
-		changed ? { ...read.config, lastCheckedAt: 0, lastCheckOk: false } : read.config,
-		read.config.apiKey ? base : `${base}；没填 key 时阵容分析仍可用，只是不会有模型解释`,
-	);
+	// 换了地址、key 或模型，旧的测试结果就对应不上现在这套值了。
+	const id = persistConfig(changed ? { ...read.config, lastCheckedAt: 0, lastCheckOk: false } : read.config);
+	const name = profileOf(id)?.label ?? '这一份';
+	const base = `${isNew ? '已新增并启用' : '已保存'}「${name}」`;
+	setNotice(read.config.apiKey ? base : `${base}；没填 key 时阵容分析仍可用，只是不会有模型解释`);
+	closeEditor();
 });
 
 async function testConnection(): Promise<void> {
@@ -368,17 +395,13 @@ async function testConnection(): Promise<void> {
 				: response.status === 404
 					? '地址可能不对：检查是否少了一段路径'
 					: '看看服务商那边的额度与限流';
-		persistConfig(
-			{ ...target, lastCheckedAt: checkedAt, lastCheckOk: response.ok },
-			response.ok ? '连接正常，已保存' : `没通过：HTTP ${response.status}（${hint}）`,
-		);
+		persistConfig({ ...target, lastCheckedAt: checkedAt, lastCheckOk: response.ok });
+		setStatus(response.ok ? '连接正常，已保存' : `没通过：HTTP ${response.status}（${hint}）`);
 	} catch {
 		// 跨域被挡也走这里。浏览器直连要求服务商放开 CORS，这一条不是配置能绕过去的，
 		// 所以文案里把它和网络问题并列说清楚。
-		persistConfig(
-			{ ...target, lastCheckedAt: checkedAt, lastCheckOk: false },
-			'请求发不出去：地址不通、网络/代理问题，或这家服务没放开跨域',
-		);
+		persistConfig({ ...target, lastCheckedAt: checkedAt, lastCheckOk: false });
+		setStatus('请求发不出去：地址不通、网络/代理问题，或这家服务没放开跨域');
 	} finally {
 		if (testButton) testButton.disabled = false;
 	}
@@ -390,7 +413,8 @@ testButton?.addEventListener('click', () => {
 
 clearButton?.addEventListener('click', () => {
 	// 只清 key 与测试结果，地址与模型名留着——下一把 key 通常还是同一家。
-	persistConfig(clearAiKey(config), '已清除这份的 key');
+	persistConfig(clearAiKey(config));
+	setStatus('已清除这份的 key');
 });
 
 newButton?.addEventListener('click', () => {
@@ -399,10 +423,17 @@ newButton?.addEventListener('click', () => {
 	labelInput?.focus();
 });
 
-// 编辑到一半想退回去：重新装一遍当前启用的那一份（一份都没有就回到"新增"）。
-cancelButton?.addEventListener('click', () => {
-	disarmDelete();
-	openEditor(store.activeId);
+cancelButton?.addEventListener('click', dismissEditor);
+editorClose?.addEventListener('click', dismissEditor);
+
+/*
+ * Esc 与点遮罩都要走同一个收尾。Esc 由浏览器直接关掉 dialog（不会经过我们的按钮），
+ * 所以真正可靠的钩子是 dialog 的 `close` 事件；点遮罩则要自己判——`showModal()` 只提供
+ * "背景不可交互"，不提供"点背景就关"。
+ */
+editor?.addEventListener('close', afterEditorClosed);
+editor?.addEventListener('click', (event) => {
+	if (event.target === editor) dismissEditor();
 });
 
 function disarmDelete(): void {
@@ -428,7 +459,7 @@ listEl?.addEventListener('click', (event) => {
 		store = activateAiProfile(store, id);
 		saveAiStore(store);
 		renderList();
-		setStatus(`已启用「${profileOf(id)?.label ?? '这一份'}」，阵容分析接下来用它`);
+		setNotice(`已启用「${profileOf(id)?.label ?? '这一份'}」，阵容分析接下来用它`);
 		return;
 	}
 
@@ -450,7 +481,7 @@ listEl?.addEventListener('click', (event) => {
 			renderList();
 		}, 4000);
 		renderList();
-		setStatus('再点一次「删除」才会真的删掉');
+		setNotice('再点一次「删除」才会真的删掉');
 		return;
 	}
 
@@ -461,7 +492,7 @@ listEl?.addEventListener('click', (event) => {
 	// 删掉的正是编辑器里那一份：退回到当前启用的那份，别让「保存」写到一个已经没了的 id 上。
 	if (editingId === id) openEditor(store.activeId);
 	renderList();
-	setStatus(`已删除「${label}」`);
+	setNotice(`已删除「${label}」`);
 });
 
 /**
@@ -603,5 +634,10 @@ document.addEventListener('click', (event) => {
 	if (!inside) closeModelList();
 });
 
-openEditor(store.activeId);
-if (store.profiles.length === 0) setStatus('还没有配置；不配也能用，配好之后才会有模型写的那段解释');
+/*
+ * 初始只画列表：编辑器在弹窗里，没点「新增」或「编辑」之前不开。
+ *
+ * 一份都没有时不再往 notice 里写一遍"还没配置"——空状态那段话就在列表位置上，
+ * 两句意思一样的话叠在一起只会让人以为漏点了什么。
+ */
+renderList();

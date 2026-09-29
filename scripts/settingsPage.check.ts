@@ -49,6 +49,9 @@ for (const id of [
 	'settings-new',
 	'settings-label',
 	'settings-editor-title',
+	'settings-editor',
+	'settings-editor-close',
+	'settings-notice',
 ]) {
 	assert.ok(pageIds.has(id), `设置页缺少 #${id}`);
 	assert.ok(queriedIds.has(id), `#${id} 在页面上，但脚本没有接管它`);
@@ -183,5 +186,37 @@ assert.match(
 	'按钮文案要分得清"改一份"和"加一份"',
 );
 assert.match(script, /emptyEl\.style\.display = store\.profiles\.length > 0 \? 'none' : ''/, '一份都没有时要显示空状态');
+
+// ---------------------------------------------------------------- 新增 / 编辑走弹窗
+
+/*
+ * 编辑器在**原生 dialog** 里：`showModal()` 自带焦点陷阱、Esc 关闭与"背景不可交互"，
+ * 这三样自己实现很容易只做一半——尤其是焦点陷阱，而这一页的表单里正好有 key 输入框。
+ *
+ * 代价有两处，都是"不做也不报错"的：点遮罩关闭要自己补（它不提供），以及 Esc 关掉之后
+ * 要把编辑状态收回来（不收，列表上那一行会一直挂着「正在编辑」）。
+ */
+assert.ok(page.includes('<dialog'), '编辑器要用原生 dialog：焦点陷阱与 Esc 靠它，别自己写');
+assert.match(
+	page,
+	/id="settings-editor"[\s\S]{0,200}?aria-labelledby="settings-editor-title"/,
+	'dialog 要指向自己的标题，读屏才知道这个弹窗是什么',
+);
+assert.match(page, /#settings-editor::backdrop/, '遮罩要自己写一条：Tailwind 没有 ::backdrop 的变体');
+assert.match(
+	page,
+	/id="settings-editor"[\s\S]{0,200}?class="m-auto[\s\S]{0,120}?w-\[min\(94vw,42rem\)\]/,
+	'弹窗要自己居中：preflight 把 margin 归零，dialog 默认那套居中会失效（不写就贴在左上角）',
+);
+
+assert.match(script, /if \(editor && !editor\.open\) editor\.showModal\(\);/, '「新增 / 编辑」要打开弹窗；showModal 已打开时会抛，先判 open');
+assert.match(
+	script,
+	/editor\?\.addEventListener\('close', afterEditorClosed\)/,
+	'Esc 关掉也要收尾：不收，列表那一行会一直挂着「正在编辑」',
+);
+assert.match(script, /event\.target === editor/, '点遮罩要能关：showModal 只给"背景不可交互"，不给这个');
+assert.match(script, /function dismissEditor/, '取消 / 关闭 / Esc / 点遮罩要收敛到同一个动作');
+assert.match(script, /setNotice\(/, '存完、删完、启用完要有一行反馈：弹窗关掉之后它是唯一的结果说明');
 
 console.log('settingsPage.check 通过');

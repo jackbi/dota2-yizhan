@@ -49,10 +49,23 @@ import { AI_PROVIDERS } from '../lib/aiProviders';
 				只有那段文字解释需要模型。
 			</p>
 			<ul id="settings-list" class="mt-3 space-y-2"></ul>
+			<p id="settings-notice" class="mt-3 text-xs leading-relaxed text-faint" role="status" aria-live="polite"></p>
 		</section>
 
-		<section class="mt-4 rounded-2xl border border-line bg-surface/60 p-4" aria-label="编辑这一份配置">
-			<h3 id="settings-editor-title" class="font-display text-base">新增一份</h3>
+		<!--
+			「新增 / 编辑」走弹窗（原生 dialog）：showModal() 自带焦点陷阱、Esc 关闭与"背景不可交互"，
+			这三样自己实现很容易只做一半——尤其是焦点陷阱，而这一页的表单里正好有 key 输入框。
+			它没打开时就是 display:none，不需要 hidden 类，也不会占位置。
+		-->
+		<dialog
+			id="settings-editor"
+			aria-labelledby="settings-editor-title"
+			class="m-auto w-[min(94vw,42rem)] max-h-[88vh] overflow-y-auto rounded-2xl border border-line bg-surface p-4 text-muted sm:p-5"
+		>
+			<div class="flex items-start justify-between gap-3">
+				<h3 id="settings-editor-title" class="font-display text-base">新增一份</h3>
+				<button id="settings-editor-close" type="button" class="filter-chip" aria-label="关闭且不保存">关闭</button>
+			</div>
 			<label class="mt-3 block text-xs text-muted">
 				名字
 				<input
@@ -165,12 +178,12 @@ import { AI_PROVIDERS } from '../lib/aiProviders';
 				<button id="settings-save" type="button" class="filter-chip">保存这一份</button>
 				<button id="settings-test" type="button" class="filter-chip">测试连接</button>
 				<button id="settings-clear" type="button" class="filter-chip">清除这份的 key</button>
-				<!-- 编辑到一半想退回原来的样子；新增时没什么可退的，脚本会把它藏起来。 -->
-				<button id="settings-cancel" type="button" class="filter-chip" style="display: none">取消</button>
+				<!-- 关掉弹窗、不保存。Esc 与点遮罩是同一个动作。 -->
+				<button id="settings-cancel" type="button" class="filter-chip">取消</button>
 				<span id="settings-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
 			</div>
 			<p id="settings-detail" class="mt-3 text-xs leading-relaxed text-faint"></p>
-		</section>
+		</dialog>
 
 		<p class="mt-6 text-xs leading-relaxed text-faint">
 			配置存的是「用哪家、哪把 key、哪个模型」，请求体是 OpenAI 兼容的
@@ -209,6 +222,13 @@ import { AI_PROVIDERS } from '../lib/aiProviders';
 	}
 	.filter-chip:disabled {
 		opacity: 0.4;
+	}
+	/*
+		弹窗的遮罩是 `::backdrop` 伪元素，Tailwind 里没有对应的变体（`backdrop:` 那个修饰符是
+		backdrop-filter 用的，不是它），只能在这儿写一条。
+	*/
+	#settings-editor::backdrop {
+		background: rgb(0 0 0 / 0.65);
 	}
 </style>
 
