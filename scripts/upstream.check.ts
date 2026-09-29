@@ -54,12 +54,71 @@ const countSignals = (source: string): number => (source.match(/\bsignal\s*:/g) 
  * 地址被漏掉——`mcp/` 下所有文件因此被跳过，删掉刚补的超时也照样绿。
  */
 const bareFetchRe = /(?<![.\w$])fetch\(/g;
-/** 去掉方法声明行（`async fetch(request, env, ctx)`）：那是 Worker 的入口，不是取数。 */
-const dropFetchDeclarations = (code: string): string =>
-	code
-		.split('\n')
-		.filter((line) => !/^\s*(?:async\s+)?fetch\(/.test(line))
-		.join('\n');
+/**
+ * 去掉方法声明（`async fetch(request, env, ctx) {`）：那是 Worker 的入口，不是取数。
+ *
+ * 不能按"行首是不是 `fetch(`"一刀切：`Promise.all([` 里一行一个的 `fetch(a),` 同样以 `fetch(`
+ * 开头，整行删掉之后下面那圈就再也看不见它，缺超时也报绿。判据要落在**方法体**上——
+ * 括号配对之后（跳过返回类型）跟的是 `{` 才算声明；声明也可能是多行的（参数与返回类型各占一行）。
+ */
+function dropFetchDeclarations(code: string): string {
+	/** 括号之后是不是方法体：可选的返回类型标注，再接 `{`。 */
+	const methodBody = /^\s*(?::[^{;=()]*)?\s*\{/;
+	let out = code;
+	const head = /(^|\n)[ \t]*(?:async[ \t]+)?fetch[ \t]*\(/g;
+	let match: RegExpExecArray | null;
+	while ((match = head.exec(out))) {
+		const open = out.indexOf('(', match.index);
+		let depth = 0;
+		let i = open;
+		for (; i < out.length; i += 1) {
+			if (out[i] === '(') depth += 1;
+			else if (out[i] === ')') {
+				depth -= 1;
+				if (depth === 0) break;
+			}
+		}
+		if (depth !== 0) break;
+		// `fetch(a),` 那种调用在这里对不上：括号后面跟的是 `,` / `)` / `.`，不是方法体。
+		const body = methodBody.exec(out.slice(i + 1));
+		if (!body) {
+			head.lastIndex = i + 1;
+			continue;
+		}
+		// 只摘掉声明本身，`{` 与整个方法体留着——里面可能还有真的取数 fetch。
+		const start = match.index + (match[1] ? match[1].length : 0);
+		const keepFrom = i + body[0].length; // 正好指到方法体那个 `{`
+		out = out.slice(0, start) + out.slice(keepFrom);
+		head.lastIndex = start;
+	}
+	return out;
+}
+
+/*
+ * 这把尺子自己也要准。
+ *
+ * 上一版按"行首是不是 `fetch(`"删整行，于是 `Promise.all([` 里一行一个的 `fetch(a),` 会被一起
+ * 删掉——那种写法缺超时也报绿。反过来，方法声明（含多行参数表）必须真的摘掉，否则每个 Worker
+ * 入口都会被当成一处"没带超时的取数"。
+ */
+{
+	const counted = (source: string): number => (dropFetchDeclarations(source).match(/\bfetch\(/g) ?? []).length;
+	assert.equal(
+		counted('async function f() {\n\tawait Promise.all([\n\t\tfetch(a),\n\t\tfetch(b),\n\t]);\n}'),
+		2,
+		'行首的 fetch 调用（多行列表里一行一个）不能被当成方法声明删掉',
+	);
+	assert.equal(
+		counted('export class D {\n\tasync fetch(request: Request, env: Env): Promise<Response> {\n\t\treturn new Response();\n\t}\n}'),
+		0,
+		'方法声明要摘掉：那是 Worker 的入口，不是取数',
+	);
+	assert.equal(
+		counted('export class D {\n\tasync fetch(\n\t\trequest: Request,\n\t): Promise<Response> {\n\t\treturn x;\n\t}\n}'),
+		0,
+		'参数与返回类型各占一行的声明也要摘掉',
+	);
+}
 
 for (const name of files) {
 	const source = readFileSync(new URL(name, libDir), 'utf8');
