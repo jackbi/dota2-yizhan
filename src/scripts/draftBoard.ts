@@ -1379,11 +1379,23 @@ if (data) {
 				const withPosition = (bans: { heroId: number; reason: string }[], positions: Map<number, number>) =>
 					bans.map((ban) => ({ ...ban, ...(positions.has(ban.heroId) ? { position: positions.get(ban.heroId) } : {}) }));
 				/*
-				 * 补齐用的料 = 本地推演那一手 + **它攒下来的备用池**。只用前者时，模型丢掉大半禁用之后
-				 * 一边可能只补到四五条，板子上就会空出几格（实测截图里缺了 5 格）——
-				 * 真 BP 的禁用格不该有空位。
+				 * 补齐用的料，三个来源按可信度排：
+				 * 1. 本地推演那一手的 7 条禁用；
+				 * 2. **它攒下来的备用池**（每一手的前几名）；
+				 * 3. **这支队真实 BP 里自己禁过的英雄**（按次数排）——这一层是最后兜底，
+				 *    也是三者里最贴现实的：他们真的禁过它。
+				 *
+				 * 只用第 1 层时，模型丢掉大半禁用之后一边只剩四五条（板子空 5 格）；
+				 * 加上第 2 层仍会偶发地差一条（备用池也会被对面占光）。三层下来才够稳。
 				 */
-				const fillOf = (side: 'radiant' | 'dire') => [...local[side].bans, ...(local.spareBans?.[side] ?? [])];
+				const fillOf = (side: 'radiant' | 'dire') => {
+					const form = forms[side];
+					const fromRealBp = (form?.heroes ?? [])
+						.filter((hero) => hero.bansBy > 0)
+						.sort((a, b) => b.bansBy - a.bansBy || a.heroId - b.heroId)
+						.map((hero) => ({ heroId: hero.heroId, reason: `他们近 ${form?.windowDays ?? 30} 天自己禁过它 ${hero.bansBy} 次` }));
+					return [...local[side].bans, ...(local.spareBans?.[side] ?? []), ...fromRealBp];
+				};
 				const radiantBans = mergeBans(parsed.radiant.bans, fillOf('radiant'), taken);
 				const direBans = mergeBans(parsed.dire.bans, fillOf('dire'), taken);
 				prediction = {
