@@ -3,7 +3,7 @@ import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { predictDraftLocal } from '../src/lib/draftPredict.ts';
 import { buildPredictionMessages, parsePredictionReply, parsePredictionReplyDetailed } from '../src/lib/draftPrompt.ts';
 import { FAMILIARITY_WEIGHT, buildRosterProfile } from '../src/lib/teamSignature.ts';
-import { mergeBans } from '../src/lib/draftPredict.ts';
+import { mergeBans, predictionHands } from '../src/lib/draftPredict.ts';
 
 /**
  * 「AI 预测整局 BP」这一层的自检。
@@ -262,6 +262,35 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	assert.equal(filledD.bans.length, 7, '夜魇要能补满 7 条禁用');
 	assert.equal(new Set([...filledR.bans, ...filledD.bans].map((ban) => ban.heroId)).size, 14, '两边的禁用不能互相重复');
 	ok('备用禁用池够厚：模型撞掉大半之后两边仍能补满 7 条，板子上不会空');
+
+	/*
+	 * **摆位置的两种规则不能混用。**
+	 *
+	 * 板子上凭空少 3 格的那次就是这么来的：模型那条路的禁用里混进了"带原手号"的站内补齐条目，
+	 * 于是同一份清单里既按手号摆、又按顺序摆，前者被后者盖掉。
+	 * 下面这份预测专门造出"混着手号"的形状（就是真实数据的样子），钉住 24 手一格不少。
+	 */
+	const radiantBans = Array.from({ length: 7 }, (_, index) => ({ heroId: 200 + index, reason: 'r' }));
+	// 站内补齐的那几条带着自己的原手号（step），模型给的没有——这正是出问题的形状。
+	radiantBans[3] = { ...radiantBans[3]!, step: 19 };
+	radiantBans[4] = { ...radiantBans[4]!, step: 21 };
+	const direBans = Array.from({ length: 7 }, (_, index) => ({ heroId: 300 + index, reason: 'r' }));
+	const picks = (side: number) => Array.from({ length: 5 }, (_, index) => ({ heroId: side * 100 + index, position: index + 1, reason: 'p' }));
+	const mixed = {
+		radiant: { bans: radiantBans, picks: picks(4) },
+		dire: { bans: direBans, picks: picks(5) },
+		summary: '',
+		source: 'model' as const,
+		assignedSteps: true,
+	};
+	const mixedHands = predictionHands(mixed, 'radiant');
+	assert.equal(mixedHands.length, 24, '板子永远是 24 手');
+	assert.equal(mixedHands.filter((heroId) => heroId !== null).length, 24, '两边共 24 手都要落人（禁用 14 + 挑选 10）');
+	assert.equal(new Set(mixedHands.filter((id): id is number => id !== null)).size, 24, '同一个英雄不能占两格');
+	// 纯本地推演那条路仍然逐条信它的真手号。
+	const localHands = predictionHands({ radiant: local!.radiant, dire: local!.dire, summary: '', source: 'local' }, 'radiant');
+	assert.equal(localHands.filter((heroId) => heroId !== null).length, 24, '本地推演的 24 手也要一格不少');
+	ok('板子摆位置：模型的清单按顺序摆、本地推演按真手号摆，两种不混用，24 格都有人');
 }
 
 {

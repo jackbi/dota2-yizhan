@@ -30,7 +30,7 @@ import { CM_PHASE_STARTS, CM_STEPS, canPlay, otherSide, play, sideOfOwner, skip,
 import type { FoeForm } from '../lib/draftFoe.ts';
 import { MIN_PICKS, foeHeadline, foeHeroOf, foeHighlights, foeWinRate } from '../lib/draftFoe.ts';
 import type { DraftPrediction, PredictedSide } from '../lib/draftPredict.ts';
-import { mergeBans, predictDraftLocal } from '../lib/draftPredict.ts';
+import { mergeBans, predictDraftLocal, predictionHands } from '../lib/draftPredict.ts';
 import type { RosterProfile } from '../lib/teamSignature.ts';
 import { buildRosterProfile, rosterPoolOf, signatureScopeLabel } from '../lib/teamSignature.ts';
 import type { LaneData } from '../lib/draftLanes.ts';
@@ -1560,19 +1560,9 @@ if (data) {
 			}
 			panel.style.display = '';
 
-			const hands: (number | null)[] = new Array(CM_STEPS.length).fill(null);
-			const place = (side: TeamSide, rows: readonly { heroId: number; step?: number }[], action: 'ban' | 'pick'): void => {
-				// 这一方在这个动作上拥有的手号，按顺序排；本地推演给了 `step` 就直接用它。
-				const slots = CM_STEPS.filter((entry) => entry.action === action && sideOfOwner(entry.owner, firstPick) === side).map((entry) => entry.step);
-				rows.forEach((row, index) => {
-					const step = Number.isInteger(row.step) ? (row.step as number) : slots[index];
-					if (step && step >= 1 && step <= hands.length) hands[step - 1] = row.heroId;
-				});
-			};
-			place('radiant', prediction.radiant.bans, 'ban');
-			place('dire', prediction.dire.bans, 'ban');
-			place('radiant', prediction.radiant.picks, 'pick');
-			place('dire', prediction.dire.picks, 'pick');
+			// 摆位置这件事抽成了纯函数（`predictionHands`），因为它有"两种摆法不能混用"的坑，
+			// 那一条要能自检钉住——放在这里就只能靠肉眼看板子。
+			const hands = predictionHands(prediction, firstPick);
 
 			const nameOf = (side: TeamSide) => `${side === 'radiant' ? '天辉' : '夜魇'}${teamNameOf(side) ? ` · ${teamNameOf(side)}` : ''}`;
 			const radiantName = element<HTMLSpanElement>('draft-predict-name-radiant');

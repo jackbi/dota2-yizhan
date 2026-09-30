@@ -140,6 +140,38 @@ export interface PredictInput {
 const emptySide = (): PredictedSide => ({ bans: [], picks: [] });
 
 /**
+ * 把一份预测摆到 24 手上：返回长度 24 的数组，下标 0 是第 1 手，值是 heroId（没人时 null）。
+ *
+ * **两种摆法不能混用**，这是踩过的坑：
+ * - **本地推演**的手号是真的（它就是一手一手推出来的），所以逐条用 `row.step`；
+ * - **模型**只给清单，手号是我们按队长模式排的，所以要**整条清单顺序填**那一方在这个动作上的手号。
+ *
+ * 上一版没有这条区分：模型那条路的禁用里混着"带原手号"的站内补齐条目，
+ * 于是同一份清单里两种规则同时生效——按手号摆的那几条会盖掉按顺序摆的，
+ * 板子上就凭空少掉几格（实测少 3 格，看着像"补齐不够"，其实是摆位置摆重了）。
+ */
+export function predictionHands(prediction: DraftPrediction, firstPicker: DraftSide): (number | null)[] {
+	const hands: (number | null)[] = new Array(CM_STEPS.length).fill(null);
+	// 只有纯本地推演才逐条信 `step`；模型那条路（含站内补齐的条目）整条按顺序摆。
+	const useRowStep = !prediction.assignedSteps;
+	const place = (side: DraftSide, rows: readonly PredictedPick[], action: 'ban' | 'pick'): void => {
+		const slots = CM_STEPS.filter((entry) => entry.action === action && sideOfOwner(entry.owner, firstPicker) === side).map(
+			(entry) => entry.step,
+		);
+		rows.forEach((row, index) => {
+			const step = useRowStep && Number.isInteger(row.step) ? (row.step as number) : slots[index];
+			if (!step || step < 1 || step > hands.length) return;
+			hands[step - 1] = row.heroId;
+		});
+	};
+	place('radiant', prediction.radiant.bans, 'ban');
+	place('dire', prediction.dire.bans, 'ban');
+	place('radiant', prediction.radiant.picks, 'pick');
+	place('dire', prediction.dire.picks, 'pick');
+	return hands;
+}
+
+/**
  * 预测的规则：**熟手优先，拿不到才退回版本强势**。
  *
  * 两条路回答的不是同一个问题：建议回答"该怎么打"（号位胜率优先，熟手只当同档里的优先项，
