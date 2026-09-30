@@ -3,10 +3,10 @@ import Layout from '../../layouts/Layout.astro';
 import MatchRow from '../../components/MatchRow.astro';
 import RosterMemberCard from '../../components/RosterMemberCard.astro';
 import { formatRange } from '../../lib/format';
-import { fetchHeroListCached } from '../../lib/heroList';
 import type { RosterMember } from '../../lib/liquipediaParse';
 import { localizePatchIcons } from '../../lib/patchIcons';
 import { heroIconKey } from '../../lib/patchNotes';
+import { fetchPatchNames } from '../../lib/patchesApi';
 import { EVENT_STATUS_META } from '../../lib/statusMeta';
 import type { TeamDetail } from '../../lib/tournamentIndex';
 import { getTournamentIndex } from '../../lib/tournamentIndex';
@@ -51,16 +51,20 @@ const now = Math.floor(Date.now() / 1000);
  * 招牌英雄的图标复用更新日志那一套（同一个 Valve CDN、同一个已发布目录），不新开图片通道——
  * 图标只有 20px 大，多存一份没有意义。
  *
- * 英雄列表拿不到时整块降级：不显示英雄，只留名单。这一块是附加信息，不该让整页失败。
+ * 英雄名与图标 key 都取自**名字表**（`fetchPatchNames()`，就是更新日志那条线在用的那份：
+ * datafeed 的内部名 `npc_dota_hero_kez` → `kez`，与 `heroIconUrl()` 拼地址同源）。
+ *
+ * **不要从官方英雄列表的图片文件名反推 key**：127 个英雄里 5 个的文件名不是
+ * `npc_dota_hero_<key>.png`——凯 / 瑪西 / 獸 是 UUID、琼英碧灵是 `muerta_hphover`
+ * （实测），反推出来的地址必然 404，那几位在页面上就永远没有图标（凯当时就在名单里），
+ * 百戏大王只是碰巧推对。名字表拿不到时整块降级：不显示英雄，只留名单——
+ * 这一块是附加信息，不该让整页失败。
  */
 const poolHeroIds = [...new Set((roster?.players ?? []).flatMap((member) => member.heroPool?.heroes.map((h) => h.heroId) ?? []))];
 const heroById = new Map<number, { name: string; key: string }>();
 try {
-	for (const hero of await fetchHeroListCached()) {
-		// 官网列表里的图名就是内部名（`npc_dota_hero_<key>.png`），图标地址按同一个 key 拼。
-		const key = (hero.img.split('/').pop() ?? '').replace(/^npc_dota_hero_/, '').replace(/\.png$/, '');
-		heroById.set(hero.id, { name: hero.name, key });
-	}
+	const names = await fetchPatchNames();
+	for (const [id, hero] of names.heroes) heroById.set(id, { name: hero.name, key: hero.key });
 } catch {
 	// 拿不到就退化成"没有招牌英雄"，下面两处都会自然跳过。
 }

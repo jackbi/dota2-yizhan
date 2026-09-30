@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { PlayerMatchRow } from '../src/lib/heroPool.ts';
 import { summarizeHeroPool } from '../src/lib/heroPool.ts';
-import { collectHeroPools } from '../src/lib/heroPoolBatch.ts';
+import { batchStopReason, collectHeroPools } from '../src/lib/heroPoolBatch.ts';
 
 /**
  * 「选手招牌英雄」的挑选规则。
@@ -117,6 +117,10 @@ function games(heroId: number, count: number, wins: number, beforePatch = false)
 	);
 	assert.match(page, /localizePatchIcons\(\{[^}]*poolHeroes/s, '图标要按名单里实际出现的英雄取');
 	assert.match(page, /poolHeroes\.length > 0/, '守卫要看"这一页有没有英雄"，不是"英雄列表拿没拿到"');
+	// 图标 key 必须来自名字表：127 个英雄里 5 个的图片文件名不是 `npc_dota_hero_<key>.png`
+	// （凯/瑪西/獸 是 UUID、琼英碧灵是 muerta_hphover），从文件名反推的那 4 个永远是破图。
+	assert.doesNotMatch(page, /hero\.img\.split/, '不能从英雄列表的图片文件名反推图标 key');
+	assert.match(page, /fetchPatchNames\(\)/, '图标 key 与英雄名都取自更新日志那条线的名字表');
 	ok('接线：战队页只取本页用到的英雄图标');
 }
 
@@ -194,23 +198,60 @@ const DAY = 24 * 3600 * 1000;
 		now: DAY,
 		offline: false,
 		patch: OPTIONS,
-		// 真实那条判据在 `playerHeroes` 里：`StratzError` 就当整批问不动（429 另标 `rateLimited`）。
-		stopReason: (error) => (error instanceof Error && error.message.includes('429') ? '额度限制' : null),
+		stopReason: batchStopReason,
 		loadRows: async (accountId) => {
 			asked.push(accountId);
-			if (accountId === 32) throw new Error('STRATZ 请求失败：HTTP 429');
+			if (accountId === 32) throw { systemic: true, rateLimited: true, message: 'STRATZ 请求失败：HTTP 429' };
 			return games(1, 6, 2);
 		},
 	});
 	assert.deepEqual(asked, [31, 32], '第二个撞到 429 之后，剩下两个不该再问——那只会把额度打得更空');
 	assert.equal(result.skipped, 2);
-	assert.equal(result.stoppedBy, '额度限制');
+	assert.equal(result.stoppedBy, 'STRATZ 额度或频率限制（429）');
 	assert.equal(result.pools.size, 4, '没问的人退旧缓存，页面上仍然有东西看');
 	assert.deepEqual(Object.keys(result.cache).sort(), ['31', '32', '33', '34'], '旧缓存要带过去，不能因为停下就丢');
 	ok('额度限制：整批停下，剩下的只退旧缓存');
 }
 
-// 10. 接线：TTL 是「按额度定的」那一档，429 要能被认出来
+// 10. 请求级的错不该牵连别人：GraphQL 报错只算这一位失败，后面继续问
+{
+	const asked: number[] = [];
+	const result = await collectHeroPools({
+		accountIds: [41, 42, 43],
+		cache: {},
+		ttlMs: DAY,
+		now: DAY,
+		offline: false,
+		patch: OPTIONS,
+		stopReason: batchStopReason,
+		loadRows: async (accountId) => {
+			asked.push(accountId);
+			if (accountId === 42) throw { systemic: false, message: 'GraphQL 报错：invalid steamAccountId' };
+			return games(1, 6, 2);
+		},
+	});
+	assert.deepEqual(asked, [41, 42, 43], '一位的参数不对，不能让剩下的人这一轮全不刷新');
+	assert.equal(result.failed, 1);
+	assert.equal(result.skipped, 0);
+	assert.equal(result.stoppedBy, undefined);
+	ok('请求级错误：只跳过这一位');
+}
+
+// 11. 分级判据本身：认 `systemic` 标记，认不出就当"不停"
+{
+	assert.equal(
+		batchStopReason({ systemic: true, rateLimited: true, message: 'HTTP 429' }),
+		'STRATZ 额度或频率限制（429）',
+		'额度限制要单独说清楚，运维才知道去看哪一头',
+	);
+	assert.equal(batchStopReason({ systemic: true, message: 'STRATZ 拒绝了这个出口 IP' }), 'STRATZ 拒绝了这个出口 IP');
+	assert.equal(batchStopReason({ systemic: false, message: 'GraphQL 报错' }), null, '请求级的错不停批');
+	assert.equal(batchStopReason(new Error('别的错')), null, '认不出来的错按"这一位失败"处理，不牵连整批');
+	assert.equal(batchStopReason(undefined), null);
+	ok('分级：只有整批级的错才停');
+}
+
+// 12. 接线：TTL 是「按额度定的」那一档，429 要能被认出来
 {
 	const flow = readFileSync(new URL('../src/lib/playerHeroes.ts', import.meta.url), 'utf8');
 	const runtime = readFileSync(new URL('../src/lib/stratzRuntime.ts', import.meta.url), 'utf8');
@@ -219,9 +260,10 @@ const DAY = 24 * 3600 * 1000;
 		/TTL_SECONDS\s*=\s*24 \* 3600/,
 		'招牌英雄的 TTL 取 24 小时：一位选手一个请求，缩短 TTL 等于把名单人数乘上刷新次数',
 	);
-	assert.match(flow, /error instanceof StratzError/, '撞到 STRATZ 的整批级错误要停下，不是只跳过这一位');
-	assert.match(runtime, /res\.status === 429[\s\S]{0,80}rateLimited = true/, '429 必须标成额度限制，否则熔断认不出来');
-	assert.match(runtime, /new StratzError\([^)]*rateLimited\)/, '这个标记要跟着错误一起抛出去');
+	assert.match(flow, /stopReason: batchStopReason/, '熔断判据要接线，不能只写在注释里');
+	assert.match(runtime, /lastRateLimited = res\.status === 429;/, '429 必须标成额度限制，否则熔断认不出来');
+	assert.match(runtime, /systemic: false/, 'GraphQL 报错要标成非整批级，否则会误停整批');
+	assert.match(runtime, /\{ rateLimited: lastRateLimited \}/, '按**最后一次**尝试分类，别把前一次的 429 带进结论');
 	ok('接线：TTL 与 429 标记都还在');
 }
 

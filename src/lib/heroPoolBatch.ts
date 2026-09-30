@@ -52,7 +52,7 @@ export interface HeroPoolBatchResult {
 	pools: Map<number, PlayerHeroPool>;
 	/** 下一轮要写回磁盘的那份缓存（只含这一轮要用的键）。 */
 	cache: HeroPoolCache;
-	/** 真的拿到数据的次数。 */
+	/** 真的联网问到结果的次数（拿到对局行就算；能不能算出招牌英雄是下一步的事）。 */
 	fetched: number;
 	/** 单个选手失败、但整批继续的次数。 */
 	failed: number;
@@ -60,6 +60,26 @@ export interface HeroPoolBatchResult {
 	skipped: number;
 	/** 停下的原因，没有停下就是 undefined。 */
 	stoppedBy?: string;
+}
+
+/**
+ * 「撞到哪类错才值得把整批停掉」——`stopReason` 的具体实现。
+ *
+ * 判据不是错误类名，而是它带的 `systemic` 标记（见 `stratzRuntime` 的 `StratzError`）：
+ * 额度、出口 IP、中转口令、上游挂掉是**整批级**；GraphQL 报错那类只算这一位失败。
+ * 这个区分要紧——账号顺序是稳定的，一停就可能每轮都卡在同一个人身上，后面的人永远拿不到
+ * 新数据；反过来，额度用完还硬问几十个人只会把额度打得更空。
+ *
+ * 认标记而不是认类：这样自检能直接喂普通对象进来驱动（`playerHeroes.ts` 引了 `astro:env/server`
+ * 与 node:fs，纯 node 起不来）。
+ */
+export function batchStopReason(error: unknown): string | null {
+	if (typeof error !== 'object' || error === null) return null;
+	const candidate = error as { systemic?: unknown; rateLimited?: unknown; message?: unknown };
+	if (candidate.systemic !== true) return null;
+	if (candidate.rateLimited === true) return 'STRATZ 额度或频率限制（429）';
+	const message = typeof candidate.message === 'string' ? candidate.message.trim() : '';
+	return message.length > 0 ? message : 'STRATZ 这一轮请求不过去';
 }
 
 /**

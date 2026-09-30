@@ -3,9 +3,9 @@ import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource, sourceState } from './dataHealth';
 import type { PlayerHeroPool, PlayerMatchRow } from './heroPool';
 import type { HeroPoolCache } from './heroPoolBatch';
-import { HERO_POOL_CACHE_VERSION, collectHeroPools } from './heroPoolBatch';
+import { HERO_POOL_CACHE_VERSION, batchStopReason, collectHeroPools } from './heroPoolBatch';
 import { fetchPatchUpdates } from './patchesApi';
-import { StratzError, stratzGql, stratzRuntimeConfigured } from './stratzRuntime';
+import { stratzGql, stratzRuntimeConfigured } from './stratzRuntime';
 
 /**
  * 选手的招牌英雄，**按版本统计**。
@@ -107,7 +107,14 @@ function toRow(match: RawPoolMatch, accountId: number): PlayerMatchRow | null {
 	const startTime = Number(match.startDateTime) || 0;
 	const me = match.players?.find((player) => player?.steamAccountId === accountId);
 	if (!startTime || typeof me?.heroId !== 'number') return null;
-	return { heroId: me.heroId, startTime, win: Boolean(me.isRadiant) === Boolean(match.didRadiantWin) };
+	/*
+	 * 胜负由 `didRadiantWin` 与 `isRadiant` 反推（与 `stratzPlayer.ts` 同一条规矩），
+	 * 而且**先确认结果字段是布尔**：写成 `Boolean(...)` 比较的话，字段缺失时
+	 * `Boolean(null)` 是 false，夜魇方的选手这一场会被记成胜场，英雄卡上的场次/胜场
+	 * 与 `heroPool.ts` 的胜场排序就都被喂了脏数据。
+	 */
+	const win = typeof match.didRadiantWin === 'boolean' ? match.didRadiantWin === Boolean(me.isRadiant) : false;
+	return { heroId: me.heroId, startTime, win };
 }
 
 /**
@@ -147,14 +154,11 @@ export async function loadPlayerHeroPools(accountIds: number[]): Promise<Map<num
 		offline: OFFLINE,
 		patch: { patchStart: patch.startTime, version: patch.version },
 		/*
-		 * 撞到限流/出口/上游这一类，整批停下：那不是"这一个账号没数据"，继续问剩下的几十个
-		 * 只会把额度打得更空。429、出口 IP 不对、中转口令不对、上游挂掉，都会走到
-		 * `StratzError`——这几类都是"整批都问不动"，所以整类都停。
+		 * 撞到限流/出口/上游这一类才整批停下（判据在 `batchStopReason`，有自检）。
+		 * 单次请求自己的错（GraphQL 报错那类）只算这一位失败：顺序是稳定的，一停就可能
+		 * 每轮都卡在同一个人身上，后面的人永远拿不到新数据。
 		 */
-		stopReason: (error) => {
-			if (!(error instanceof StratzError)) return null;
-			return error.rateLimited ? 'STRATZ 额度或频率限制（429）' : error.message;
-		},
+		stopReason: batchStopReason,
 		loadRows: async (accountId) => {
 			const data = await stratzGql<{ player: { matches?: RawPoolMatch[] | null } | null }>(POOL_DOCUMENT, {
 				id: accountId,

@@ -44,9 +44,19 @@ export class StratzError extends Error {
 	 */
 	readonly rateLimited: boolean;
 
-	constructor(message: string, rateLimited = false) {
+	/**
+	 * 这个错误是不是**整批级**的：额度、出口 IP、中转口令、上游挂了——换了调用参数也一样失败。
+	 *
+	 * 与它相对的是"这一次请求的错"（GraphQL 报错就是这一类：可能只是某个账号的参数不对），
+	 * 那种只该算这一位失败，不能让批量取数的调用方把剩下几十个人一起跳过——顺序是稳定的，
+	 * 一停就可能每轮都卡在同一个人身上，后面的人永远拿不到新数据。
+	 */
+	readonly systemic: boolean;
+
+	constructor(message: string, options: { rateLimited?: boolean; systemic?: boolean } = {}) {
 		super(message);
-		this.rateLimited = rateLimited;
+		this.rateLimited = options.rateLimited ?? false;
+		this.systemic = options.systemic ?? true;
 	}
 }
 
@@ -66,8 +76,13 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 	}
 
 	let lastError = '请求失败';
-	/** 这一串重试里有没有撞到过 429：有的话最终这个错误按"额度限制"上报。 */
-	let rateLimited = false;
+	/**
+	 * **最后一次尝试**是不是 429。
+	 *
+	 * 只看最后一次：前两次撞 429、第三次换成挑战页时，该报的是挑战页。写成"整串里出现过
+	 * 429 就算额度限制"，运维会照着去查额度，而真正的原因在别处。
+	 */
+	let lastRateLimited = false;
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
 		await pace();
@@ -80,7 +95,7 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 			});
 			// 429 与 5xx 值得重试；403 要读完 body 才能分辨原因（见下）。
 			if (res.status === 429 || res.status >= 500) {
-				if (res.status === 429) rateLimited = true;
+				lastRateLimited = res.status === 429;
 				lastError = `HTTP ${res.status}`;
 				continue;
 			}
@@ -95,6 +110,7 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 				// 其余 403 一律按「可能短暂」重试：挑战页换着花样返回 HTML 与纯文本，只认
 				// content-type 会把一部分挑战页当成硬失败。但重试耗尽的文案要保留原始状态码，
 				// 不能统一说成挑战页——否则 token 失效这类硬失败会被描述成「稍后再试」。
+				lastRateLimited = false;
 				lastError = (res.headers.get('content-type') ?? '').includes('text/html') ? 'Cloudflare 挑战页' : `HTTP ${res.status}`;
 				continue;
 			}
@@ -105,14 +121,16 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 			if (!res.ok) throw new StratzError(`STRATZ 返回 HTTP ${res.status}`);
 			const body = (await res.json()) as GraphQLBody<T>;
 			if (body.errors?.length) {
-				throw new StratzError(`GraphQL 报错：${JSON.stringify(body.errors[0]).slice(0, 200)}`);
+				// GraphQL 报错可能是这一个账号的参数问题，别当整批级（见 `systemic`）。
+				throw new StratzError(`GraphQL 报错：${JSON.stringify(body.errors[0]).slice(0, 200)}`, { systemic: false });
 			}
 			if (!body.data) throw new StratzError('STRATZ 返回空数据');
 			return body.data;
 		} catch (error) {
 			if (error instanceof StratzError) throw error;
+			lastRateLimited = false;
 			lastError = error instanceof Error ? error.message : String(error);
 		}
 	}
-	throw new StratzError(`STRATZ 请求失败：${lastError}`, rateLimited);
+	throw new StratzError(`STRATZ 请求失败：${lastError}`, { rateLimited: lastRateLimited });
 }
