@@ -185,12 +185,22 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 
 		<header class="sticky top-0 z-50 border-b border-line bg-ink/80 backdrop-blur-xl">
 			<div class="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-				<a href="/" class="group flex shrink-0 items-center gap-2.5 whitespace-nowrap">
+				{/*
+					**手机上只留 logo，站名收起来。** 右侧那一组（源码 / 赞赏 / AI 设置 / 登录 / 菜单）
+					每个都是固定宽度的图标，减不动；加上站名之后页头在手机上装不下——实测 375px 视口下
+					`scrollWidth` 420 对 `clientWidth` 365，整页能往右拖。站名到 sm（640px）就出来，
+					那时导航折进汉堡菜单、右侧这一组反而是宽的余量。
+
+					名字由链接自己的 `aria-label` 承担：站名文字一进 `hidden` 就不参与可读名字了，
+					而 logo 的 `alt` 是空的，不给链接起名读屏就只剩"一个链接"。
+				*/}
+				<a href="/" aria-label="DOTA2 驿站 首页" class="group flex shrink-0 items-center gap-2.5 whitespace-nowrap">
 					{/*
 						站点 logo 是 public/logo.webp：由母版 src/assets/logo.png 转出来的 128px WebP（4.7 KB），
 						换 logo 跑 scripts/logo-assets.sh。母版刻意不放 public/，否则那张 1254px 原图会跟着发布产物走。
 						128px 够 40px 的显示在 3 倍屏上用。图里虽然烧了「DOTA2 驿站」字样，但在 40px 下认不出来，
-						所以旁边的文字保留。`alt=""` 是故意的：旁边的文字已经念出了站点名，读屏不该听两遍。
+						所以 sm 以上保留旁边的文字。`alt=""` 是故意的：站点名由旁边的文字（或链接的
+						aria-label）承担，读屏不该听两遍。
 					*/}
 					<img
 						src="/logo.webp"
@@ -199,7 +209,7 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 						height="40"
 						class="h-10 w-10 rounded-md shadow-lg shadow-dota/30 transition group-hover:brightness-110"
 					/>
-					<span class="font-display text-lg tracking-wide">DOTA2 驿站</span>
+					<span class="hidden font-display text-lg tracking-wide sm:inline">DOTA2 驿站</span>
 				</a>
 
 				{/*
@@ -234,7 +244,7 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 					}
 				</nav>
 
-				<div class="flex items-center gap-2">
+				<div class="flex items-center gap-1.5 sm:gap-2">
 					{/*
 						开源仓库 · 赞赏 · AI 设置固定放在右侧、登录入口左边。
 

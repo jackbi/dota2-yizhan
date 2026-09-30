@@ -57,6 +57,15 @@ assert.match(header, /title="[^"]*源码[^"]*"/, '图标态要有 title 提示')
 assert.match(header, /title="[^"]*咖啡[^"]*"/, '图标态要有 title 提示');
 
 /*
+ * 品牌在手机上只留 logo，站名收起；名字改由链接的 aria-label 承担。
+ *
+ * 这两条是配套的：站名一进 `hidden` 就不参与可读名字，而 logo 的 `alt` 是空的，
+ * 只做前一半就会留下一个没有名字的首页链接。所以只能一起钉。
+ */
+assert.match(header, /<span class="hidden[^"]*sm:inline">DOTA2 驿站<\/span>/, '站名要在手机上收起（sm 起才显示）');
+assert.match(header, /<a href="\/" aria-label="[^"]*驿站[^"]*"/, '站名收起之后，首页链接要自带可读名字');
+
+/*
  * **这几个入口都只留图标**：右侧这一组后面还有登录入口，加上文字会把中间那排导航挤到换行
  * （`justify-between` 下最先被牺牲的就是它们）。所以这里钉住"没有可见文字"，名字只走
  * aria-label 与 title——少了那两样，图标就成了一个没有名字的链接。
