@@ -226,7 +226,13 @@ function initial(name: string): string {
 						))}
 					</div>
 
-					<p id="team-empty" class="py-16 text-center text-sm text-faint" hidden>
+					{/*
+						首屏就得决定这句话要不要出：默认视图是「只看一线队」，而窗口里一支 T1/T2 队都没有
+						（只跑了 T3/T4，或这一轮档位整块没解析出来）时，网格是空的。这句文案要是不出，
+						读者看到的就是「共 0 支战队」加一片空白，没有任何解释——服务端按实际条数决定，
+						脚本起来之后再接管。
+					*/}
+					<p id="team-empty" class="py-16 text-center text-sm text-faint" hidden={firstTierRows.length > 0}>
 						没有符合条件的战队。
 					</p>
 				</>
@@ -311,5 +317,12 @@ function initial(name: string): string {
 		});
 
 		search.addEventListener('input', apply);
+
+		/*
+		 * 首屏也跑一次：服务端已经按「一线队」把卡片与空提示画对了，这里再对齐一遍计数与空提示，
+		 * 免得「服务端那套」和「脚本这套」哪天走岔（例如以后默认档位改了而模板没跟着改）。
+		 * 空查询下它只写 `display: ''`，不会改变首屏看到的东西。
+		 */
+		apply();
 	})();
 </script>
