@@ -391,8 +391,14 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 主赛程页与赛事页的每支队伍都带一份队标缩略图。这些图以前是**热链**`liquipedia.net`，
 一轮构建下来对阵行、对阵页、战队页、赛事页加起来三千多个 `<img>` 指着人家的服务器。
 现在和头像、封面走同一条路（直连 → `wsrv.nl` 代理 → `.cache/teamlogos/` → 构建末尾发布到
-`/teamlogos/`），页面引用的永远是站内地址。频道配置在 `src/lib/teamLogos.ts`，
+`/teamlogos/`），**取回成功的换成站内地址，拿不到的仍退回热链**（页面不会出现破图，所以
+线上偶尔还会看到 `liquipedia.net` 的地址——那是兜底，不是漏改）。频道配置在 `src/lib/teamLogos.ts`，
 「哪些地址要去下」的判据在 `src/lib/teamLogoSource.ts`（纯函数，`scripts/teamLogos.check.ts` 守着）。
+
+**这个频道刻意不设 `width`/`height`**：代理兜底那条路会按尺寸 + `fit` 缩放裁剪（默认 cover），
+而这里要原样——Liquipedia 给的就是它自己缩好的小图（实测 36–100px），写成 128×128 会把
+100×50 那种队标放大再裁成方图。（实测当前一轮 46 张落盘全是原始尺寸的 PNG，说明走的是直连；
+代理那条路没被用到，但参数别改回去。）
 
 三件实测出来的事，改这块之前先看一眼：
 
@@ -416,8 +422,12 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
 ### 赛事档位，以及「一线队」是怎么定的
 
 Liquipedia 会给每届赛事定档，Infobox 上渲染成 `Liquipedia Tier: Tier 2` 这样一行。
-解析在 `src/lib/liquipediaParse.ts` 的 `parseLeagueTier`，**不用多发请求**——我们为了补全对阵
-抓的就是那份渲染后的 HTML，档位就在同一份字节里。
+解析在 `src/lib/liquipediaParse.ts` 的 `parseLeagueTier`，解析本身不额外发请求——档位就在
+我们为了补全对阵已经抓回来的那份渲染结果里。**但当前实现仍然是单独抓一次赛事根页面**
+（`.cache/liquipedia/tiers.json`，缓存一周）：赛事页补全抓的是 `sourceUrl` 指的那些页面
+（常常是 `…/Group_Stage` 这类子页），而档位只在根页面的 Infobox 上，两条流的页面集合只有
+一部分重合。实测 5 届赛事里 5 届重合，也就是冷启动那一轮同一页会被抓两遍（一次按 6 小时、
+一次按一周），量级很小；要省掉它得让档位复用赛事页补全已经取回的 HTML。
 
 **Dota 2 没有官方的一线队名单**：没有升降级分区，DPC 也停了；Liquipedia 的档位只标在赛事上
 （`Category:Tier 1 Teams` 是空的，战队门户页是按赛区平铺的字母序名单）。所以站点的口径是
@@ -468,7 +478,18 @@ PARIVISION 的 1507。别再往那个方向试。
 页面结构（实测 Team Spirit / Team Liquid）：现役是 `{{Squad|status=active}}`，教练组是
 `{{Squad|type=staff|status=active}}`，离队整块是 `status=inactive` 或 `status=former`
 （NAVI 一页 33 个 former Squad、OG 24 个）。判据用模板参数而不是章节标题——标题会变、会缺席，
-参数不会。四个坑：
+参数不会。
+
+**教练组只有一部分队伍抓得到，这不是 bug 是模板差异**（实测 7 支）：用
+`{{Squad|type=staff}}` 的队伍能拿到（Team Spirit 3 人、Team Liquid 2 人）；NAVI / OG /
+MOUZ / BetBoom 这些把教练与 CEO、经理一起放在 `==Organization==` 的
+`{{ActiveOrganizationAuto|{{Person|…}}}}` 里——那是另一个模板，我们不认，页面上就是「没有教练组」。
+要扩就得先定口径（那一栏里 CEO/COO 与教练混在一起，全收进来会把「教练组」变成「组织架构」）。
+另外**教练组不再受"现役那一段"的切片影响**：页面顺序不统一，`===Coaching Staff===` 排在
+`===Inactive Roster===` 之后的队伍同样存在，切掉就整块没了；它自己靠 `status=active`
+挡离职的人，不需要切片兜底。
+
+四个坑：
 
 - **`{{stand-in}}` 到处都有，历史段里最多**。页尾的 `===Former===` 段塞满了历年的替补记录
   （实测 OG 27 条，其中一个人出现 5 次），照单全收就会变成「替补：Ceb、Ceb、Ceb…」。
