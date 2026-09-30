@@ -65,6 +65,15 @@ export interface DraftPrediction {
 	/** 只有模型那条路会有：禁用不足 7 条时，由站内引擎补齐的条数。理由同上，要照实说。 */
 	filledBans?: number;
 	/**
+	 * 本地推演攒下来的**备用禁用池**（每边一长串，按"该禁它的程度"排好）。
+	 *
+	 * 为什么需要它：模型给的禁用常有一大半与它自己的挑选撞车，丢掉之后一边只剩四五条，
+	 * 板子上就会出现空着的禁用格（实测截图里缺了 5 格）。而本地推演每一手只留下一手，
+	 * 7 条备料也可能被占光。所以推演时顺手把每一手的**前几名**都收进来，
+	 * 让"补齐到 7 条"有足够的料。
+	 */
+	spareBans?: { radiant: PredictedPick[]; dire: PredictedPick[] };
+	/**
 	 * 手号是不是**排出来的**而不是模型给的。
 	 *
 	 * 模型只回答"两边各禁什么、各选什么"，不给手号；界面上要按队长模式的 24 手顺序
@@ -161,6 +170,12 @@ const emptySide = (): PredictedSide => ({ bans: [], picks: [] });
 const CANDIDATE_SCAN = 60;
 
 /**
+ * 每一手禁用留下几个备料（两边各收各的）。
+ * 一边 7 手禁用 × 6 个 ≈ 40 条，扣掉重复与被占用的，补满 7 条绰绰有余。
+ */
+const BAN_SPARE_PER_HAND = 6;
+
+/**
  * 出手时机的容差：一个英雄实战里平均第 N 手拿，最多提前这么多手拿它。
  *
  * 这一条正是"一选幻影长矛手"的药：真实 BP 里幻影长矛手平均在二十手前后才被拿
@@ -180,6 +195,15 @@ export function predictDraftLocal(input: PredictInput): DraftPrediction | null {
 	let recorded: RecordedHand[] = [];
 	const radiant = emptySide();
 	const dire = emptySide();
+	/** 每一手禁用时顺手收进来的备料，用来给"模型给的不够/撞车"兜底（见 `spareBans`）。 */
+	const spareBans: { radiant: PredictedPick[]; dire: PredictedPick[] } = { radiant: [], dire: [] };
+	/*
+	 * **两边各去各的重。** 共用一份去重集合时，先跑的天辉会把最强的候选全收走（两边看到的
+	 * 候选本来就高度重合——禁用的对象都是"对面怕什么"），夜魇的备料就只剩几条，
+	 * 补不满 7 条、板子上又出现空格（实测）。真正需要全局去重的地方是 `mergeBans`，
+	 * 那里用的是共用的 `taken`。
+	 */
+	const spareSeen: { radiant: Set<number>; dire: Set<number> } = { radiant: new Set(), dire: new Set() };
 	/** 已经用掉的英雄；`advise` 内部也会排除，这里再挡一道，防止某一步的候选为空时出错。 */
 	const used = new Set<number>();
 
@@ -243,6 +267,19 @@ export function predictDraftLocal(input: PredictInput): DraftPrediction | null {
 		 */
 		const top = comfortable[0] ?? timed[0] ?? available[0];
 		if (!top) break;
+		/*
+		 * 收备料：这一手排在前面的几个（含被挑中的那个）都留下来。只按"禁用"收——
+		 * 禁用是最容易被模型写坏、又必须凑满 7 条的那一半。
+		 */
+		if (entry.action === 'ban') {
+			const bucket = side === 'radiant' ? spareBans.radiant : spareBans.dire;
+			const seen = side === 'radiant' ? spareSeen.radiant : spareSeen.dire;
+			for (const candidate of available.slice(0, BAN_SPARE_PER_HAND)) {
+				if (seen.has(candidate.heroId)) continue;
+				seen.add(candidate.heroId);
+				bucket.push({ heroId: candidate.heroId, position: candidate.position, reason: candidate.reasons[0] ?? '', step: entry.step });
+			}
+		}
 		used.add(top.heroId);
 		recorded = [...recorded, top.heroId];
 		const bucket = side === 'radiant' ? radiant : dire;
@@ -273,5 +310,7 @@ export function predictDraftLocal(input: PredictInput): DraftPrediction | null {
 		dire,
 		summary: '按站内的号位胜率与对位，一手一手推出来的走向；不是胜率预测，也不代表两队的真实战术。',
 		source: 'local',
+		// 备用禁用池只给"模型给的禁用不够用"时兜底，本地那份自己不用它。
+		spareBans,
 	};
 }

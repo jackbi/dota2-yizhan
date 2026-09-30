@@ -239,6 +239,29 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	assert.ok(!second.bans.some((ban) => ids.includes(ban.heroId)), '夜魇的禁用不能与天辉的重复');
 	assert.equal(second.filled, 7, '这一边全靠补齐');
 	ok('禁用合成：模型在前、站内补齐，结果合法且两边不重复');
+
+	/*
+	 * 备用禁用池要够厚：模型丢掉大半禁用之后，两边都得能补满 7 条——否则板子上会空出几格
+	 * （实测截图里缺了 5 格），而真 BP 的禁用格不该有空位。
+	 */
+	const local = predictDraftLocal({ data, firstPicker: 'radiant' });
+	assert.ok(local?.spareBans, '本地推演要攒一份备用禁用池');
+	/*
+	 * 这一份只有 40 个英雄，而两边共用去重集合，所以备料会比真实对局（127 个英雄）薄得多。
+	 * 下限只取"够补满一边 7 条"；真正在意的是下面那条功能断言：重撞之后两边都要补得满。
+	 */
+	assert.ok(local!.spareBans!.radiant.length >= 7, `天辉的备料太薄（${local!.spareBans!.radiant.length} 条）`);
+	assert.ok(local!.spareBans!.dire.length >= 7, `夜魇的备料太薄（${local!.spareBans!.dire.length} 条）`);
+
+	// 模拟"模型给的禁用有一半撞车、剩下很少"：两边都要能补满 7 条。
+	const taken2 = new Set<number>([...local!.radiant.picks.map((p) => p.heroId), ...local!.dire.picks.map((p) => p.heroId)]);
+	const modelBans = { radiant: [{ heroId: local!.radiant.picks[0]!.heroId, reason: '撞车' }], dire: [{ heroId: local!.dire.picks[0]!.heroId, reason: '撞车' }] };
+	const filledR = mergeBans(modelBans.radiant, [...local!.radiant.bans, ...local!.spareBans!.radiant], taken2);
+	const filledD = mergeBans(modelBans.dire, [...local!.dire.bans, ...local!.spareBans!.dire], taken2);
+	assert.equal(filledR.bans.length, 7, '天辉要能补满 7 条禁用');
+	assert.equal(filledD.bans.length, 7, '夜魇要能补满 7 条禁用');
+	assert.equal(new Set([...filledR.bans, ...filledD.bans].map((ban) => ban.heroId)).size, 14, '两边的禁用不能互相重复');
+	ok('备用禁用池够厚：模型撞掉大半之后两边仍能补满 7 条，板子上不会空');
 }
 
 {

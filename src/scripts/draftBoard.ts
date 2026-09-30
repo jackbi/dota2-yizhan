@@ -1378,8 +1378,14 @@ if (data) {
 					);
 				const withPosition = (bans: { heroId: number; reason: string }[], positions: Map<number, number>) =>
 					bans.map((ban) => ({ ...ban, ...(positions.has(ban.heroId) ? { position: positions.get(ban.heroId) } : {}) }));
-				const radiantBans = mergeBans(parsed.radiant.bans, local.radiant.bans, taken);
-				const direBans = mergeBans(parsed.dire.bans, local.dire.bans, taken);
+				/*
+				 * 补齐用的料 = 本地推演那一手 + **它攒下来的备用池**。只用前者时，模型丢掉大半禁用之后
+				 * 一边可能只补到四五条，板子上就会空出几格（实测截图里缺了 5 格）——
+				 * 真 BP 的禁用格不该有空位。
+				 */
+				const fillOf = (side: 'radiant' | 'dire') => [...local[side].bans, ...(local.spareBans?.[side] ?? [])];
+				const radiantBans = mergeBans(parsed.radiant.bans, fillOf('radiant'), taken);
+				const direBans = mergeBans(parsed.dire.bans, fillOf('dire'), taken);
 				prediction = {
 					radiant: { picks: parsed.radiant.picks, bans: withPosition(radiantBans.bans, positionOf('radiant')) },
 					dire: { picks: parsed.dire.picks, bans: withPosition(direBans.bans, positionOf('dire')) },
