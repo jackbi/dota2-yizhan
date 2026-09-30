@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import type { PlayerMatchRow } from '../src/lib/heroPool.ts';
 import { summarizeHeroPool } from '../src/lib/heroPool.ts';
+import { collectHeroPools } from '../src/lib/heroPoolBatch.ts';
 
 /**
  * 「选手招牌英雄」的挑选规则。
@@ -11,6 +12,9 @@ import { summarizeHeroPool } from '../src/lib/heroPool.ts';
  * 第二条是英雄门槛：只打过一场的英雄上榜就是噪音，而这个错读者是能感觉到的（"这也算擅长？"）。
  * 第三条是「没有版本信息」那一档——它同样只表现为页面上多一个「 版本」的空标签。
  * 最后钉一下页面接线：战队页只该本地化它真正要画的那几个图标（多取会把整套图标拷进 `dist/`）。
+ *
+ * 后半段是**取数策略**：谁能不问（TTL 之内）、谁失败不该牵连别人、什么时候整批停下。
+ * 这条流一位选手一个请求，额度是全站共用的——停下来晚一个账号，就是多花一次（还要算重试）。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/playerHeroes.check.ts`）。
  */
@@ -114,6 +118,111 @@ function games(heroId: number, count: number, wins: number, beforePatch = false)
 	assert.match(page, /localizePatchIcons\(\{[^}]*poolHeroes/s, '图标要按名单里实际出现的英雄取');
 	assert.match(page, /poolHeroes\.length > 0/, '守卫要看"这一页有没有英雄"，不是"英雄列表拿没拿到"');
 	ok('接线：战队页只取本页用到的英雄图标');
+}
+
+/*
+ * ---- 取数策略（`heroPoolBatch.ts`）--------------------------------------------------
+ *
+ * 这三条对应构建汇总里能看到的三种结果：命中缓存、某一位没取到、整批停下。
+ * 用假的 `loadRows` 驱动，不碰网络。
+ */
+
+/** 一个能直接放进缓存的样本结论。 */
+const SAMPLE_POOL = summarizeHeroPool(games(7, 5, 3), OPTIONS);
+assert.ok(SAMPLE_POOL, '样本本身要能算出结论，否则下面几组断言失去意义');
+const DAY = 24 * 3600 * 1000;
+
+// 7. TTL 之内命中缓存：一次请求都不发
+{
+	const asked: number[] = [];
+	const result = await collectHeroPools({
+		accountIds: [11, 12],
+		cache: {
+			'11': { v: 1, at: DAY - 1000, pool: SAMPLE_POOL },
+			'12': { v: 1, at: DAY - 1000, pool: SAMPLE_POOL },
+		},
+		ttlMs: DAY,
+		now: DAY,
+		offline: false,
+		patch: OPTIONS,
+		stopReason: () => '不该走到这里',
+		loadRows: async (accountId) => {
+			asked.push(accountId);
+			return games(1, 5, 1);
+		},
+	});
+	assert.deepEqual(asked, [], 'TTL 之内就该直接用缓存，一分额度都不花');
+	assert.equal(result.fetched, 0);
+	assert.equal(result.pools.size, 2);
+	ok('新鲜缓存：不问上游');
+}
+
+// 8. 单个选手失败不算整批的错：剩下的人照问，失败的那位不写缓存
+{
+	const asked: number[] = [];
+	const result = await collectHeroPools({
+		accountIds: [21, 22, 23],
+		cache: {},
+		ttlMs: DAY,
+		now: DAY,
+		offline: false,
+		patch: OPTIONS,
+		stopReason: () => null,
+		loadRows: async (accountId) => {
+			asked.push(accountId);
+			if (accountId === 22) throw new Error('这个账号查不到');
+			return games(1, 6, 2);
+		},
+	});
+	assert.deepEqual(asked, [21, 22, 23], '一位失败不该让后面的人不问了');
+	assert.equal(result.failed, 1);
+	assert.equal(result.skipped, 0);
+	assert.equal(result.stoppedBy, undefined);
+	assert.equal(result.pools.size, 2);
+	assert.deepEqual(Object.keys(result.cache), ['21', '23'], '失败的那位不写缓存，下一轮重试');
+	ok('单个失败：只跳过他自己');
+}
+
+// 9. 撞到额度限制就整批停下：剩下的退旧缓存、一次都不问
+{
+	const asked: number[] = [];
+	const stale = { v: 1, at: 0, pool: SAMPLE_POOL };
+	const result = await collectHeroPools({
+		accountIds: [31, 32, 33, 34],
+		cache: { '31': stale, '32': stale, '33': stale, '34': stale },
+		ttlMs: DAY,
+		now: DAY,
+		offline: false,
+		patch: OPTIONS,
+		// 真实那条判据在 `playerHeroes` 里：`StratzError` 就当整批问不动（429 另标 `rateLimited`）。
+		stopReason: (error) => (error instanceof Error && error.message.includes('429') ? '额度限制' : null),
+		loadRows: async (accountId) => {
+			asked.push(accountId);
+			if (accountId === 32) throw new Error('STRATZ 请求失败：HTTP 429');
+			return games(1, 6, 2);
+		},
+	});
+	assert.deepEqual(asked, [31, 32], '第二个撞到 429 之后，剩下两个不该再问——那只会把额度打得更空');
+	assert.equal(result.skipped, 2);
+	assert.equal(result.stoppedBy, '额度限制');
+	assert.equal(result.pools.size, 4, '没问的人退旧缓存，页面上仍然有东西看');
+	assert.deepEqual(Object.keys(result.cache).sort(), ['31', '32', '33', '34'], '旧缓存要带过去，不能因为停下就丢');
+	ok('额度限制：整批停下，剩下的只退旧缓存');
+}
+
+// 10. 接线：TTL 是「按额度定的」那一档，429 要能被认出来
+{
+	const flow = readFileSync(new URL('../src/lib/playerHeroes.ts', import.meta.url), 'utf8');
+	const runtime = readFileSync(new URL('../src/lib/stratzRuntime.ts', import.meta.url), 'utf8');
+	assert.match(
+		flow,
+		/TTL_SECONDS\s*=\s*24 \* 3600/,
+		'招牌英雄的 TTL 取 24 小时：一位选手一个请求，缩短 TTL 等于把名单人数乘上刷新次数',
+	);
+	assert.match(flow, /error instanceof StratzError/, '撞到 STRATZ 的整批级错误要停下，不是只跳过这一位');
+	assert.match(runtime, /res\.status === 429[\s\S]{0,80}rateLimited = true/, '429 必须标成额度限制，否则熔断认不出来');
+	assert.match(runtime, /new StratzError\([^)]*rateLimited\)/, '这个标记要跟着错误一起抛出去');
+	ok('接线：TTL 与 429 标记都还在');
 }
 
 console.log(`playerHeroes 全部断言通过（${cases} 组）`);

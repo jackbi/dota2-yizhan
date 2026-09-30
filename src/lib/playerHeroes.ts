@@ -2,9 +2,10 @@ import path from 'node:path';
 import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource, sourceState } from './dataHealth';
 import type { PlayerHeroPool, PlayerMatchRow } from './heroPool';
-import { summarizeHeroPool } from './heroPool';
+import type { HeroPoolCache } from './heroPoolBatch';
+import { HERO_POOL_CACHE_VERSION, collectHeroPools } from './heroPoolBatch';
 import { fetchPatchUpdates } from './patchesApi';
-import { stratzGql, stratzRuntimeConfigured } from './stratzRuntime';
+import { StratzError, stratzGql, stratzRuntimeConfigured } from './stratzRuntime';
 
 /**
  * 选手的招牌英雄，**按版本统计**。
@@ -37,12 +38,19 @@ const POOL_TAKE = 100;
 /** 回退窗口：本版本样本不够时看这么久的比赛。 */
 const FALLBACK_WINDOW_DAYS = 90;
 const CACHE_FILE = path.join(process.cwd(), '.cache', 'stratz', 'player-heroes.json');
-/** 对局数据一直在涨，缓存给 6 小时；站点每 30 分钟重建，绝大多数轮次命中缓存。 */
-const TTL_SECONDS = 6 * 3600;
+/**
+ * 缓存 24 小时。
+ *
+ * 这一条是**按额度定的、不是按新鲜度定的**：一位选手一个请求（见下），而名单里的人数是
+ * 几十到几百，TTL 每缩短一次都是在乘这个人数。实测名单里 94 个账号，取 6 小时 = 每天
+ * 4 轮 × 94 ≈ 376 次请求，取 24 小时 = 94 次；而招牌英雄本来就是按版本、按周看的名单，
+ * 滞后一天在页面上看不出来（页面上那两个标签写的是口径，不是"几小时前抓的"）。
+ *
+ * 2026-09-30 复核：同一天里 `series-v2`（30 分钟 TTL，窗口内 50 来个系列）约 2.4k 次、
+ * `team-matches`（1 小时）约 0.6k 次，比这一条高一个量级——要省额度先看那两条。
+ */
+const TTL_SECONDS = 24 * 3600;
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
-
-/** 缓存格式版本。**给 `PlayerHeroPool` 加字段就要加一**（理由见 `roomList.ts` 那段）。 */
-const CACHE_VERSION = 1;
 
 const POOL_DOCUMENT = `query PlayerHeroPool($id: Long!, $from: Long!) {
 	player(steamAccountId: $id) {
@@ -70,21 +78,13 @@ interface RawPoolMatch {
 	players?: RawPoolPlayer[] | null;
 }
 
-interface PoolCacheEntry {
-	v?: number;
-	at: number;
-	pool?: PlayerHeroPool;
-}
-
-type PoolCache = Record<string, PoolCacheEntry>;
-
-async function readPoolCache(): Promise<PoolCache> {
-	const hit = await readCacheJson<PoolCache>(CACHE_FILE, (value) => typeof value === 'object' && value !== null);
+async function readPoolCache(): Promise<HeroPoolCache> {
+	const hit = await readCacheJson<HeroPoolCache>(CACHE_FILE, (value) => typeof value === 'object' && value !== null);
 	if (!hit) return {};
-	return Object.fromEntries(Object.entries(hit.value).filter(([, entry]) => entry?.v === CACHE_VERSION));
+	return Object.fromEntries(Object.entries(hit.value).filter(([, entry]) => entry?.v === HERO_POOL_CACHE_VERSION));
 }
 
-function writePoolCache(cache: PoolCache): Promise<void> {
+function writePoolCache(cache: HeroPoolCache): Promise<void> {
 	return writeCacheFile(CACHE_FILE, JSON.stringify(cache));
 }
 
@@ -115,15 +115,16 @@ function toRow(match: RawPoolMatch, accountId: number): PlayerMatchRow | null {
  *
  * 一位选手一个请求（STRATZ 没有按名字批量查选手的字段，`players()` 一次又只让带 5 个），
  * 所以这里靠缓存把成本压下来：一轮构建里真正联网的只有缓存过期的那几位。
- * 单个选手失败只跳过他自己——一个账号查不到不该让整页没有招牌英雄。
+ *
+ * 挑选与"什么时候停下"的判据在 `heroPoolBatch.ts`（纯函数、有自检），这里只负责三件跟
+ * 环境有关的事：读缓存文件、把 STRATZ 的响应压成对局行、按结果写健康记录。
  */
 export async function loadPlayerHeroPools(accountIds: number[]): Promise<Map<number, PlayerHeroPool>> {
 	const wanted = [...new Set(accountIds.filter((id) => Number.isInteger(id) && id > 0))];
-	const out = new Map<number, PlayerHeroPool>();
-	if (wanted.length === 0) return out;
+	if (wanted.length === 0) return new Map();
 	if (!stratzRuntimeConfigured()) {
 		await reportSource('player-heroes', '选手招牌英雄', 'empty', '没有配置 STRATZ token 或中转，这一块不展示');
-		return out;
+		return new Map();
 	}
 
 	const patch = await currentPatch();
@@ -138,55 +139,42 @@ export async function loadPlayerHeroPools(accountIds: number[]): Promise<Map<num
 	const windowStart = nowSec - FALLBACK_WINDOW_DAYS * 24 * 3600;
 	const since = patch.startTime > 0 ? Math.min(patch.startTime, windowStart) : windowStart;
 
-	const cache = await readPoolCache();
-	const next: PoolCache = {};
-	let fetched = 0;
-	let failed = 0;
-
-	for (const accountId of wanted) {
-		const key = String(accountId);
-		const hit = cache[key];
-		const carry = (): void => {
-			if (!hit) return;
-			next[key] = hit;
-			if (hit.pool) out.set(accountId, hit.pool);
-		};
-
-		if (hit && Date.now() - hit.at < TTL_SECONDS * 1000) {
-			carry();
-			continue;
-		}
-		if (OFFLINE) {
-			carry();
-			continue;
-		}
-
-		try {
+	const result = await collectHeroPools({
+		accountIds: wanted,
+		cache: await readPoolCache(),
+		ttlMs: TTL_SECONDS * 1000,
+		now: Date.now(),
+		offline: OFFLINE,
+		patch: { patchStart: patch.startTime, version: patch.version },
+		/*
+		 * 撞到限流/出口/上游这一类，整批停下：那不是"这一个账号没数据"，继续问剩下的几十个
+		 * 只会把额度打得更空。429、出口 IP 不对、中转口令不对、上游挂掉，都会走到
+		 * `StratzError`——这几类都是"整批都问不动"，所以整类都停。
+		 */
+		stopReason: (error) => {
+			if (!(error instanceof StratzError)) return null;
+			return error.rateLimited ? 'STRATZ 额度或频率限制（429）' : error.message;
+		},
+		loadRows: async (accountId) => {
 			const data = await stratzGql<{ player: { matches?: RawPoolMatch[] | null } | null }>(POOL_DOCUMENT, {
 				id: accountId,
 				from: since,
 			});
-			fetched += 1;
-			const rows = (data.player?.matches ?? [])
+			return (data.player?.matches ?? [])
 				.map((match) => toRow(match, accountId))
 				.filter((row): row is PlayerMatchRow => row !== null);
-			const pool = summarizeHeroPool(rows, { patchStart: patch.startTime, version: patch.version });
-			next[key] = { v: CACHE_VERSION, at: Date.now(), pool };
-			if (pool) out.set(accountId, pool);
-		} catch {
-			// 上游抖动：这一位退旧缓存，没有就这轮空着；不写缓存，下一轮重试。
-			failed += 1;
-			carry();
-		}
-	}
+		},
+	});
 
-	await writePoolCache(next);
-	const suffix = failed > 0 ? `，${failed} 位这轮没取到` : '';
+	await writePoolCache(result.cache);
+	const notes = [`${result.pools.size} / ${wanted.length} 位选手，口径 ${patch.version || '未知版本'}`];
+	if (result.failed > 0) notes.push(`${result.failed} 位这轮没取到`);
+	if (result.stoppedBy) notes.push(`撞到「${result.stoppedBy}」，剩下 ${result.skipped} 位这一轮没问`);
 	await reportSource(
 		'player-heroes',
 		'选手招牌英雄',
-		sourceState(fetched > 0, out.size),
-		`${out.size} / ${wanted.length} 位选手，口径 ${patch.version || '未知版本'}${suffix}`,
+		sourceState(result.fetched > 0, result.pools.size),
+		notes.join('；'),
 	);
-	return out;
+	return result.pools;
 }

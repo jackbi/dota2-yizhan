@@ -35,7 +35,20 @@ export function stratzConfigProblem(): string {
 }
 
 /** 上游故障时抛错，调用方据此区分「取不到」与「这项数据本来就没有」。 */
-export class StratzError extends Error {}
+export class StratzError extends Error {
+	/**
+	 * 上游按**额度/频率**拒了（429）。
+	 *
+	 * 单独标出来是因为它和"偶发失败"的处置相反：偶发失败重试就有，额度用完是**继续问只会更糟**。
+	 * 批量取数的调用方（`playerHeroes`）据此把整批停掉，而不是把剩下几十个账号再问一遍。
+	 */
+	readonly rateLimited: boolean;
+
+	constructor(message: string, rateLimited = false) {
+		super(message);
+		this.rateLimited = rateLimited;
+	}
+}
 
 interface GraphQLBody<T> {
 	data?: T | null;
@@ -53,6 +66,8 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 	}
 
 	let lastError = '请求失败';
+	/** 这一串重试里有没有撞到过 429：有的话最终这个错误按"额度限制"上报。 */
+	let rateLimited = false;
 	for (let attempt = 0; attempt < 3; attempt += 1) {
 		if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
 		await pace();
@@ -65,6 +80,7 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 			});
 			// 429 与 5xx 值得重试；403 要读完 body 才能分辨原因（见下）。
 			if (res.status === 429 || res.status >= 500) {
+				if (res.status === 429) rateLimited = true;
 				lastError = `HTTP ${res.status}`;
 				continue;
 			}
@@ -98,5 +114,5 @@ export async function stratzGql<T>(document: string, variables: Record<string, u
 			lastError = error instanceof Error ? error.message : String(error);
 		}
 	}
-	throw new StratzError(`STRATZ 请求失败：${lastError}`);
+	throw new StratzError(`STRATZ 请求失败：${lastError}`, rateLimited);
 }
