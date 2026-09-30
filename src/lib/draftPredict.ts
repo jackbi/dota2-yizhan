@@ -47,6 +47,52 @@ export interface DraftPrediction {
 	summary: string;
 	/** 这份预测是谁给的：本地打分层，还是模型。界面上的措辞跟着它变。 */
 	source: 'local' | 'model';
+	/**
+	 * 只有模型那条路会有：因为"同一个英雄既被禁又被选"而丢掉的禁用条数。
+	 * 界面要照实说出来，否则读者会以为模型的禁用就只有那几条。
+	 */
+	droppedBans?: number;
+	/** 只有模型那条路会有：禁用不足 7 条时，由站内引擎补齐的条数。理由同上，要照实说。 */
+	filledBans?: number;
+}
+
+/**
+ * 把模型给的禁用与本地推演的禁用合成一份**完整且合法**的禁用表（每边 7 条）。
+ *
+ * 为什么需要这一步：实测 DeepSeek 反复写出"各队禁对面的熟手、又各拿自己的熟手"——
+ * 这在逻辑上就不可能（同一个英雄不能既被禁又被选），它给的禁用里往往有六成与自己的挑选撞车，
+ * 丢掉之后一边只剩一两条。
+ *
+ * 挑选是模型最在行的部分（按号位挑得又准、理由也带得出场次），所以**挑选一律用模型的**；
+ * 禁用则先用模型给的不冲突的那些，不够 7 条就按站内引擎那份补齐——两边是同一个口径
+ * （都是"先掐对面该号位的熟手"），所以拼在一起不会互相打架。补了几条要如实报出来。
+ */
+export function mergeBans(
+	modelBans: readonly { heroId: number; reason: string }[],
+	localBans: readonly { heroId: number; reason: string }[],
+	/**
+	 * 已经被占用的英雄（两边共用的集合，调用方传同一个进来）：两边的十手挑选 + 已经定下来的禁用。
+	 * 传集合而不是数组，是因为两边要**共用**它——先合成天辉的禁用，再合成夜魇的，后者能看到前者。
+	 */
+	taken: Set<number>,
+	limit = 7,
+): { bans: { heroId: number; reason: string }[]; filled: number } {
+	const bans: { heroId: number; reason: string }[] = [];
+	for (const ban of modelBans) {
+		if (bans.length >= limit) break;
+		if (taken.has(ban.heroId)) continue;
+		taken.add(ban.heroId);
+		bans.push(ban);
+	}
+	let filled = 0;
+	for (const ban of localBans) {
+		if (bans.length >= limit) break;
+		if (taken.has(ban.heroId)) continue;
+		taken.add(ban.heroId);
+		bans.push(ban);
+		filled += 1;
+	}
+	return { bans, filled };
 }
 
 export interface PredictInput {

@@ -3,6 +3,7 @@ import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { predictDraftLocal } from '../src/lib/draftPredict.ts';
 import { buildPredictionMessages, parsePredictionReply } from '../src/lib/draftPrompt.ts';
 import { FAMILIARITY_WEIGHT, buildRosterProfile } from '../src/lib/teamSignature.ts';
+import { mergeBans } from '../src/lib/draftPredict.ts';
 
 /**
  * 「AI 预测整局 BP」这一层的自检。
@@ -180,6 +181,39 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 
 // ---------------------------------------------------------------- 提示词
 
+/**
+ * 禁用表的合成：**挑选用模型的、禁用用"模型的 + 站内补齐"**，永远给出每边 7 条、
+ * 且与十手挑选都不冲突的合法禁用。
+ *
+ * 这条是拿真实 DeepSeek 回复逼出来的：它十次里十次都会写出"各队禁对面熟手、又各拿自己熟手"，
+ * 于是六成左右的禁用与它自己的挑选撞车。丢弃之后一边只剩一两条，页面上的"禁用（1）"就是这么来的。
+ */
+{
+	const bansFrom = (ids: number[], reason: string) => ids.map((heroId) => ({ heroId, reason }));
+	const taken = new Set<number>([6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+	// 模型给的禁用里前三条与挑选撞车，只有 1、2 能用；站内那份用来补齐。
+	const result = mergeBans(
+		bansFrom([6, 7, 8, 1, 2], '模型给的'),
+		bansFrom([1, 2, 3, 4, 5, 16, 17, 18], '站内推的'),
+		taken,
+	);
+	assert.equal(result.bans.length, 7, '不足 7 条要补齐');
+	assert.deepEqual(result.bans.slice(0, 2).map((ban) => ban.heroId), [1, 2], '模型给的不冲突的那几条要排在前面');
+	assert.equal(result.bans[2]?.reason, '站内推的', '后面的才是站内补齐的');
+	assert.equal(result.filled, 5, '补了几条要数得出来');
+	const ids = result.bans.map((ban) => ban.heroId);
+	assert.equal(new Set(ids).size, ids.length, '禁用之间不能重复');
+	assert.ok(!ids.some((id) => [6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(id)), '禁用不能与任何一方的挑选撞车');
+	/*
+	 * 第二次调用共用同一个 `taken`：两边的禁用也不能互相重复。
+	 * 传进来的站内清单里 1、2、3 已经被占用了，要跳过去接着往下取。
+	 */
+	const second = mergeBans([], bansFrom([1, 2, 3, 19, 20, 21, 22, 23, 24, 25], '站内推的'), taken);
+	assert.ok(!second.bans.some((ban) => ids.includes(ban.heroId)), '夜魇的禁用不能与天辉的重复');
+	assert.equal(second.filled, 7, '这一边全靠补齐');
+	ok('禁用合成：模型在前、站内补齐，结果合法且两边不重复');
+}
+
 {
 	const signature = buildRosterProfile('Team Spirit', [
 		{ nick: 'Yatoro', position: 1, scope: '7.41f 版本', heroes: [{ heroId: 41, games: 6, wins: 4 }] },
@@ -194,7 +228,9 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	const system = messages[0]?.content ?? '';
 	const user = messages[1]?.content ?? '';
 	assert.match(system, /heroId/, '系统提示词要给字段名');
-	assert.match(system, /不能重复/, '系统提示词必须禁止两边选同一个英雄');
+	assert.match(system, /10 个挑选 \+ 14 条禁用 = 24 个 heroId，必须互不相同/, '系统提示词必须禁止同一个英雄出现两次（含禁与选之间）');
+	assert.match(system, /先定禁用、再从剩下的人里定挑选/, '要写清"先禁后选"的顺序——实测只说"不能重复"模型会照错不误');
+	assert.match(system, /\*\*交答案之前自查\*\*/, '要明确要求模型交卷前自查重复');
 	assert.match(system, /JSON/, '系统提示词必须要求 JSON 输出');
 	assert.match(system, /绝对不要编造/, '系统提示词必须禁止编数字');
 	assert.match(user, /Team Falcons/, '用户提示词要带天辉队名');
@@ -258,10 +294,11 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	short.dire.picks = short.dire.picks.slice(0, 4);
 	assert.equal(parsePredictionReply(JSON.stringify(short), allowed), null, '每边必须给满五个挑选');
 
-	// 一手禁用都没写：那等于没预测 BP。
+	// 两边一手禁用都没写：那等于没预测 BP。（只丢一边是允许的——冲突被丢掉时就会成这样。）
 	const noBans = structuredClone(base);
 	noBans.radiant.bans = [];
-	assert.equal(parsePredictionReply(JSON.stringify(noBans), allowed), null, '一手禁用都不写的不算预测');
+	noBans.dire.bans = [];
+	assert.equal(parsePredictionReply(JSON.stringify(noBans), allowed), null, '两边一手禁用都不写的不算预测');
 
 	/*
 	 * 号位这一版的硬要求。两条都关系到界面能不能核对"这一手像不像他们"：
@@ -278,6 +315,36 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	const badPosition = structuredClone(base);
 	badPosition.dire.picks[0] = { heroId: badPosition.dire.picks[0].heroId, position: 9, reason: 'r' };
 	assert.equal(parsePredictionReply(JSON.stringify(badPosition), allowed), null, '号位超出 1-5 的条目不算数');
+
+	/*
+	 * 同一个英雄既被禁、又被选（模型真会这么写：一次真实的 DeepSeek 回复把米拉娜同时放进了
+	 * 天辉的禁用与挑选）。**保挑选、丢禁用**——挑选是预测的主体，禁用只是背景，
+	 * 而禁用本来就允许少于 7 条；反过来丢挑选会让整份预测凑不满五个挑选而作废。
+	 */
+	const banAndPick = structuredClone(base);
+	banAndPick.radiant.bans.push({ heroId: 6, reason: 'r' });
+	const salvaged = parsePredictionReply(JSON.stringify(banAndPick), allowed);
+	assert.ok(salvaged, '禁选冲突不该让整份预测作废');
+	assert.equal(salvaged!.radiant.picks.length, 5, '五个挑选要保住');
+	assert.ok(!salvaged!.radiant.bans.some((ban) => ban.heroId === 6), '冲突的那条禁用应当被丢掉');
+	assert.equal(salvaged!.droppedBans, 1, '丢掉几条要如实报出来，界面要照实说明');
+
+	/*
+	 * 真实 DeepSeek 回复里的那种形状：**两边都把对面的熟手禁了、又都把同一个英雄选走**。
+	 * 挑选之间不冲突（十个挑选互不重复）时，整份要能救回来——十个挑选都保住，
+	 * 冲突的禁用丢掉。这条钉住的是"不要让模型的格式小毛病毁掉整份预测"。
+	 */
+	const crossed = structuredClone(base);
+	crossed.dire.bans = [6, 7, 8].map((heroId) => ({ heroId, reason: 'r' }));
+	const rescued = parsePredictionReply(JSON.stringify(crossed), allowed);
+	assert.ok(rescued, '一边禁了另一边的挑选时，要保住挑选、丢掉那条禁用');
+	assert.equal(rescued!.dire.bans.length, 0, '三条都与对面的挑选冲突，应当全被丢掉');
+	assert.equal(rescued!.droppedBans, 3, '丢掉三条要数得出来');
+	assert.deepEqual(
+		rescued!.dire.picks.map((pick) => pick.heroId),
+		[11, 12, 13, 14, 15],
+		'夜魇的五个挑选一个都不能少',
+	);
 
 	assert.equal(parsePredictionReply('模型今天不想说话', allowed), null, '不是 JSON 的回复要判成没结果');
 	assert.equal(parsePredictionReply('', allowed), null, '空回复要判成没结果');

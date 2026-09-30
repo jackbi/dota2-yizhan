@@ -30,7 +30,7 @@ import { CM_PHASE_STARTS, CM_STEPS, canPlay, otherSide, play, sideOfOwner, skip,
 import type { FoeForm } from '../lib/draftFoe.ts';
 import { MIN_PICKS, foeHeadline, foeHeroOf, foeHighlights, foeWinRate } from '../lib/draftFoe.ts';
 import type { DraftPrediction, PredictedSide } from '../lib/draftPredict.ts';
-import { predictDraftLocal } from '../lib/draftPredict.ts';
+import { mergeBans, predictDraftLocal } from '../lib/draftPredict.ts';
 import type { RosterProfile } from '../lib/teamSignature.ts';
 import { buildRosterProfile, rosterPoolOf, signatureScopeLabel } from '../lib/teamSignature.ts';
 import type { LaneData } from '../lib/draftLanes.ts';
@@ -1329,11 +1329,24 @@ if (data) {
 					if (predictStatus) predictStatus.textContent = '模型的回复解析不了，上面是按站内数据推的';
 					return;
 				}
+				/*
+				 * **挑选用模型的，禁用用"模型的 + 站内补齐"。**
+				 *
+				 * 实测 DeepSeek 反复把"各队禁对面熟手"和"各队拿自己熟手"同时写出来，于是六成左右的
+				 * 禁用与它自己的挑选撞车（同一个英雄不能既被禁又被选）。挑选是它最在行的部分，
+				 * 一律保留；禁用先用它给的不冲突的那几条，不够 7 条就按站内引擎那份补齐——
+				 * 两边是同一个口径（先掐对面该号位的熟手），拼起来不会互相打架。
+				 */
+				const taken = new Set<number>([...parsed.radiant.picks, ...parsed.dire.picks].map((pick) => pick.heroId));
+				const radiantBans = mergeBans(parsed.radiant.bans, local.radiant.bans, taken);
+				const direBans = mergeBans(parsed.dire.bans, local.dire.bans, taken);
 				prediction = {
-					radiant: parsed.radiant,
-					dire: parsed.dire,
+					radiant: { picks: parsed.radiant.picks, bans: radiantBans.bans },
+					dire: { picks: parsed.dire.picks, bans: direBans.bans },
 					summary: parsed.summary,
 					source: 'model',
+					droppedBans: parsed.droppedBans,
+					filledBans: radiantBans.filled + direBans.filled,
 				};
 				if (predictStatus) predictStatus.textContent = '';
 			} catch {
@@ -1435,6 +1448,18 @@ if (data) {
 			}
 			const source = prediction.source === 'model' ? '模型预测' : '按站内数据推演';
 			const summary = prediction.summary ? `<p class="mt-3 text-sm leading-relaxed text-muted">${esc(prediction.summary)}</p>` : '';
+			/*
+			 * 丢过或补过禁用都要照实说：这两件事都会让读者对"这份禁用是谁给的"产生误判。
+			 * 实测模型十次里十次都会写出与挑选冲突的禁用，所以这段话基本每次都会出现。
+			 */
+			const notes: string[] = [];
+			if (prediction.droppedBans) notes.push(`模型给的禁用里有 ${prediction.droppedBans} 条与挑选撞了同一个英雄（一局里不能既禁又选），已丢弃`);
+			/*
+			 * 补齐不是保证能凑满：站内那份禁用也可能与已经定下来的英雄撞车。
+			 * 所以这里只说"补了几条"，不承诺"每边 7 条"——上一版写了那句，实测有一侧只补到 5 条。
+			 */
+			if (prediction.filledBans) notes.push(`另外补了 ${prediction.filledBans} 条站内数据推的禁用（冲突太多时，某一侧的禁用会不足 7 条）`);
+			const dropped = notes.length > 0 ? `<p class="mt-1 text-xs text-dota-light">${notes.join('；')}</p>` : '';
 			const firstLine = `<p class="text-xs text-faint">${source} · 先选方 ${esc(sideLabel(firstPick))} · 挑选的理由写在卡片上，禁用那行的号位是"对面会拿它打几号位"（鼠标停一下有依据）</p>`;
 			predictBox.style.display = '';
 			predictBox.innerHTML = `
@@ -1443,6 +1468,7 @@ if (data) {
 					${renderPredictSide('dire', prediction.dire)}
 				</div>
 				${summary}
+				${dropped}
 				${firstLine}`;
 		}
 

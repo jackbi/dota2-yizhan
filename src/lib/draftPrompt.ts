@@ -671,12 +671,19 @@ export function buildPredictionSystemPrompt(): string {
 		'你必须遵守：',
 		'1. 每一边给 5 个挑选、不超过 7 个禁用；heroId 必须是用户给出的数据里出现过的数字。',
 		'2. **每一个挑选都要给 position（1 到 5）**，也就是它被拿在几号位；每边的五个挑选要刚好占满 1 到 5。',
-		'3. 两边的英雄加起来不能重复（一个英雄一局只能用一次）。',
+		'3. **顺序是"先定禁用、再从剩下的人里定挑选"**，因为一个英雄一局只能出现一次：',
+		'   ① 先把两边一共 14 条禁用写出来（先选方 7 条、后选方 7 条），把对面还没拿到的熟手掐掉；',
+		'   ② 然后两边的挑选**只能从没有被任何一方禁掉的英雄里挑**。',
+		'   最常见的错法是把"对面禁掉 X"和"对面拿着 X"同时写进答案（实测反复出现）：',
+		'   X 被禁了就轮不到任何人拿它。**交答案之前自查**：把两边的 bans 与 picks 列成一张表，',
+		'   10 个挑选 + 14 条禁用 = 24 个 heroId，必须互不相同，有重复就换掉那一条。',
 		'4. 用户会给两支队**每个号位是谁、他本版本拿哪几个英雄打过多少场**。这是预测的主依据：',
-		'   **挑选先在那个号位的池子里挑**，池子里挑最强的那个就行；只有池子里的英雄都已经被禁/被选，',
+		'   **挑选先在那个号位的池子里挑，而且只能挑没有被禁掉的那个**（被禁掉的英雄谁也拿不到）；',
+		'   池子里剩下的挑最强的就行；只有池子里的英雄都已经被禁/被选，',
 		'   或者那个号位本来就没有记录时，才到池子外挑，并在理由里说清"他本窗口没打过它"。',
 		'   不要在池子里一个都没试过的情况下直接跳到版本强势——那样预测出来的是全服阵容，不是这两支队。',
 		'5. 禁用同样按人：**优先掐对面该号位选手的熟手**（依据写得出场次的那几个），其次是版本高胜率点。',
+		'   被你这么掐掉的英雄，对面挑选时就用不上了——所以对面那 5 个挑选要从"没被禁掉"的池子里出。',
 		'   先选的队伍优先拿自己最缺的号位。',
 		'6. 理由里的数字只能来自用户给出的字段（号位胜率与场次、职业出场与被禁、每个号位选手的场次与胜率）。',
 		'   这些数据之外的版本强弱、选手风格、历史战绩你都不知道，绝对不要编造。',
@@ -732,61 +739,81 @@ export interface ParsedPrediction {
 	radiant: ParsedPredictedSide;
 	dire: ParsedPredictedSide;
 	summary: string;
+	/**
+	 * 因为"与挑选冲突"被丢掉的禁用条数。
+	 *
+	 * 模型偶尔会写出"一边禁掉它、另一边又选它"这种不合法的组合（实测过一次：米拉娜同时进了
+	 * 天辉的禁用与挑选）。这种时候丢掉的是**禁用**（见 `parsePredictionReply` 的顺序说明），
+	 * 并把丢掉的条数带出来，界面照实说明——不能让读者以为模型的禁用就只有这么几条。
+	 */
+	droppedBans: number;
 }
 
 /** 一边最多能禁几个（7 手），解析时按它设上限。 */
 const MAX_PREDICTED_BANS = 7;
 const PREDICTED_PICKS = 5;
 
-function readPredictedSide(raw: unknown, allowed: ReadonlySet<number>, taken: Set<number>): ParsedPredictedSide | null {
-	if (!raw || typeof raw !== 'object') return null;
-	const list = (value: unknown): Record<string, unknown>[] =>
-		(Array.isArray(value) ? value : []).filter(
-			(item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object',
-		);
+/** 把一边的原始对象与其中的数组收成好读的形状。 */
+function sideOf(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+}
 
-	/**
-	 * 通用的一条：英雄必须真实存在、两边不重复。`taken` 是两边共用的集合，
-	 * 所以"同一个英雄被两边都选了"这种回复会在读第二边时被丢掉。
-	 */
-	const accept = (row: Record<string, unknown>): { heroId: number; reason: string } | null => {
-		const heroId = Number(row.heroId);
-		// 数据里不存在的英雄、或已经被另一边用掉的英雄，一律丢掉——重复的英雄在 DOTA 里不可能出现。
-		if (!Number.isInteger(heroId) || !allowed.has(heroId) || taken.has(heroId)) return null;
-		taken.add(heroId);
-		return { heroId, reason: typeof row.reason === 'string' ? row.reason.trim().slice(0, 200) : '' };
-	};
+function rowsOf(value: unknown): Record<string, unknown>[] {
+	return (Array.isArray(value) ? value : []).filter(
+		(item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object',
+	);
+}
 
-	// 先读禁用再读挑选：让"重复英雄"那条判据优先落在先出现的列表上，结果与模型给的顺序一致。
-	const bans: ParsedPredictedSide['bans'] = [];
-	for (const row of list((raw as { bans?: unknown }).bans)) {
-		if (bans.length >= MAX_PREDICTED_BANS) break;
-		const entry = accept(row);
-		if (entry) bans.push(entry);
-	}
-
-	/*
-	 * 挑选要带号位。**缺号位、或号位不在 1–5 的那一条不算数**：界面上要写"这个人在这个位置上
-	 * 会不会它"，没有号位就写不出来——那正是上一版被一眼看出来的问题。所以这一版把号位当成
-	 * 与"英雄真实存在"同一档的硬要求，不合格的条目直接丢掉，下面再靠数量把关。
-	 */
+/**
+ * 读一边的**挑选**。每个挑选都要带号位，且五个号位恰好占满 1–5。
+ *
+ * `taken` 是两边共用的集合，先读到的先占位——所以"两边选中同一个英雄"这种回复会在读第二边时
+ * 被丢掉，凑不满五个挑选就整份作废（一个英雄不可能同时在两边）。
+ */
+function readPicks(raw: Record<string, unknown>, allowed: ReadonlySet<number>, taken: Set<number>): ParsedPredictedSide['picks'] | null {
 	const picks: ParsedPredictedSide['picks'] = [];
-	for (const row of list((raw as { picks?: unknown }).picks)) {
+	for (const row of rowsOf(raw.picks)) {
 		if (picks.length >= PREDICTED_PICKS) break;
 		const position = Number(row.position);
+		/*
+		 * 号位是硬要求：界面上要写"这个人在这个位置上会不会它"，没有号位就写不出来
+		 * ——那正是上一版被一眼看出来的问题（"二号位的天穹守望者"）。
+		 */
 		if (!Number.isInteger(position) || position < 1 || position > 5) continue;
-		const entry = accept(row);
-		if (entry) picks.push({ ...entry, position });
+		const heroId = Number(row.heroId);
+		if (!Number.isInteger(heroId) || !allowed.has(heroId) || taken.has(heroId)) continue;
+		taken.add(heroId);
+		picks.push({ heroId, position, reason: typeof row.reason === 'string' ? row.reason.trim().slice(0, 200) : '' });
 	}
-	// 每边五个挑选是规则，少一个就不是一局 BP 了；禁用少了还能看，所以只要求非空。
-	if (picks.length < PREDICTED_PICKS || bans.length === 0) return null;
-	/*
-	 * 五个挑选还要**刚好占满 1 到 5**：两个人都算在二号位、一号位没人，那不是一局阵容。
-	 * 这一条能顺手挡住"模型把 position 随手填成同一个值"。
-	 */
-	const filled = new Set(picks.map((pick) => pick.position));
-	if (filled.size !== PREDICTED_PICKS) return null;
-	return { bans, picks };
+	// 每边五个挑选是规则，少一个就不是一局 BP 了。
+	if (picks.length < PREDICTED_PICKS) return null;
+	// 五个挑选要**刚好占满 1 到 5**：两个人都算二号位、一号位没人，那不是一局阵容。
+	if (new Set(picks.map((pick) => pick.position)).size !== PREDICTED_PICKS) return null;
+	return picks;
+}
+
+/**
+ * 读一边的**禁用**：与已经占位的英雄冲突（对面或自己选走了、对面禁过了）就丢掉那一条。
+ *
+ * 丢的是禁用而不是挑选，这是实测逼出来的顺序：真实的一次 DeepSeek 回复把"每边禁对面熟手、
+ * 每边拿自己熟手"写成了两份独立清单，同一个英雄既被禁又被选。挑选是这份预测的主体、
+ * 禁用只是背景，而禁用本来就允许少于 7 条，所以这里保住挑选、丢掉冲突的禁用，并把条数带出去。
+ */
+function readBans(raw: Record<string, unknown>, allowed: ReadonlySet<number>, taken: Set<number>): { bans: ParsedPredictedSide['bans']; dropped: number } {
+	const bans: ParsedPredictedSide['bans'] = [];
+	let dropped = 0;
+	for (const row of rowsOf(raw.bans)) {
+		if (bans.length >= MAX_PREDICTED_BANS) break;
+		const heroId = Number(row.heroId);
+		if (!Number.isInteger(heroId) || !allowed.has(heroId) || taken.has(heroId)) {
+			// 编出来的英雄不算"因冲突被丢"，那种本来就该消失，数到对账里只会误导。
+			if (Number.isInteger(heroId) && allowed.has(heroId)) dropped += 1;
+			continue;
+		}
+		taken.add(heroId);
+		bans.push({ heroId, reason: typeof row.reason === 'string' ? row.reason.trim().slice(0, 200) : '' });
+	}
+	return { bans, dropped };
 }
 
 /**
@@ -811,10 +838,27 @@ export function parsePredictionReply(raw: string, allowedHeroIds: readonly numbe
 	const allowed = new Set(allowedHeroIds);
 	const taken = new Set<number>();
 	const body = parsed as { radiant?: unknown; dire?: unknown; summary?: unknown };
-	const radiant = readPredictedSide(body.radiant, allowed, taken);
-	const dire = readPredictedSide(body.dire, allowed, taken);
-	if (!radiant || !dire) return null;
-
+	const radiantRaw = sideOf(body.radiant);
+	const direRaw = sideOf(body.dire);
+	/*
+	 * **先把两边的挑选都读完，再读禁用。**
+	 *
+	 * `taken` 是先到先得，所以顺序决定了冲突时保住谁。挑选是这份预测的主体（界面上一张卡
+	 * 一个号位、一条理由），禁用只是背景，所以挑选必须先占位：一边禁掉、另一边选中的英雄，
+	 * 结果应该是"禁用那条被丢掉"，而不是"挑选消失、整份预测作废"。
+	 */
+	const radiantPicks = readPicks(radiantRaw, allowed, taken);
+	const direPicks = readPicks(direRaw, allowed, taken);
+	if (!radiantPicks || !direPicks) return null;
+	const radiantBans = readBans(radiantRaw, allowed, taken);
+	const direBans = readBans(direRaw, allowed, taken);
+	// 两边一条禁用都没有，说明模型没按格式来（或全被冲突吃掉）——这种不算预测。
+	if (radiantBans.bans.length + direBans.bans.length === 0) return null;
 	const summary = typeof body.summary === 'string' ? body.summary.trim().slice(0, 600) : '';
-	return { radiant, dire, summary };
+	return {
+		radiant: { bans: radiantBans.bans, picks: radiantPicks },
+		dire: { bans: direBans.bans, picks: direPicks },
+		summary,
+		droppedBans: radiantBans.dropped + direBans.dropped,
+	};
 }
