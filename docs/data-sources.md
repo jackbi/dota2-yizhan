@@ -412,22 +412,30 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
   `buildEvents()` 归并出的 `event.teams` 还是**拷贝**——只改其中一个，线上表现就是
   一部分页面对了、一部分还在热链（这个漏过一次：先把对阵改对了，赛事页的「参赛队伍」那一栏没跟上）。
 
-**深色背景要挑对那一版队标。** 赛程页给的缩略图常常是 `_lightmode`（Liquipedia 模板里那是给**亮色**
-界面用的），叠在站点的 `--color-surface-2`（`#2f140f`）上几乎是黑的：实测平均亮度 Team Spirit 13.9、
-Team Lynx 12.6、Team Nemesis 25.9，而可看的 NAVI 73.2、Team Liquid 70.2。现在从战队页 Infobox 读
-`imagedark=`（给深色背景的那一版，`parseTeamDarkLogo`），**下到了才换**：Team Spirit 154.5、
-Team Lynx 131.0、Team Nemesis 40.9、Team Liquid 125.1（同一套量法）。两条路都是 50 个一批：
-先批量取 wikitext 读文件名，再把文件名批量问成缩略图地址（`.cache/liquipedia/team-dark-logos.json`，
-一周）——`Special:FilePath` 那条路实测 403，被 Cloudflare 挡着，只能问 API。
+**队徽放在浅色底板上，不挑「深色版」。** 赛程页给的缩略图常常是 `_lightmode`（Liquipedia 模板里
+那是给**亮色**界面用的），而队徽本身多半是黑图形 + 透明底：实测 46 张里 **9 张**的图形像素几乎全黑
+（Team Spirit、Team Lynx、Team Nemesis、MOUZ、Natus Vincere、Team Spirit Academy、Balu Team、
+Kalmychata、Xipto、Yangon Galacticos），叠在 `--color-surface-2`（`#2f140f`）上等于没画。现在
+和 Liquipedia 自己一样，把队标放进一块暖白底板（`--color-plate`）：黑队徽、白队徽、彩色队徽都能
+看见，一处 CSS 解决，五处页面（场次行、对阵页、战队列表、战队详情、赛事页）共用。
 
-三个坑：
+试过并撤掉的另一条路是读 Infobox 的 `imagedark=`（给深色背景的那一版）。它有两个死角：
 
-- **别靠文件名猜**。想过把 `_lightmode` 换成 `_darkmode` 直接问，11 支里有名字对不上的
-  （Team Lynx 的真名是 `Team_Lynx_full_darkmode.png`），推出来的地址查不到。只认 Infobox。
-- **下到了才换**。深色版是另一个地址、另一个文件名，离线构建（还没下过）时如果先改写地址再本地化，
-  结果是把原来能显示的本地队标换成一张外链——本地化分两批做就是为了这个。
-- **Balu Team 与 Kalmychata 修不了**：这两支在 Liquipedia 上**没有页面**，也就没有 `imagedark`
-  （STRATZ 那边也没有，`cdn.stratz.com/images/dota2/teams/<id>.png` 实测 502）。它们的队标仍然偏暗。
+- **`imagedark` 不一定是队徽，可能是横排的文字组合 logo**。Team Spirit 那张
+  `Team_Spirit_2022_full_darkmode.png` 实测 120×31、Team Nemesis 的 `..._full_darkmode.png` 是
+  120×22，而当时的队标框是方形 + `object-cover`——宽图被裁成方图之后只剩一个字母的碎片，页面上
+  看起来就是「队标没加载出来」。这次报上来的正是这个现象。
+- **深色版是给深色背景画的**（白字 / 白图形），底板一旦改成浅色，它自己反而看不见。所以
+  「浅色底板」与「深色版队标」只能留一件，最后选了底板。
+
+`.cache/liquipedia/team-dark-logos.json` 现在没有代码再读，旧文件留着不影响构建，可以删。
+另外两条当时记下来的坑仍然有效（万一以后又想做深色版）：**别靠文件名猜**——把 `_lightmode`
+换成 `_darkmode` 去问，11 支里有名字对不上的（Team Lynx 的真名是 `Team_Lynx_full_darkmode.png`）；
+`Special:FilePath` 那条路实测 403 被 Cloudflare 挡着，只能走 `action=query&prop=imageinfo`。
+
+**队标框不许再用 `object-cover`。** 宽队标会被裁成碎片（上面那个 120×31 → 只剩一个字母），
+改用 `object-contain` 让整个 mark 都在，哪怕小一点。`scripts/teamLogos.check.ts` 守这条：
+五处页面的 7 张队标必须同时带 `bg-plate` 与 `object-contain`。
 
 ### 赛事档位，以及「一线队」是怎么定的
 

@@ -26,7 +26,6 @@
 | `.cache/liquipedia/tiers.json` | 各届赛事的档位（Tier 1–4） | 7 天 |
 | `.cache/liquipedia/rosters.json` | 各战队的人员名单 | 12 小时 |
 | `.cache/liquipedia/player-ids.json` | 选手的 Steam 账号 id（从选手页取） | 7 天 |
-| `.cache/liquipedia/team-dark-logos.json` | 战队页 Infobox 里的深色版队标地址 | 7 天 |
 | `.cache/stratz/player-heroes.json` | 选手按版本统计的招牌英雄 | 24 小时 |
 | `.cache/live/` | 斗鱼 / 虎牙各直播间的开播状态 | 5 分钟 |
 | `.cache/roomlist/` | 斗鱼 / 虎牙 DOTA2 分区的热门房间列表 | 30 分钟 |
