@@ -41,9 +41,14 @@ import { PROXY_MODE } from './fetchText';
 export interface ImageChannel {
 	/** `.cache/` 与 `dist/` 下的子目录名，页面里用的就是 `/<dir>/xxx.jpg`。 */
 	dir: string;
-	/** 代理裁剪出的尺寸，也是落盘尺寸。 */
-	width: number;
-	height: number;
+	/**
+	 * 代理兜底时缩放的尺寸。**两个都不填就是"按原样取回"**：代理只转格式，不缩放也不裁剪。
+	 *
+	 * 队标走的就是这条（见 `teamLogos.ts`）：Liquipedia 给的是它自己按版面缩好的小图，
+	 * 再按 128×128 放大裁方只会比热链时期更差——而这个模块的承诺正是"不会更差"。
+	 */
+	width?: number;
+	height?: number;
 	/** 单张字节上限：一张卡片图不该有这么大，超过就当成出错了。 */
 	maxBytes: number;
 	/** 同一个主机的并发数。 */
@@ -135,7 +140,10 @@ async function tryDirect(url: string, channel: ImageChannel): Promise<Uint8Array
 async function tryProxy(url: string, channel: ImageChannel): Promise<Uint8Array | null> {
 	if (PROXY_MODE === 'off') return null;
 	try {
-		const query = `url=${encodeURIComponent(url)}&w=${channel.width}&h=${channel.height}&fit=${channel.fit ?? 'cover'}&output=jpg`;
+		// 没给尺寸就只转格式：`w=`/`h=` 空着传过去会被代理当成 0。
+		const box =
+			channel.width && channel.height ? `&w=${channel.width}&h=${channel.height}&fit=${channel.fit ?? 'cover'}` : '';
+		const query = `url=${encodeURIComponent(url)}${box}&output=jpg`;
 		const res = await fetch(`${IMAGE_PROXY}?${query}`, { signal: AbortSignal.timeout(PROXY_TIMEOUT_MS) });
 		return await readImage(res, channel.maxBytes);
 	} catch {

@@ -29,8 +29,12 @@ import { teamLogoSources } from './teamLogoSource.ts';
  */
 export const TEAM_LOGO_CHANNEL: ImageChannel = {
 	dir: 'teamlogos',
-	width: 128,
-	height: 128,
+	/*
+	 * **刻意不填尺寸**：代理兜底那条路会按 `w`/`h` + `fit` 缩放裁剪（默认 cover），
+	 * 而这里要的是原样。Liquipedia 给的就是它自己缩好的小图（实测 36–100px），
+	 * 目标写 128×128 会把 100×50 那种队标放大再裁成方图，比热链时期更差——
+	 * 上面那条"不会更差"的承诺就靠这里不填尺寸兜住。
+	 */
 	maxBytes: 512 * 1024,
 	concurrency: 4,
 };
