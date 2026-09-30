@@ -490,11 +490,13 @@ PARIVISION 的 1507。别再往那个方向试。
 （NAVI 一页 33 个 former Squad、OG 24 个）。判据用模板参数而不是章节标题——标题会变、会缺席，
 参数不会。
 
-**教练组只有一部分队伍抓得到，这不是 bug 是模板差异**（实测 7 支）：用
-`{{Squad|type=staff}}` 的队伍能拿到（Team Spirit 3 人、Team Liquid 2 人）；NAVI / OG /
-MOUZ / BetBoom 这些把教练与 CEO、经理一起放在 `==Organization==` 的
-`{{ActiveOrganizationAuto|{{Person|…}}}}` 里——那是另一个模板，我们不认，页面上就是「没有教练组」。
-要扩就得先定口径（那一栏里 CEO/COO 与教练混在一起，全收进来会把「教练组」变成「组织架构」）。
+**教练组只有 3 支队伍有，是数据源本身没有，不是解析漏了**（把 52 支队的页面全取回来数过：
+25 个有内容，其余 21 个没有页面）：用 `{{Squad|type=staff}}` 的只有 Team Liquid、Team Spirit、
+PuckChamp 三家。其余队伍把团队信息放在 `==Organization==` 的
+`{{ActiveOrganizationAuto|{{Person|…}}}}` 里，而那一栏 40 条 role **没有一条是教练或分析师**——
+全是 Founder / CEO / COO / CBDO / CRO / Manager / General Manager / Head of Esports /
+Esports Host / SMM 这类组织职务。也就是说，多认一个模板只会把 CEO 搬进「教练组」那一栏，
+反而错得更远；要显示那一栏得先定口径（比如另开一栏「团队」，只收 Manager / General Manager 这类）。
 另外**教练组不再受"现役那一段"的切片影响**：页面顺序不统一，`===Coaching Staff===` 排在
 `===Inactive Roster===` 之后的队伍同样存在，切掉就整块没了；它自己靠 `status=active`
 挡离职的人，不需要切片兜底。
