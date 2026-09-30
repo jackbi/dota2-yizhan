@@ -446,8 +446,8 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 			const events = sortEvents(buildEvents(refreshed));
 			/*
 			 * 档位挂**赛事**上、不在对阵上，这一轮又没抓页面——只能从缓存里那份赛事还原。
-			 * 不还原的后果实测过：离线构建那一轮所有赛事都没档位，战队页默认视图（一线队）
-			 * 变成 0 支，读者看到一页空白，而数据其实就在缓存里。
+			 * 不还原的后果实测过：离线构建那一轮所有赛事都没档位徽章，档位筛选把每届都归进
+			 * 「其他」，而数据其实就在缓存里。
 			 */
 			applyEventTiers(events, tierMapOf(cached.events));
 			return {

@@ -177,8 +177,9 @@ export type MatchStatus = 'live' | 'upcoming' | 'completed' | 'postponed';
 /**
  * Liquipedia 给赛事定的档位，1 最高。
  *
- * 站点用它来回答"这支队算不算一线队"（见 `lib/leagueTier.ts`）——Dota 2 没有升降级分区、
- * DPC 也停了，赛事档位是唯一有权威来源、又能自动拿到的层级信息。
+ * 只在**赛事**这一层用：赛事页的徽章与档位筛选（见 `lib/leagueTier.ts`）。
+ * 曾经拿它反推"这支队算不算一线队"，那条口径已经撤掉了——档位是赛事的属性，
+ * 拿来给队伍分层必然走样；战队名录现在按 Liquipedia 门户的地区分组。
  */
 export type LeagueTier = 1 | 2 | 3 | 4;
 
@@ -228,7 +229,7 @@ export interface EsportsEvent {
 	/**
 	 * 表演赛。**它同时仍有正式档位**（Liquipedia 是 `liquipediatier` 与 `liquipediatiertype`
 	 * 两个字段，实测 BetBoom Streamers Battle 15 是 `tier=3` + `type=showmatch`），所以两者分开放：
-	 * 算不算一线队只看档位，这个标记只是让读者知道那不是一场正式比赛。
+	 * 档位照旧给徽章与筛选，这个标记只是让读者知道那不是一场正式比赛。
 	 */
 	showmatch?: boolean;
 }
