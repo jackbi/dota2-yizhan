@@ -9,7 +9,6 @@ import {
 	fetchLiquipediaEventMatches,
 	fetchLiquipediaEventTiers,
 	fetchLiquipediaMatches,
-	fetchLiquipediaTeamDarkLogos,
 } from './liquipediaApi';
 import { routeSlug } from './routeSlug';
 import { isPlaceholderLogo } from './teamLogoSource';
@@ -525,27 +524,7 @@ async function localizeLogos(bundle: TournamentsBundle): Promise<TournamentsBund
 	}
 	for (const match of bundle.live) refs.push(match.home, match.away);
 
-	/*
-	 * 深色版队标优先（判据与实测见 `parseTeamDarkLogo`）：赛程页给的缩略图常常是 `_lightmode`，
-	 * 叠在站点的深色底上有几支队标几乎看不见。
-	 *
-	 * 分两批下：先试深色版，**下到了才换**，没下到的那批继续用赛程页那份去下——不这么做的话，
-	 * 离线构建（深色版还没进缓存）会把原来能显示的本地队标换成一张外链，越改越差。
-	 */
-	let darkLocal = new Map<string, string>();
-	try {
-		const wikis = [...new Set(refs.map((team) => team.wiki).filter((wiki): wiki is string => !!wiki))];
-		const dark = await fetchLiquipediaTeamDarkLogos(wikis);
-		const candidates = refs
-			.map((team) => ({ id: team.id, logo: team.wiki ? dark.get(team.wiki) : undefined }))
-			.filter((candidate): candidate is { id: string; logo: string } => !!candidate.logo);
-		if (candidates.length > 0) darkLocal = await localizeTeamLogos(candidates);
-	} catch {
-		// 换不到就用赛程页那份：这只是可见度的改善，不该影响构建。
-	}
-
-	const restRefs = refs.filter((team) => !darkLocal.has(team.id));
-	const local = new Map([...darkLocal, ...(restRefs.length > 0 ? await localizeTeamLogos(restRefs) : [])]);
+	const local = await localizeTeamLogos(refs);
 	for (const team of refs) {
 		const path = local.get(team.id);
 		if (path) team.logo = path;

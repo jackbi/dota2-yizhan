@@ -3,7 +3,6 @@ import {
 	parseBracketMatches,
 	parseLeagueTier,
 	parseMatches,
-	parseTeamDarkLogo,
 	parseTeamRoster,
 } from '../src/lib/liquipediaParse.ts';
 
@@ -240,26 +239,5 @@ assert.deepEqual(
 	[['sikle', 'Analyst']],
 	'教练组写在历史段之后也要认；离职的教练仍然被 status 挡住',
 );
-
-/*
- * 深色版队标：站点是纯深色主题，而赛程页给的缩略图常常是 `_lightmode`——实测叠在
- * `#2f140f` 上 Team Spirit 只有 13.9、Team Lynx 12.6、Team Nemesis 25.9（可看的 NAVI 是 73.2）。
- * 换成 Infobox 的 `imagedark` 之后分别是 154.5 / 131.0 / 40.9。这里钉住"拿得到文件名"这一步，
- * 拿到之后才谈得上问 API 换成地址。
- */
-{
-	assert.equal(
-		parseTeamDarkLogo('{{Infobox team\n|image=Team Spirit 2022 full lightmode.png\n|imagedark=Team Spirit 2022 full darkmode.png\n|teamid=7119388\n}}'),
-		'Team Spirit 2022 full darkmode.png',
-		'`imagedark` 要原样读出来（带空格），它是给深色背景的那一版',
-	);
-	assert.equal(
-		parseTeamDarkLogo('|imagedark=Team Lynx full darkmode.png<ref>{{cite web|url=https://x|title=y}}</ref>'),
-		'Team Lynx full darkmode.png',
-		'值里跟着 `<ref>` 时要清掉，别把引用塞进文件名',
-	);
-	assert.equal(parseTeamDarkLogo('|image=Team Liquid 2024 full lightmode.png'), undefined, '没写就不猜');
-	assert.equal(parseTeamDarkLogo('|imagedark=\n'), undefined, '空值等于没写');
-}
 
 console.log('liquipedia.check 通过：赛程解析、档位解析与战队名单');

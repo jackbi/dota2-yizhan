@@ -46,6 +46,18 @@
 	--color-cream: #f4ebe3;
 	--color-muted: #b0a094;
 	--color-faint: #95847a;
+
+	/*
+	 * 队标底板。队标基本是「单色图形 + 透明底」的图，直接放在深色卡上会成片看不见：
+	 * 实测 46 张里 9 张的图形像素几乎全是黑的（Team Spirit、Team Lynx、MOUZ、Natus Vincere
+	 * 这类队徽本身就是黑色），叠在 `--color-surface-2` 上等于没画。Liquipedia 自己也是
+	 * 把队标放在浅底上，这里跟着做，比「给每支队挑一张深色版」省事也更准。
+	 *
+	 * 用暖白而不是纯白，是为了跟这套深棕底色放在一起不刺眼；`--color-plate-ink` 是
+	 * 底板上那个首字母占位（没有队标时显示）的颜色。
+	 */
+	--color-plate: #f4f1ed;
+	--color-plate-ink: #7b736c;
 }
 
 html {

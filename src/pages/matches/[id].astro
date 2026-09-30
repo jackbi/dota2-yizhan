@@ -126,7 +126,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 
 		<div class="mt-8 grid grid-cols-[1fr_auto_1fr] items-center gap-4 rounded-2xl border border-line bg-surface px-5 py-8">
 			<a href={`/teams/${match.home.id}`} class="group flex flex-col items-center gap-3 text-center">
-				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
+				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-plate text-sm font-semibold text-plate-ink">
 					{initial(match.home.name)}
 					{
 						match.home.logo ? (
@@ -135,7 +135,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 								alt=""
 								loading="lazy"
 								referrerpolicy="no-referrer"
-								class="absolute inset-0 h-full w-full object-cover"
+								class="absolute inset-0 h-full w-full object-contain p-1"
 							/>
 						) : null
 					}
@@ -160,7 +160,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 			</div>
 
 			<a href={`/teams/${match.away.id}`} class="group flex flex-col items-center gap-3 text-center">
-				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-2 text-sm font-semibold text-faint">
+				<span class="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-line bg-plate text-sm font-semibold text-plate-ink">
 					{initial(match.away.name)}
 					{
 						match.away.logo ? (
@@ -169,7 +169,7 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 								alt=""
 								loading="lazy"
 								referrerpolicy="no-referrer"
-								class="absolute inset-0 h-full w-full object-cover"
+								class="absolute inset-0 h-full w-full object-contain p-1"
 							/>
 						) : null
 					}

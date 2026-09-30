@@ -172,7 +172,7 @@ function initial(name: string): string {
 								data-playing={row.next !== null ? '1' : '0'}
 								class="team-card group flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2"
 							>
-								<span class="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-surface-2 text-xs font-semibold text-faint">
+								<span class="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-plate text-xs font-semibold text-plate-ink">
 									{initial(row.team.name)}
 									{row.team.logo ? (
 										<img
@@ -180,7 +180,7 @@ function initial(name: string): string {
 											alt=""
 											loading="lazy"
 											referrerpolicy="no-referrer"
-											class="absolute inset-0 h-full w-full object-cover"
+											class="absolute inset-0 h-full w-full object-contain p-0.5"
 										/>
 									) : null}
 								</span>

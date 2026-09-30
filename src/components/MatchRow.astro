@@ -59,10 +59,10 @@ function initial(name: string): string {
 			<span class:list={['truncate text-sm', match.winner === 'home' ? 'font-semibold text-cream' : 'text-muted']}>
 				{match.home.name}
 			</span>
-			<span class="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+			<span class="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-plate text-[10px] font-semibold text-plate-ink">
 				{initial(match.home.name)}
 				{match.home.logo ? (
-					<img src={match.home.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" />
+					<img src={match.home.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-contain p-0.5" />
 				) : null}
 			</span>
 		</div>
@@ -72,10 +72,10 @@ function initial(name: string): string {
 		</div>
 
 		<div class="flex items-center gap-2 overflow-hidden">
-			<span class="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-surface-2 text-[10px] font-semibold text-faint">
+			<span class="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-plate text-[10px] font-semibold text-plate-ink">
 				{initial(match.away.name)}
 				{match.away.logo ? (
-					<img src={match.away.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-cover" />
+					<img src={match.away.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-contain p-0.5" />
 				) : null}
 			</span>
 			<span class:list={['truncate text-sm', match.winner === 'away' ? 'font-semibold text-cream' : 'text-muted']}>

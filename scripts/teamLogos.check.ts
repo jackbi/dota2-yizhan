@@ -132,4 +132,44 @@ const OTHER_LOGO = 'https://liquipedia.net/commons/images/thumb/b/b7/Ivory_2024_
 	ok('接线：判据、频道目录、发布目录、调用点四处一致');
 }
 
+// 5. 底板：队标必须放在浅色底板上，且不许裁切
+{
+	/*
+	 * 这一组守的正是「页面上看得出来、但构建不会报错」的那两类：
+	 *
+	 * 1. **队徽本身是黑的**。实测 46 张里有 9 张（Team Spirit、Team Lynx、Team Nemesis、
+	 *    MOUZ、Natus Vincere 这类）的图形像素几乎全黑，放在 `--color-surface-2` 上等于没画。
+	 *    换成 `bg-plate` 之后黑队徽才看得见；谁把它改回深色底板，页面就退回「一片空白」。
+	 * 2. **裁切**。`object-cover` 会把非方形的队标裁成方图：Team Spirit 那张
+	 *    `Team_Spirit_2022_full_darkmode.png` 是 120×31 的文字组合，裁完只剩一个字母的碎片，
+	 *    看起来就像"队标没加载出来"。`object-contain` 保留整张图，哪怕小一点。
+	 */
+	const ROOT = new URL('../', import.meta.url);
+	const read = (name: string): string => readFileSync(new URL(name, ROOT), 'utf8');
+
+	const pages = [
+		'src/components/MatchRow.astro',
+		'src/pages/matches/[id].astro',
+		'src/pages/teams.astro',
+		'src/pages/teams/[id].astro',
+		'src/pages/tournaments/[id].astro',
+	];
+
+	let imgs = 0;
+	for (const name of pages) {
+		const source = read(name);
+		assert.match(source, /bg-plate/, `${name} 的队标要用浅色底板（bg-plate），否则黑队徽在深色卡上看不见`);
+		const marks = [...source.matchAll(/\.logo\s*\?\s*\(/g)];
+		assert.ok(marks.length > 0, `${name} 里没找到队标的 img，页面结构变了就要同步这个自检`);
+		for (const mark of marks) {
+			const block = source.slice(mark.index ?? 0, (mark.index ?? 0) + 600);
+			assert.match(block, /object-contain/, `${name} 的队标要用 object-contain，别把宽队标裁成方图`);
+			assert.doesNotMatch(block, /object-cover/, `${name} 的队标不能用 object-cover：非方形的队标会被裁成碎片`);
+			imgs += 1;
+		}
+	}
+	assert.equal(imgs, 7, '场次行两处、对阵页两处、战队列表、战队详情、赛事页各一处，共 7 处队标');
+	ok('底板：五处页面、七张队标都用浅色底板且不裁切');
+}
+
 console.log(`teamLogos 全部断言通过（${cases} 组）`);
