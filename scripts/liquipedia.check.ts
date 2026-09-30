@@ -144,7 +144,11 @@ assert.equal(
 	false,
 	'`status=inactive` 是离队名单，一个人都不该进来',
 );
-assert.deepEqual(spirit.standins, [], '被注释掉的替补表不算数');
+assert.deepEqual(
+	spirit.standins,
+	[],
+	'被注释掉的替补表不算数（形状断言：换个顺序也过，切片本身由下面「现役段之后」那组钉住）',
+);
 
 /** Team Liquid 那种：替补表是活的，而且 `tournament=` 里嵌了模板、后面还跟着内链。 */
 const LIQUID_PAGE = `
@@ -175,6 +179,60 @@ assert.equal(
 	liquid.players.some((p) => p.nick === 'Insania'),
 	false,
 	'整段被注释掉的离队名单同样不该进来',
+);
+
+/*
+ * 历史段：**这两组才是真的钉住 `activeSectionEnd` 的**（上面两组里，历史名单要么被注释掉、
+ * 要么靠 `status=former` 就挡住了——实测把切片整个去掉，那两组照样通过）。
+ *
+ * 判据来自真实页面：`===Former Players===` 后面塞着大量历史 `{{stand-in}}`（OG 一页 27 条、
+ * 同一个人出现 5 次），照单全收就会渲染成「替补：Ceb、Ceb、Ceb…」。
+ */
+const FORMER_STANDINS_PAGE = `
+===Active Roster===
+{{Squad|status=active
+|{{Person|flag=cn|id=Ame|name=Wang Chunyu|position=1}}
+}}
+===Former Players===
+{{stand-ins table|
+{{stand-in|flag=se|id=OldOne|name=Old One}}
+{{stand-in|flag=se|id=OldTwo|name=Old Two}}
+}}
+`;
+
+const former = parseTeamRoster(FORMER_STANDINS_PAGE);
+assert.deepEqual(former.players.map((p) => p.nick), ['Ame'], '现役段照旧');
+assert.deepEqual(former.standins, [], '历史段里的替补表要整块丢掉，否则会出现「Ceb、Ceb、Ceb…」');
+
+/*
+ * 教练组不受切片影响：页面顺序不统一，`===Coaching Staff===` 排在 `===Former===` 之后的
+ * 队伍真实存在，一刀切下去那些队伍的教练组会整块消失（而页面上"教练组"这一栏本来就没几个字，
+ * 少了看不出来是丢了还是本来没有）。离职的那位仍然靠 `status=former` 挡住。
+ */
+const STAFF_AFTER_FORMER_PAGE = `
+===Active Roster===
+{{Squad|status=active
+|{{Person|flag=ua|id=Yatoro|name=Illya Mulyarchuk|position=1}}
+}}
+===Former Players===
+{{Squad|status=former|title=Former Player
+|{{Person|flag=se|id=OldGuy|name=Old Guy|position=2}}
+}}
+===Coaching Staff===
+{{Squad|type=staff|status=active
+|{{Person|flag=ru|id=sikle|name=Mark Lerman|role=Analyst}}
+}}
+{{Squad|type=staff|status=former
+|{{Person|flag=ru|id=ExCoach|name=Ex Coach|role=Coach}}
+}}
+`;
+
+const lateStaff = parseTeamRoster(STAFF_AFTER_FORMER_PAGE);
+assert.deepEqual(lateStaff.players.map((p) => p.nick), ['Yatoro'], '离队的那位不进选手名单');
+assert.deepEqual(
+	lateStaff.staff.map((s) => [s.nick, s.role]),
+	[['sikle', 'Analyst']],
+	'教练组写在历史段之后也要认；离职的教练仍然被 status 挡住',
 );
 
 console.log('liquipedia.check 通过：赛程解析、档位解析与战队名单');

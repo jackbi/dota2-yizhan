@@ -443,21 +443,29 @@ function activeSectionEnd(text: string): number {
  *
  * 只认 `{{Squad|status=active}}` 这一档：`status=inactive`（离队）整块丢掉，
  * `type=staff` 归到教练组，其余归到选手。替补走 `{{stand-in}}`。
+ *
+ * **切片只管选手与替补，不管教练组。** 页面顺序不统一：Team Spirit / Team Liquid 是
+ * `===Coaching Staff===` 排在现役段里（切片之前），但把教练组写在 `===Inactive Roster===`
+ * 之后的页面同样存在——一刀切下去那些队伍的教练组就整块没了。教练组本身靠 `status=active`
+ * 挡掉离职的人，不需要切片兜底，所以让它扫整页。
  */
 export function parseTeamRoster(wikitext: string): TeamRoster {
 	const stripped = stripComments(wikitext);
-	const text = stripped.slice(0, activeSectionEnd(stripped));
+	const cut = activeSectionEnd(stripped);
 	const players: RosterMember[] = [];
 	const standins: RosterMember[] = [];
 	const staff: RosterMember[] = [];
 
-	for (let i = text.indexOf('{{Squad'); i !== -1; i = text.indexOf('{{Squad', i + 2)) {
-		const squad = readCall(text, i);
+	for (let i = stripped.indexOf('{{Squad'); i !== -1; i = stripped.indexOf('{{Squad', i + 2)) {
+		const squad = readCall(stripped, i);
 		if (!squad) continue;
 		const params = paramMap(squad.segments);
 		// 离队名单：整块不要。`status` 缺失时按现役处理会混进退役的人，所以要求显式 active。
 		if (params.get('status') !== 'active') continue;
-		const target = params.get('type') === 'staff' ? staff : players;
+		const isStaff = params.get('type') === 'staff';
+		// 现役段之后只认教练组：那后面的 `Squad|status=active` 是历史段里写法不规范留下的。
+		if (!isStaff && i >= cut) continue;
+		const target = isStaff ? staff : players;
 		for (const segment of squad.segments) {
 			if (!segment.startsWith('{{Person')) continue;
 			const member = toMember(splitParams(readTemplateBody(segment, 0) ?? '').slice(1));
@@ -465,8 +473,9 @@ export function parseTeamRoster(wikitext: string): TeamRoster {
 		}
 	}
 
-	for (let i = text.indexOf('{{stand-in'); i !== -1; i = text.indexOf('{{stand-in', i + 2)) {
-		const call = readCall(text, i);
+	for (let i = stripped.indexOf('{{stand-in'); i !== -1; i = stripped.indexOf('{{stand-in', i + 2)) {
+		if (i >= cut) break;
+		const call = readCall(stripped, i);
 		if (!call) continue;
 		const member = toMember(call.segments);
 		if (member) standins.push(member);
