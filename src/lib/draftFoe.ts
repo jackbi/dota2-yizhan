@@ -18,6 +18,20 @@ export interface FoeHero {
 	wins: number;
 	/** 对手禁掉它多少次。 */
 	bansAgainst: number;
+	/**
+	 * **他们自己禁掉它多少次。**
+	 *
+	 * 与 `bansAgainst` 是两件事，别混：这个数说的是"他们怕谁"（预测他们禁什么要用它），
+	 * 那个数说的是"别人怕他们拿它"（判断某个英雄轮不轮得到手上要用它）。
+	 */
+	bansBy: number;
+	/**
+	 * 他们自己拿它时，**平均在第几手拿的**（1 起；没拿过时是 0）。
+	 *
+	 * 这是判断"一选合不合理"的依据：幻影长矛手这种被抓就死的核，实战里平均总在十几手之后拿，
+	 * 拿它当一选等于把大哥亮出来给对面点。数据来自 STRATZ `pickBans.order`，是真实 BP 的顺序。
+	 */
+	averagePickOrder: number;
 }
 
 export interface FoeForm {
@@ -38,6 +52,8 @@ interface RawPickBan {
 	heroId?: number | null;
 	isPick?: boolean | null;
 	isRadiant?: boolean | null;
+	/** 第几手（1 起）。上游偶尔给 null。 */
+	order?: number | null;
 }
 
 /** STRATZ 那边 `team.matches` 的形状；放在这里是为了让自检能直接喂构造数据。 */
@@ -52,8 +68,13 @@ export interface RawFormMatch {
 /**
  * 把一批比赛折成「这支队伍的英雄偏好」。纯函数，不联网，自检直接喂数据。
  *
- * 只数两类：**他们自己选的**（`isPick` 且阵营与队伍一致）和**对手禁他们的**
- * （不是选、阵营是对方）。他们自己禁掉的不算——那是他们怕什么，不是他们擅长什么。
+ * 三类都数，但**分开存**，因为它们回答的不是同一个问题：
+ * - 他们自己选的 → 他们擅长什么（`picks`/`decided`/`wins`，还有平均第几手拿的）；
+ * - 对手禁他们的 → 别人怕他们拿什么（`bansAgainst`，判断"这一手轮不轮得到他"）；
+ * - 他们自己禁的 → 他们怕什么（`bansBy`，预测他们禁什么时用的就是它）。
+ *
+ * 「他们自己禁的」以前是直接扔掉的（那时只回答"擅长什么"）；要预测 BP 就必须留下，
+ * 但那一路**只能进禁用一侧的推理**，不能拿去说"他们爱用什么"。
  */
 export function summarizeTeamForm(
 	teamId: number,
@@ -85,25 +106,38 @@ export function summarizeTeamForm(
 			const heroId = entry.heroId;
 			if (typeof heroId !== 'number') continue;
 			const mine = entry.isRadiant === isRadiant;
-			if (entry.isPick ? !mine : mine) continue;
-
-			const row = byHero.get(heroId) ?? { heroId, picks: 0, decided: 0, wins: 0, bansAgainst: 0 };
-			if (entry.isPick) {
+			const row = byHero.get(heroId) ?? { heroId, picks: 0, decided: 0, wins: 0, bansAgainst: 0, bansBy: 0, orderSum: 0, orderCount: 0 };
+			if (entry.isPick && mine) {
+				// 他们自己选的：出场、胜负、以及"这一手是第几手拿的"。
 				row.picks += 1;
 				if (known) {
 					row.decided += 1;
 					if (won) row.wins += 1;
 				}
-			} else {
+				const order = Number(entry.order);
+				if (Number.isFinite(order) && order > 0) {
+					row.orderSum += order;
+					row.orderCount += 1;
+				}
+			} else if (!entry.isPick && !mine) {
+				// 对手禁他们：别人怕他们拿什么。
 				row.bansAgainst += 1;
+			} else if (!entry.isPick && mine) {
+				// 他们自己禁的：他们怕什么（预测他们禁什么时用）。
+				row.bansBy += 1;
 			}
+			// 剩下的情况（`isPick` 且不是他们）与这支队无关。
+			if (row.picks + row.bansAgainst + row.bansBy === 0) continue;
 			byHero.set(heroId, row);
 		}
 	}
 
 	const heroes = [...byHero.values()].sort(
 		(a, b) => b.picks - a.picks || b.bansAgainst - a.bansAgainst || a.heroId - b.heroId,
-	);
+	).map(({ orderSum, orderCount, ...row }) => ({
+		...row,
+		averagePickOrder: orderCount > 0 ? orderSum / orderCount : 0,
+	}));
 	return { name, windowDays, matches: counted, decided, wins, heroes };
 }
 
@@ -159,7 +193,9 @@ export function foeHeroLine(form: FoeForm | null | undefined, heroId: number, si
 	const scale = `${label}近 ${form.windowDays} 天拿了 ${hero.picks} 场`;
 	const record = rate === null ? '胜负记录不足' : `${hero.wins} 胜 ${hero.decided - hero.wins} 负，胜率 ${(rate * 100).toFixed(1)}%`;
 	// 被禁次数一律写出来，哪怕是 0：省略会让读者分不清「没人禁」和「这项没数据」。
-	return `${scale}（${record}），对手禁过它 ${hero.bansAgainst} 次`;
+	// 平均手号只在真有 order 时才写：没数据就不写，别编一个"第 0 手"出来。
+	const order = hero.averagePickOrder > 0 ? `，他们平均第 ${hero.averagePickOrder.toFixed(1)} 手拿它` : '';
+	return `${scale}（${record}），对手禁过它 ${hero.bansAgainst} 次${order}`;
 }
 
 /**

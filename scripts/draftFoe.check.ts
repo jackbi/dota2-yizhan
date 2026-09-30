@@ -57,14 +57,28 @@ const FOE = 9572001;
 	assert.equal(form.wins, 1, '夜魇那场它是输的，不能算赢');
 
 	const hero33 = form.heroes.find((hero) => hero.heroId === 33);
-	assert.deepEqual(hero33, { heroId: 33, picks: 3, decided: 2, wins: 1, bansAgainst: 0 }, '同一英雄跨阵营、跨结果都要归到它头上');
-	const banned = form.heroes.find((hero) => hero.heroId === 5);
-	assert.deepEqual(banned, { heroId: 5, picks: 0, decided: 0, wins: 0, bansAgainst: 1 }, '对手禁掉的要记在「被禁」而不是出场');
-	assert.equal(
-		form.heroes.find((hero) => hero.heroId === 7),
-		undefined,
-		'自己禁的英雄不算它擅长什么',
+	assert.deepEqual(
+		hero33,
+		{ heroId: 33, picks: 3, decided: 2, wins: 1, bansAgainst: 0, bansBy: 0, averagePickOrder: 0 },
+		'同一英雄跨阵营、跨结果都要归到它头上；这三场没带 order，平均出手按 0（未知）算',
 	);
+	const banned = form.heroes.find((hero) => hero.heroId === 5);
+	assert.deepEqual(
+		banned,
+		{ heroId: 5, picks: 0, decided: 0, wins: 0, bansAgainst: 1, bansBy: 0, averagePickOrder: 0 },
+		'对手禁掉的要记在「被禁」而不是出场',
+	);
+	/*
+	 * 自己禁的英雄要**留下来**，但只能挂在 `bansBy` 上：预测"他们会禁什么"用的就是它，
+	 * 而"他们擅长什么"（picks）还是 0——这两件事以前被一起扔掉，于是预测 BP 时无从下手。
+	 */
+	const ownBan = form.heroes.find((hero) => hero.heroId === 7);
+	assert.deepEqual(
+		ownBan,
+		{ heroId: 7, picks: 0, decided: 0, wins: 0, bansAgainst: 0, bansBy: 1, averagePickOrder: 0 },
+		'自己禁的要记在 bansBy，且不能被当成"他们擅长"',
+	);
+	assert.equal(foeHighlights(form).some((hero) => hero.heroId === 7), false, '自己禁的不能进"他们擅长"那一栏');
 	assert.equal(
 		form.heroes.find((hero) => hero.heroId === 8),
 		undefined,
@@ -139,6 +153,35 @@ const FOE = 9572001;
 	}
 	assert.match(foeHeroLine(form, 33, 'ours'), /我方（Team Spirit）/, '替对面落子时人称要翻过来');
 	ok('文案带全数字、人称可翻，且不出现 undefined/NaN');
+}
+
+/*
+ * 「第几手拿的」也是这一层的信息，而且它决定预测像不像真 BP：
+ * 幻影长矛手这种被抓就死的核，实战里平均总在十几手之后才拿；拿它当一选等于把大哥亮出来。
+ * 上游 `pickBans.order` 给的就是这个手号，这里钉住它按人平均、且缺 order 时不编。
+ */
+{
+	const form = summarizeTeamForm(
+		TEAM,
+		'Team Spirit',
+		[
+			{ id: 11, radiantTeamId: TEAM, direTeamId: FOE, didRadiantWin: true, pickBans: [
+				{ heroId: 33, isPick: true, isRadiant: true, order: 9 },
+				{ heroId: 33, isPick: true, isRadiant: true, order: 15 },
+				// 没给 order 的那一场要算出场，但不许污染平均手号。
+				{ heroId: 33, isPick: true, isRadiant: true },
+			] },
+			{ id: 12, radiantTeamId: TEAM, direTeamId: FOE, didRadiantWin: true, pickBans: [{ heroId: 41, isPick: true, isRadiant: true, order: 24 }] },
+		],
+		30,
+	);
+	assert.equal(form.heroes.find((hero) => hero.heroId === 33)?.averagePickOrder, 12, '平均手号要按有 order 的那几场算');
+	assert.equal(form.heroes.find((hero) => hero.heroId === 41)?.averagePickOrder, 24, '只在最后一手拿的英雄，手号就是 24');
+	assert.match(foeHeroLine(form, 33), /平均第 12\.0 手/, '依据里要写出来，读者才判断得了这一手拿它像不像真的');
+	for (const text of [foeHeroLine(form, 33), foeHeroLine(form, 41)]) {
+		assert.ok(!/undefined|NaN/.test(text), `文案里出现了 undefined/NaN：${text}`);
+	}
+	ok('拿它时平均在第几手：按有 order 的场次算，缺 order 不编');
 }
 
 /*

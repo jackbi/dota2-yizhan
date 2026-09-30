@@ -252,12 +252,20 @@ if (data) {
 	let lastAiMove = '';
 	/** 队伍目录：队标、名单与招牌英雄。到位之前页面照常能用，只是少这一块。 */
 	const teamsById = new Map<string, DraftTeamEntry>();
-	/** 对面近期的英雄偏好。指定了队伍、而且拿到了 OpenDota id 才去取。 */
+	/**
+	 * **两边各自的近期真实 BP**。
+	 *
+	 * 以前只取"对面"那一支（那一路是给逐手建议用的），预测只能靠号位胜率与名单招牌——
+	 * 于是推出来的 BP 会一选幻影长矛手、会把米拉娜留到第四手，而真实数据里对面 18 场里
+	 * 禁了米拉娜 10 次。要预测"这两队会怎么打"，两边的近况都得在手上。
+	 */
+	let forms: { radiant: FoeForm | null; dire: FoeForm | null } = { radiant: null, dire: null };
+	/** 每一边当前这份数据属于哪支队，用来丢弃过期响应（换队比响应快时）。 */
+	const formKeys: Record<TeamSide, string> = { radiant: '', dire: '' };
+	/** 每一边取数状态的文案：'' 表示没在取、也没有错。 */
+	const formStatus: Record<TeamSide, string> = { radiant: '', dire: '' };
+	/** 对面（你没打的那一边）的近期偏好。逐手建议与复盘用它，从 `forms` 里取。 */
 	let foeForm: FoeForm | null = null;
-	/** 当前这份数据属于哪支队，用来丢弃过期响应（换队比响应快时）。 */
-	let foeRequestKey = '';
-	/** 取数状态的文案：'' 表示没在取、也没有错。 */
-	let foeStatus = '';
 	/** 队名是选出来的，换队之后稍等一下再取，避免来回切时打出一串请求。 */
 	let foeTimer: number | null = null;
 	/**
@@ -723,54 +731,60 @@ if (data) {
 			}
 		}
 
-		// ------------------------------------------------------------ 对手擅长什么
+		// ------------------------------------------------------------ 两队的近期真实 BP
 
-		/** 对面（你没打的那一边）近期的英雄偏好。 */
+		/**
+		 * 取**两边**近期的真实 BP（各一次请求，服务端缓存 30 分钟、浏览器 10 分钟）。
+		 *
+		 * 两边都要，是因为预测要回答"这两队会怎么打"：只知道对面禁了什么、不知道对面一般第几手拿，
+		 * 就会推出一选幻影长矛手这种不合理的东西。逐手建议那边仍然只用"对面"那一份。
+		 */
 		async function syncFoeForm(): Promise<void> {
-			const foeSide = otherSide(mySide);
-			const entry = teamEntryOf(foeSide);
-			const key = entry?.id ?? '';
-			if (!key) {
-				foeForm = null;
-				foeRequestKey = '';
-				foeStatus = '';
-				renderFoe();
-				renderAdvice();
+			await Promise.all((['radiant', 'dire'] as TeamSide[]).map((side) => syncSideForm(side)));
+			foeForm = forms[otherSide(mySide)];
+			renderFoe();
+			renderAdvice();
+			// 预测卡上也写着各队的近况，数据到了要重画一次。
+			if (prediction) renderPrediction();
+		}
+
+		async function syncSideForm(side: TeamSide): Promise<void> {
+			const entry = teamEntryOf(side);
+			if (!entry) {
+				forms[side] = null;
+				formKeys[side] = '';
+				formStatus[side] = '';
 				return;
 			}
 			if (!entry.odId) {
-				foeForm = null;
-				foeRequestKey = `miss:${key}`;
-				foeStatus = `站内没有 ${entry.name} 的 OpenDota 记录，取不到这支队近期的习惯`;
-				renderFoe();
-				renderAdvice();
+				forms[side] = null;
+				formKeys[side] = `miss:${entry.id}`;
+				formStatus[side] = `站内没有 ${entry.name} 的 OpenDota 记录，取不到这支队近期的 BP`;
 				return;
 			}
 
-			const requestKey = `${key}:${entry.odId}`;
-			if (foeRequestKey === requestKey) return;
-			foeRequestKey = requestKey;
-			foeForm = null;
-			foeStatus = `正在取 ${entry.name} 近期的英雄偏好…`;
+			const requestKey = `${entry.id}:${entry.odId}`;
+			if (formKeys[side] === requestKey) return;
+			formKeys[side] = requestKey;
+			forms[side] = null;
+			formStatus[side] = `正在取 ${entry.name} 近期的 BP…`;
 			renderFoe();
 			try {
 				const res = await fetch(`/api/draft/foe?id=${entry.odId}`);
 				const body = (await res.json()) as { ok?: boolean; form?: FoeForm; reason?: string };
-				if (foeRequestKey !== requestKey) return;
+				if (formKeys[side] !== requestKey) return;
 				if (body.ok && body.form) {
-					foeForm = body.form;
-					foeStatus = '';
+					forms[side] = body.form;
+					formStatus[side] = '';
 				} else {
-					foeForm = null;
-					foeStatus = body.reason ?? '取不到对面的近期习惯';
+					forms[side] = null;
+					formStatus[side] = body.reason ?? '取不到这支队近期的 BP';
 				}
 			} catch {
-				if (foeRequestKey !== requestKey) return;
-				foeForm = null;
-				foeStatus = '取不到对面的近期习惯（网络或上游故障）';
+				if (formKeys[side] !== requestKey) return;
+				forms[side] = null;
+				formStatus[side] = '取不到这支队近期的 BP（网络或上游故障）';
 			}
-			renderFoe();
-			renderAdvice();
 		}
 
 		/** 控制条下面那行：对面最近爱用什么。取数中与取不到的状态也走这里。 */
@@ -785,7 +799,8 @@ if (data) {
 						})
 						.join(' · ')
 				: '';
-			const text = foeStatus || (foeForm ? `对面擅长：${foeHeadline(foeForm)}${top ? `；常拿 ${top}` : ''}` : '');
+			const status = formStatus[otherSide(mySide)];
+			const text = status || (foeForm ? `对面擅长：${foeHeadline(foeForm)}${top ? `；常拿 ${top}` : ''}` : '');
 			foeStatusEl.textContent = text;
 			foeStatusEl.style.display = text ? '' : 'none';
 		}
@@ -1137,7 +1152,7 @@ if (data) {
 				 */
 				if (verdict && verdictKey === lineupKey()) verdict = currentVerdict();
 				// 预测那条路也吃线上对位（它影响每一步的候选排序），重推一次比留着旧结果诚实。
-				if (prediction?.source === 'local') prediction = predictDraftLocal({ data: draft, firstPicker: firstPick, signatures: signatures(), lanes });
+				if (prediction?.source === 'local') prediction = predictDraftLocal({ data: draft, firstPicker: firstPick, signatures: signatures(), forms, lanes });
 				renderAdvice();
 				renderVerdict();
 				renderPrediction();
@@ -1286,7 +1301,7 @@ if (data) {
 		 */
 		async function runPrediction(): Promise<void> {
 			if (predictBusy) return;
-			const local = predictDraftLocal({ data: draft, firstPicker: firstPick, signatures: signatures(), lanes });
+			const local = predictDraftLocal({ data: draft, firstPicker: firstPick, signatures: signatures(), forms, lanes });
 			if (!local) {
 				if (predictStatus) predictStatus.textContent = '号位样本不足，推不出整局 BP';
 				return;
@@ -1310,6 +1325,7 @@ if (data) {
 					direTeam: teamNameOf('dire'),
 					firstPicker: firstPick,
 					signatures: signatures(),
+					forms,
 				});
 				const reply = await requestChat(messages, PREDICTION_MAX_TOKENS);
 				if (generation !== aiGeneration) return;
@@ -1338,11 +1354,23 @@ if (data) {
 				 * 两边是同一个口径（先掐对面该号位的熟手），拼起来不会互相打架。
 				 */
 				const taken = new Set<number>([...parsed.radiant.picks, ...parsed.dire.picks].map((pick) => pick.heroId));
+				/*
+				 * 模型给的禁用没有号位，但站内推演的同一手有（"对面会拿它打几号位"）。
+				 * 同一个英雄两边都禁过时就把号位补上——角标有数字才说明得清这一手掐的是哪个位置。
+				 */
+				const positionOf = (side: 'radiant' | 'dire'): Map<number, number> =>
+					new Map(
+						local[side].bans
+							.filter((ban) => Number.isInteger(ban.position))
+							.map((ban) => [ban.heroId, ban.position as number]),
+					);
+				const withPosition = (bans: { heroId: number; reason: string }[], positions: Map<number, number>) =>
+					bans.map((ban) => ({ ...ban, ...(positions.has(ban.heroId) ? { position: positions.get(ban.heroId) } : {}) }));
 				const radiantBans = mergeBans(parsed.radiant.bans, local.radiant.bans, taken);
 				const direBans = mergeBans(parsed.dire.bans, local.dire.bans, taken);
 				prediction = {
-					radiant: { picks: parsed.radiant.picks, bans: radiantBans.bans },
-					dire: { picks: parsed.dire.picks, bans: direBans.bans },
+					radiant: { picks: parsed.radiant.picks, bans: withPosition(radiantBans.bans, positionOf('radiant')) },
+					dire: { picks: parsed.dire.picks, bans: withPosition(direBans.bans, positionOf('dire')) },
 					summary: parsed.summary,
 					source: 'model',
 					droppedBans: parsed.droppedBans,
@@ -1380,12 +1408,18 @@ if (data) {
 			 * 禁用格：位置是"**对面**会拿它打几号位"（禁用的价值就来自它落进对面哪个位置），
 			 * 所以这里不写"谁"，只标出号位，剩下的靠 hover 那句理由。
 			 */
-			const banChip = (row: { heroId: number; position: number; reason: string }): string => {
+			/*
+			 * 禁用格。**号位是可选的**：本地推演的禁用带号位（"对面会拿它打几号位"），
+			 * 模型给的禁用只有 heroId 与理由——上一版不分情况地渲染号位角标，
+			 * 模型那几条就在页面上印出了 `undefined`（截图里能看到）。所以这里按有无来画。
+			 */
+			const banChip = (row: { heroId: number; reason: string; position?: number }): string => {
 				const hero = heroById.get(row.heroId);
 				const name = hero ? esc(hero.name) : `英雄 #${row.heroId}`;
 				const img = hero ? `<img src="${esc(hero.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '';
-				const title = [`对面会拿它打 ${row.position} 号位`, row.reason].filter(Boolean).join(' · ');
-				return `<span class="predict-hero" data-kind="ban" title="${esc(title)}">${img}${name}<span class="predict-pos">${row.position}</span></span>`;
+				const badge = Number.isInteger(row.position) ? `<span class="predict-pos">${row.position}</span>` : '';
+				const title = [Number.isInteger(row.position) ? `对面会拿它打 ${row.position} 号位` : '', row.reason].filter(Boolean).join(' · ');
+				return `<span class="predict-hero" data-kind="ban"${title ? ` title="${esc(title)}"` : ''}>${img}${name}${badge}</span>`;
 			};
 
 			/** 挑选卡：号位 + 选手 + 熟手与否，理由直接写在下面。 */
@@ -1749,8 +1783,8 @@ if (data) {
 				button.addEventListener('click', () => {
 					mySide = button.dataset.mySide === 'dire' ? 'dire' : 'radiant';
 					aiResult = null;
-					// 换了边，取数据的对象也换了；先清掉旧的那份，别让它挂在新对手头上。
-					foeRequestKey = '';
+					// 两份数据都还在（两边的近况与选边无关），只是"对面"换成另一边了。
+					foeForm = forms[otherSide(mySide)];
 					syncSideButtons();
 					save();
 					renderAll();
@@ -1784,8 +1818,10 @@ if (data) {
 				const value = (side === 'radiant' ? radiantSelect : direSelect)?.value ?? '';
 				if (side === 'radiant') radiantTeamId = value;
 				else direTeamId = value;
-				// 换了队，对面那份数据、预测与复盘都要重来。
-				foeRequestKey = '';
+				// 换了队：这一边的近况作废（另一边的不动），预测与复盘也要重来。
+				formKeys[side] = '';
+				forms[side] = null;
+				foeForm = forms[otherSide(mySide)];
 				invalidateDerived();
 				save();
 				renderAll();

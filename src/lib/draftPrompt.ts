@@ -66,6 +66,11 @@ export interface PromptInput {
 	 * 提示词里的人称由 `role` 与 `ourSide` 一起决定。
 	 */
 	signatures?: { radiant?: RosterProfile | null; dire?: RosterProfile | null } | null;
+	/**
+	 * 两边**近期的真实 BP**（`/api/draft/foe` 那份）。这是"别光靠算法"的核心输入：
+	 * 它带着"他们自己禁什么""对手禁他们什么""拿这个英雄平均在第几手"。
+	 */
+	forms?: { radiant?: FoeForm | null; dire?: FoeForm | null } | null;
 }
 
 /**
@@ -628,6 +633,40 @@ export interface PredictionPromptInput {
 const META_TOP_PER_POSITION = 5;
 
 /**
+ * 一支队最近的正式比赛 BP，小写成给模型看的几行。
+ *
+ * 三样东西分开列，因为它们回答的问题不同，混在一起模型就会把"他们怕什么"当成"他们爱用什么"：
+ * - **他们拿过**：英雄 + 场次 + 平均第几手拿的。手号是判断"一手抢合不合理"的依据；
+ * - **他们自己禁过**：预测他们禁什么用它；
+ * - **被对手禁得多**：这个英雄轮不轮得到他们手上，用它判断（禁得比拿得多说明很难拿到）。
+ *
+ * 不写"他们爱打团"这类判断：这份数据是一支队的几十场比赛，不是战术报告。
+ */
+function renderRealDraft(form: FoeForm | null | undefined, label: string, data: DraftData): string {
+	if (!form || form.matches === 0) return '';
+	const byId = new Map(data.heroes.map((hero) => [hero.id, hero]));
+	const name = (heroId: number): string => {
+		const info = byId.get(heroId);
+		return info ? `${info.name}（heroId=${heroId}）` : `heroId=${heroId}`;
+	};
+	const picked = form.heroes.filter((hero) => hero.picks > 0).slice(0, 8);
+	const banned = form.heroes.filter((hero) => hero.bansBy > 0).sort((a, b) => b.bansBy - a.bansBy).slice(0, 6);
+	const contested = form.heroes.filter((hero) => hero.bansAgainst > 0).sort((a, b) => b.bansAgainst - a.bansAgainst).slice(0, 6);
+	// 窗口天数交给 `foeRecordLine` 拼（那是滚动窗口，写「近 N 天」是对的；这个文件里不许出现这种写法）。
+	const lines: string[] = [`${label} ${form.name || ''} 的真实 BP（${foeRecordLine(form)}）：`];
+	if (picked.length > 0) {
+		lines.push(
+			`- 他们拿过：${picked
+				.map((hero) => `${name(hero.heroId)} ${hero.picks} 场${hero.decided > 0 ? ` ${hero.wins} 胜` : ''}${hero.averagePickOrder > 0 ? `（平均第 ${hero.averagePickOrder.toFixed(1)} 手拿）` : ''}`)
+				.join('；')}`,
+		);
+	}
+	if (banned.length > 0) lines.push(`- 他们自己禁过：${banned.map((hero) => `${name(hero.heroId)} ${hero.bansBy} 次`).join('；')}`);
+	if (contested.length > 0) lines.push(`- 对手禁他们最多：${contested.map((hero) => `${name(hero.heroId)} ${hero.bansAgainst} 次`).join('；')}`);
+	return lines.join('\n');
+}
+
+/**
  * 版本热门：**按号位**列胜率前几名。
  *
  * 只给结构化数字（胜率、场次），不给"这个版本强"的判断——那正是提示词里反复要模型别编的东西。
@@ -685,9 +724,18 @@ export function buildPredictionSystemPrompt(): string {
 		'5. 禁用同样按人：**优先掐对面该号位选手的熟手**（依据写得出场次的那几个），其次是版本高胜率点。',
 		'   被你这么掐掉的英雄，对面挑选时就用不上了——所以对面那 5 个挑选要从"没被禁掉"的池子里出。',
 		'   先选的队伍优先拿自己最缺的号位。',
-		'6. 理由里的数字只能来自用户给出的字段（号位胜率与场次、职业出场与被禁、每个号位选手的场次与胜率）。',
+		'   他们**自己最近真的禁过**的那几个英雄（见"他们自己禁过"那一行）优先当作他们要禁的对象。',
+		'6. **尊重出手时机与可及性**（这一条最容易被算法忽略，也是真人一眼就能看出错的地方）：',
+		'   - 每个"他们拿过"的英雄后面写着**平均第几手拿**。拿着平均第 18 手才拿的英雄当第一手（第 8 手）',
+		'     是错的——那种英雄（例如幻影长矛手这类被抓就死的核）一亮出来就被针对。前几手要拿那些',
+		'     平均手号就靠前的英雄。反过来，平均在很后面拿的英雄，留到最后的挑选才对。',
+		'   - "对手禁他们最多"那一行说明这个英雄**很难轮到他手上**：被禁的次数接近甚至超过他拿的次数时，',
+		'     不要安排他早早拿，要按"这一手很可能已经被对面禁掉"来写。',
+		'   - 每一条挑选的理由里，除了位置与熟手，尽量带上手号或"被禁次数"这类能核对的依据。',
+		'7. 理由里的数字只能来自用户给出的字段（号位胜率与场次、职业出场与被禁、每个号位选手的场次与胜率、',
+		'   真实 BP 里的场次/手号/被禁次数）。',
 		'   这些数据之外的版本强弱、选手风格、历史战绩你都不知道，绝对不要编造。',
-		'7. 每条理由不超过一句，用简体中文，不要客套话。',
+		'8. 每条理由不超过一句，用简体中文，不要客套话。',
 		'',
 		'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
 		'{"radiant":{"bans":[{"heroId":1,"reason":"…"}],"picks":[{"heroId":2,"position":2,"reason":"…"}]},',
@@ -704,6 +752,10 @@ export function buildPredictionUserPrompt(input: PredictionPromptInput): string 
 		renderRosterLines(input.signatures?.radiant, '天辉', input.data),
 		renderRosterLines(input.signatures?.dire, '夜魇', input.data),
 	].filter(Boolean);
+	const forms = [
+		renderRealDraft(input.forms?.radiant, '天辉', input.data),
+		renderRealDraft(input.forms?.dire, '夜魇', input.data),
+	].filter(Boolean);
 
 	return [
 		`对局：天辉 ${radiant} vs 夜魇 ${dire}，先选方是 ${first}。`,
@@ -712,6 +764,7 @@ export function buildPredictionUserPrompt(input: PredictionPromptInput): string 
 		'各号位胜率前几名（胜率/场次）：',
 		meta,
 		...(signatures.length > 0 ? ['', '两边的名单英雄池（按号位分，写清是谁在打；都是真实对局统计）：', ...signatures] : []),
+		...(forms.length > 0 ? ['', '两边**最近的正式比赛真实 BP**（这一节比上面的胜率更重要，挑人要贴合它）：', ...forms] : []),
 		'',
 		'请给出天辉与夜魇各自的 ban 与 pick（每个挑选都带 position），以及一段整体预测说明。',
 	].join('\n');

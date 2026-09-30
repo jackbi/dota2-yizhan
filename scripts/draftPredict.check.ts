@@ -177,6 +177,33 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	// 夜魇没有名单，仍然按号位胜率走；这条用来确认"熟手优先"没有污染另一边。
 	assert.ok(!(with_!.dire.picks ?? []).some((pick) => POOL.includes(pick.heroId)), '对面没有这份名单时不受影响');
 	ok('熟手优先：池子里那几个胜率最差的英雄照样会入选，且只作用于有名单的那一边');
+
+	/*
+	 * **出手时机**：同样一份名单，如果真实 BP 说这个英雄**平均第二十手才拿**，
+	 * 第一手（第 8 手）就不能是他——这正是"一选幻影长矛手"那个问题的正面回答。
+	 * 数据来自 `/api/draft/foe` 那份真实 BP（`averagePickOrder`），不是估的。
+	 */
+	const lateForm = {
+		name: 'Xtreme Gaming',
+		windowDays: 30,
+		matches: 18,
+		decided: 16,
+		wins: 9,
+		heroes: [{ heroId: 900, picks: 5, decided: 5, wins: 3, bansAgainst: 1, bansBy: 0, averagePickOrder: 20 }],
+	};
+	const withTiming = predictDraftLocal({
+		data: comfortData,
+		firstPicker: 'radiant',
+		signatures: { radiant: profile, dire: null },
+		forms: { radiant: lateForm, dire: null },
+	});
+	assert.ok(withTiming, '带真实 BP 也要能推出来');
+	assert.notEqual(
+		withTiming!.radiant.picks[0]?.heroId,
+		900,
+		`平均第 20 手才拿的英雄不能放在第一手，实际第一手是 ${withTiming!.radiant.picks[0]?.heroId}`,
+	);
+	ok('出手时机：平均手号太靠后的英雄不会被放到第一手');
 }
 
 // ---------------------------------------------------------------- 提示词
@@ -224,6 +251,20 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 		direTeam: 'Team Spirit',
 		firstPicker: 'dire',
 		signatures: { radiant: null, dire: signature },
+		forms: {
+			radiant: {
+				name: 'Team Falcons',
+				windowDays: 30,
+				matches: 18,
+				decided: 18,
+				wins: 11,
+				heroes: [
+					{ heroId: 12, picks: 5, decided: 5, wins: 2, bansAgainst: 14, bansBy: 0, averagePickOrder: 20.4 },
+					{ heroId: 9, picks: 4, decided: 4, wins: 3, bansAgainst: 10, bansBy: 1, averagePickOrder: 11 },
+				],
+			},
+			dire: null,
+		},
 	});
 	const system = messages[0]?.content ?? '';
 	const user = messages[1]?.content ?? '';
@@ -241,6 +282,14 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	assert.match(system, /position/, '系统提示词要要求模型给出号位');
 	assert.match(system, /挑选先在那个号位的池子里挑/, '系统提示词要把"熟手优先"写成规则，否则模型会直接挑版本强势');
 	assert.match(system, /他本窗口没打过它/, '池子外挑人时要求模型说清，别把它讲成他们的熟手');
+	/*
+	 * "别光靠算法"那一半：两队的真实 BP 要进提示词，而且要带上**平均第几手拿**与**被禁次数**
+	 * ——这两样正是判断"一手抢幻影长矛手合不合理""米拉娜轮不轮得到"的依据。
+	 */
+	assert.match(system, /尊重出手时机与可及性/, '系统提示词要有出手时机这条规则');
+	assert.match(user, /的真实 BP/, '用户提示词要带两队的真实 BP');
+	assert.match(user, /平均第 20\.4 手拿/, '要把"平均第几手拿"写进去，模型才有依据拒绝一选幻影长矛手');
+	assert.match(user, /对手禁他们最多/, '要把"被对面禁了多少次"写进去，判断可及性');
 	assert.ok(!/api[-_ ]?key|Bearer|sk-/i.test(system + user), '提示词里不该出现任何密钥痕迹');
 	ok('预测提示词带双方队名、先选方与按号位的英雄池，约束齐全');
 }

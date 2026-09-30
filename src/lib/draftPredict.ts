@@ -7,6 +7,8 @@ import type { LaneData } from './draftLanes.ts';
 import type { DraftSide, RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, sideOfOwner } from './draftOrder.ts';
 import { advise, assignLineup } from './draftScore.ts';
+import type { FoeForm } from './draftFoe.ts';
+import { MIN_PICKS } from './draftFoe.ts';
 import type { RosterProfile } from './teamSignature.ts';
 import { rosterHeroOf } from './teamSignature.ts';
 
@@ -29,8 +31,10 @@ export interface PredictedPick {
 	 *
 	 * 挑选：这一方的五个号位里它填的是哪一个；禁用：**对面**会拿它打几号位（禁用的价值就来自
 	 * "它落进对面哪个位置"）。所以界面上要给两行不同的说法，不能都写成"几号位"。
+	 *
+	 * **可选**：模型给的禁用不带号位（它只给 heroId 与理由），界面上那种情况就不画号位角标。
 	 */
-	position: number;
+	position?: number;
 	/** 一句话依据（本地路径取打分层的头一条依据；模型路径是模型写的）。 */
 	reason: string;
 }
@@ -100,6 +104,14 @@ export interface PredictInput {
 	/** 先选方所在的阵营。 */
 	firstPicker: DraftSide;
 	signatures?: { radiant?: RosterProfile | null; dire?: RosterProfile | null } | null;
+	/**
+	 * 两边**近期的真实 BP**（`/api/draft/foe` 取回来的那份）。
+	 *
+	 * 这是"别光靠算法"的那一半：名单招牌说的是"这个人本版本打过什么"，这份说的是
+	 * "这支队最近几十场**实际怎么禁怎么选**"——包括他们自己禁什么（`bansBy`）、
+	 * 对手禁他们什么（`bansAgainst`）、以及拿一个英雄时**平均在第几手**（`averagePickOrder`）。
+	 */
+	forms?: { radiant?: FoeForm | null; dire?: FoeForm | null } | null;
 	lanes?: LaneData | null;
 }
 
@@ -134,6 +146,15 @@ const emptySide = (): PredictedSide => ({ bans: [], picks: [] });
  */
 /** 每一手扫多少个候选去找熟手。熟手常常排在几十名开外（胜率不高），所以要扫得宽一些。 */
 const CANDIDATE_SCAN = 60;
+
+/**
+ * 出手时机的容差：一个英雄实战里平均第 N 手拿，最多提前这么多手拿它。
+ *
+ * 这一条正是"一选幻影长矛手"的药：真实 BP 里幻影长矛手平均在二十手前后才被拿
+ * （它是被抓就死的核，早拿等于把大哥亮给对面），而我们的推演只看胜率与熟手，第 8 手就把它抬出来了。
+ * 留 6 手余量是给摇摆与临场改主意的——完全按平均值卡死会把真实 BP 里"提前抢"那种做法也一起禁掉。
+ */
+const PICK_TIMING_SLACK = 6;
 
 /**
  * 一手一手推完整局。任何一步算不出候选（英雄池空了、数据缺失）就停下，
@@ -174,10 +195,40 @@ export function predictDraftLocal(input: PredictInput): DraftPrediction | null {
 		/*
 		 * 熟手优先：候选已经按"号位胜率 + 对位 + 结构"排好了，所以池子里的第一个
 		 * 就是"他的熟手里最强的那个"。池子里一个都没有（被禁、被拿，或本来没记录）才退回第一顺位。
+		 *
+		 * 除了名单（"这个号位的人本版本打过什么"），还看这支队的**真实 BP**：
+		 * - 挑选：他们最近真的拿过这个英雄（`picks`）；
+		 * - 禁用：他们最近真的禁过这个英雄（`bansBy`）——预测"他们会禁谁"用的就是它。
+		 *
+		 * 挑选再加一条**时机**：实战里平均在一二十手才拿的英雄，不在第八手拿它。
+		 * 这条是"一选幻影长矛手"那个问题的正面回答，代价是偶尔会漏掉"提前抢"的打法（留了 6 手余量）。
 		 */
-		const best = available[0];
-		const bestComfort = available.find((candidate) => rosterHeroOf(profile, candidate.position, candidate.heroId));
-		const top = bestComfort ?? best;
+		const ownForm = side === 'radiant' ? input.forms?.radiant : input.forms?.dire;
+		const known = (heroId: number) => ownForm?.heroes.find((row) => row.heroId === heroId) ?? null;
+		const inPool = (candidate: { heroId: number; position?: number }) => Boolean(rosterHeroOf(profile, candidate.position ?? 0, candidate.heroId));
+		const timingOk = (candidate: { heroId: number }) => {
+			if (entry.action !== 'pick') return true;
+			const seen = known(candidate.heroId);
+			// 没有真实记录就不拦：数据缺失不等于这个英雄不能早拿。
+			if (!seen || seen.averagePickOrder <= 0) return true;
+			return seen.averagePickOrder <= entry.step + PICK_TIMING_SLACK;
+		};
+		const familiar = (candidate: { heroId: number; position?: number }) =>
+			entry.action === 'ban'
+				? inPool(candidate) || (known(candidate.heroId)?.bansBy ?? 0) > 0
+				: inPool(candidate) || (known(candidate.heroId)?.picks ?? 0) >= MIN_PICKS;
+		const comfortable = available.filter((candidate) => familiar(candidate) && timingOk(candidate));
+		const timed = available.filter(timingOk);
+		/*
+		 * 三段退让，顺序不能换：
+		 * 1. 熟手且时机对得上 → 就是要的；
+		 * 2. 时机对得上但都不算熟手 → 按号位胜率挑（`timed[0]` 已经是排序后的第一个）；
+		 * 3. 连时机都凑不出一个（整池的平均手号都偏后）→ 才无视时机，别把这一手空着。
+		 *
+		 * 中间那段曾经写成"熟手优先、但回落时直接用 `available[0]`"，结果时机被绕过去了：
+		 * 想挡的英雄正是排在第一位的那一个，回落恰好又把它捡回来（自检里就是这么抓住的）。
+		 */
+		const top = comfortable[0] ?? timed[0] ?? available[0];
 		if (!top) break;
 		used.add(top.heroId);
 		recorded = [...recorded, top.heroId];

@@ -62,6 +62,7 @@ const TEAM_FORM_DOCUMENT = `query TeamForm($id: Int!, $from: Long!) {
 				heroId
 				isPick
 				isRadiant
+				order
 			}
 		}
 	}
