@@ -306,6 +306,17 @@ export async function getTeamNameIndex(): Promise<[string, number][]> {
 	return [...index].map(([key, team]) => [key, team.team_id]);
 }
 
+/**
+ * 队名 → 队伍 id 查表要用的正规化规则（`/draft-teams.json` 在构建期按它把队名换成 id）。
+ *
+ * 导出它而不是让调用方各抄一份：这条规则以前在 `draftBoard.ts` 里有一个复制品，
+ * 两处差一个字符，手填队名就永远查不到队伍——而且**不会报错**，只是查不到。
+ * 查表这件事现在整体搬到构建期了，浏览器那边不再需要这份规则。
+ */
+export function normalizeTeamName(value: string): string {
+	return norm(value);
+}
+
 // ---------------------------------------------------------------- 比赛英雄
 
 interface OdProMatch {

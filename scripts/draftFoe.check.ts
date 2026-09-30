@@ -141,20 +141,24 @@ const FOE = 9572001;
 	ok('文案带全数字、人称可翻，且不出现 undefined/NaN');
 }
 
-// 队名规则：页面里那份复制品必须和 `opendota.norm` 完全一致。
+/*
+ * 队名规则：**查表这件事已经从浏览器搬到了构建期**。
+ *
+ * 以前浏览器里有一份 `normTeamName` 的复制品，和 `opendota.norm` 差一个字符的症状是
+ * 「手填的队名永远查不到队伍」且不报错。现在 `draftTeams.ts` 直接用 `normalizeTeamName()`
+ * 把队名换成 OpenDota id，随 `/draft-teams.json` 一起发给浏览器，那边不再需要这份规则。
+ * 所以这里换成两条：改名的那一端必须还是同一个函数，页面脚本里不许再出现复制品。
+ */
 {
-	const regexOf = (path: string): string => {
-		const source = readFileSync(new URL(path, import.meta.url), 'utf8');
-		const match = /replace\((\/[^\n]*?\/g),\s*''\)/.exec(source);
-		assert.ok(match, `${path} 里没找到队名正规化规则`);
-		return match[1]!;
-	};
-	assert.equal(
-		regexOf('../src/lib/opendota.ts'),
-		regexOf('../src/scripts/draftBoard.ts'),
-		'/draft-teams.json 的键与页面查表必须用同一条正规化规则，否则手填队名永远查不到',
-	);
-	ok('页面与 opendota 的队名正规化规则一致');
+	const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
+	const opendota = read('../src/lib/opendota.ts');
+	const draftTeams = read('../src/lib/draftTeams.ts');
+	const board = read('../src/scripts/draftBoard.ts');
+	assert.match(opendota, /export function normalizeTeamName\(/, 'opendota 要导出队名正规化规则，构建期查表用');
+	assert.match(draftTeams, /normalizeTeamName\s*}?\s*from '\.\/opendota'/, 'draftTeams 要直接用 opendota 那份规则，不许另抄一份');
+	assert.match(draftTeams, /normalizeTeamName\(team\.name\)/, '队名要在这里换成 OpenDota id');
+	assert.ok(!/lowercase\(\)\.replace\(/.test(board), '浏览器那边不该再有队名正规化的复制品');
+	ok('队名查表只在构建期做一次，浏览器不再复制正规化规则');
 }
 
 console.log(`draftFoe 全部断言通过（${cases} 组）`);

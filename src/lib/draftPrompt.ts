@@ -6,8 +6,11 @@ import type { DraftData, DraftHero } from './draftData.ts';
 import type { Advice } from './draftScore.ts';
 import type { RecordedHand } from './draftOrder.ts';
 import { CM_STEPS, sideOfOwner } from './draftOrder.ts';
+import type { DraftSide } from './draftOrder.ts';
 import type { FoeForm } from './draftFoe.ts';
 import { foeHighlights, foeRecordLine, foeWinRate } from './draftFoe.ts';
+import type { TeamSignature } from './teamSignature.ts';
+import { signatureHighlights, signatureScopeLabel } from './teamSignature.ts';
 import { formatNet } from './draftLanes.ts';
 import type { DraftVerdict, VerdictRow } from './draftVerdict.ts';
 
@@ -58,6 +61,11 @@ export interface PromptInput {
 	 * 免得它拿「据说这支队爱打团」这种印象来填空。
 	 */
 	foeForm?: FoeForm | null;
+	/**
+	 * 两边的名单招牌（按版本统计）。按**实际阵营**给，与 `advise` 的入参同一份，
+	 * 提示词里的人称由 `role` 与 `ourSide` 一起决定。
+	 */
+	signatures?: { radiant?: TeamSignature | null; dire?: TeamSignature | null } | null;
 }
 
 /**
@@ -87,7 +95,35 @@ function renderCandidates(input: PromptInput, role: PromptRole): string {
 	const main = list(input.advice.candidates);
 	if (input.advice.foeCandidates.length === 0) return main;
 	const whose = role === 'theirs' ? '你自己' : '对面';
-	return `${main}\n\n（以下 ${input.advice.foeCandidates.length} 个是${whose}近期真拿过的，没排进上面的顺序，同样可以挑）：\n${list(input.advice.foeCandidates)}`;
+	return `${main}\n\n（以下 ${input.advice.foeCandidates.length} 个是${whose}近期真拿过、或名单里的招牌英雄，没排进上面的顺序，同样可以挑）：\n${list(input.advice.foeCandidates)}`;
+}
+
+/**
+ * 两边的**名单招牌**：这几个人本来最常拿什么。
+ *
+ * 与 `renderFoe`（近 30 天实战窗口）刻意分开成两块，理由和打分层一样：一个是"最近在拿什么"，
+ * 一个是"这个人本来就是这一手"。合成一段的话，模型会把两批数据当成同一份证据，
+ * 写出"他们近期拿了 3 场"这种把招牌算进窗口的话。
+ */
+function renderSignatures(input: PromptInput, role: PromptRole): string {
+	const byId = new Map(input.data.heroes.map((hero) => [hero.id, hero]));
+	const block = (signature: TeamSignature | null | undefined, side: 'ours' | 'theirs'): string => {
+		const rows = signatureHighlights(signature, 5);
+		if (!signature || rows.length === 0) return '';
+		const scope = signatureScopeLabel(signature.scope);
+		// 给我方出主意时数据里写的是"我方/对面"；替对面落子时整段是它自己的视角，人称要翻。
+		const label = role === 'theirs' ? (side === 'ours' ? '你自己' : '屏幕前的人') : side === 'ours' ? '我方' : '对面';
+		const lines = rows.map((hero) => {
+			const info = byId.get(hero.heroId);
+			const name = info ? `${info.name}（${info.nameEn}）` : `英雄 #${hero.heroId}`;
+			const who = hero.players.length > 0 ? `（${hero.players.join('、')}）` : '';
+			return `- heroId=${hero.heroId} ${name}：${hero.games} 场 ${hero.wins} 胜${who}`;
+		});
+		return [`${label}${signature.name ? `（${signature.name}）` : ''}的名单招牌${scope ? `（${scope}）` : ''}：`, ...lines].join('\n');
+	};
+	const ours = block(input.signatures?.[input.ourSide], 'ours');
+	const theirs = block(input.signatures?.[input.ourSide === 'radiant' ? 'dire' : 'radiant'], 'theirs');
+	return [ours, theirs].filter(Boolean).join('\n');
 }
 
 /** 已录的 BP，按手号列出来，被跳过的注明跳过。 */
@@ -180,6 +216,8 @@ export function buildSystemPrompt(role: PromptRole = 'ours'): string {
 			'   那也是从你的角度算的，写进理由时要改成人话。',
 			'5. 「你自己近期爱用」那几个英雄是你熟的东西：挑选时优先在里面补自己的缺口，禁用时掐对面最想要的。',
 			'   熟只代表你敢拿、胜率高，不代表它这一手就比别的强——依据里的场次与胜率要照实引用。',
+			'6. 「你自己名单招牌」那一块同样是你熟的东西，但它是这几个人**按版本统计**的底子，',
+			'   与近期窗口是两种证据：挑人时先在里面看有没有补得上缺口的，禁用时对屏幕前的人的招牌要更警惕。',
 			'',
 			'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
 			'{"picks":[{"heroId":1,"position":2,"reason":"…","risk":"…"}],"summary":"…"}',
@@ -198,10 +236,14 @@ export function buildSystemPrompt(role: PromptRole = 'ours'): string {
 		'   你不知道这些数据之外的任何统计，也不要去回忆版本强弱，绝对不要编造数字。',
 		'3. 每条理由不超过两句，直接说这一手为什么拿它、为什么是现在。',
 		'4. 如果这一手是禁用，理由要说明对面拿走它会造成什么；如果是挑选，说明它补上了哪个号位。',
-		'5. 有对面近期比赛记录时，他们拿得多、胜率高的英雄，禁用优先级要往前提（`禁`掉对面熟手的价值',
-		'   不等于它在全局胜率里排第几）；挑选时如果候选里正好有对面的熟手，说明这一手还顺带压住了他们。',
-		'   只知道这些场次与胜率，不要凭印象说某支队「爱打团」「习惯四保一」。',
-		'6. 用简体中文，不要客套话，不要标题和列表符号。',
+			'5. 有对面近期比赛记录时，他们拿得多、胜率高的英雄，禁用优先级要往前提（`禁`掉对面熟手的价值',
+			'   不等于它在全局胜率里排第几）；挑选时如果候选里正好有对面的熟手，说明这一手还顺带压住了他们。',
+			'   只知道这些场次与胜率，不要凭印象说某支队「爱打团」「习惯四保一」。',
+			'6. 还有一块是两边**名单里的招牌英雄**（按版本统计的真实对局，带打得最多的选手）。',
+			'   它说的是"这几个人本来就是这一手"，和上一条的近期窗口是两种证据，别混成一句话：',
+			'   禁用时它提高对面的威胁权重，挑选时它说明我方拿这一手是顺手而不是临时练。',
+			'   一个人在不同版本的招牌会变，所以引用时把口径那一栏（版本号，或回退窗口那几个字）照抄出来。',
+			'7. 用简体中文，不要客套话，不要标题和列表符号。',
 		'',
 		'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
 		'{"picks":[{"heroId":1,"position":2,"reason":"…","risk":"…"}],"summary":"…"}',
@@ -216,6 +258,7 @@ export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): 
 	const action = advice.action === 'ban' ? '禁用' : '挑选';
 	const turn = advice.ours ? `轮到${ours}${action}` : `轮到${theirs}${action}（我方要预判对面会怎么动）`;
 	const foe = renderFoe(input, role);
+	const signatures = renderSignatures(input, role);
 
 	return [
 		// 替对面落子时，数据是从对面的角度算的，先把人称交代清楚，免得模型把两方搞反。
@@ -233,6 +276,7 @@ export function buildUserPrompt(input: PromptInput, role: PromptRole = 'ours'): 
 		'已经录进去的 BP：',
 		renderRecorded(input),
 		...(foe ? ['', foe] : []),
+		...(signatures ? ['', signatures] : []),
 		'',
 		`候选（只能从这些里挑 ${ADVICE_TARGET_COUNT} 个，按推荐程度排序）：`,
 		renderCandidates(input, role),
@@ -531,4 +575,200 @@ export function parseAdviceReply(raw: string, allowedHeroIds: readonly number[])
 
 	const summary = typeof (parsed as { summary?: unknown }).summary === 'string' ? (parsed as { summary: string }).summary.trim() : '';
 	return { picks, summary: summary.slice(0, 400) };
+}
+
+// ---------------------------------------------------------------- 整局 BP 预测
+
+/**
+ * 「AI 预测」这条路的提示词。
+ *
+ * 与出主意那份的根本区别：这里**没有下一手**，也不要求它从候选里挑——预测的是这两支队
+ * 大概会怎么禁选。所以约束换成"英雄必须是真实存在的、两边加起来不许重复、每边五手挑选"，
+ * 这几条都是可以在解析层核对的（见 `parsePredictionReply`）。
+ *
+ * **不让模型排 24 手的顺序**：没有真实 BP 记录时那个顺序就是编的，而且一手一问要 24 次请求。
+ * 它只给"两边各禁什么、各选什么"和一整段理由，顺序那部分交给本地打分层去推（`draftPredict`）。
+ */
+export interface PredictionPromptInput {
+	data: DraftData;
+	/** 两边的队名；空串时界面上写「天辉 / 夜魇」。 */
+	radiantTeam: string;
+	direTeam: string;
+	/** 先选方所在的阵营。 */
+	firstPicker: DraftSide;
+	signatures?: { radiant?: TeamSignature | null; dire?: TeamSignature | null } | null;
+}
+
+/** 每号位在提示词里列几个热门。列多了模型挑花眼，列少了又没有参考价值。 */
+const META_TOP_PER_POSITION = 5;
+
+/**
+ * 版本热门：**按号位**列胜率前几名。
+ *
+ * 只给结构化数字（胜率、场次），不给"这个版本强"的判断——那正是提示词里反复要模型别编的东西。
+ * 职业样本单独一行：它样本小，只能当"最近职业队爱拿什么"的旁证。
+ */
+function renderMeta(data: DraftData): string {
+	const lines: string[] = [];
+	for (let position = 1; position <= 5; position += 1) {
+		const rows = data.heroes
+			.map((hero) => ({ hero, cell: hero.positions[position - 1] }))
+			.filter((row): row is { hero: DraftHero; cell: [number, number] } => row.cell !== null)
+			.map((row) => ({ ...row, rate: row.cell[1] / row.cell[0] }))
+			.sort((a, b) => b.rate - a.rate || b.cell[0] - a.cell[0])
+			.slice(0, META_TOP_PER_POSITION);
+		if (rows.length === 0) continue;
+		lines.push(
+			`${position} 号位：${rows
+				.map((row) => `${row.hero.name}(id=${row.hero.id}) ${(row.rate * 100).toFixed(1)}%/${row.cell[0]} 场`)
+				.join('，')}`,
+		);
+	}
+	const hot = [...data.heroes]
+		.filter((hero) => hero.pro[0] + hero.pro[2] > 0)
+		.sort((a, b) => b.pro[0] + b.pro[2] - (a.pro[0] + a.pro[2]))
+		.slice(0, 8);
+	if (hot.length > 0) {
+		lines.push(
+			`职业样本热门：${hot.map((hero) => `${hero.name}(id=${hero.id}) 出场 ${hero.pro[0]} 被禁 ${hero.pro[2]}`).join('，')}`,
+		);
+	}
+	return lines.join('\n');
+}
+
+function renderSignatureBlock(signature: TeamSignature | null | undefined, label: string): string {
+	const rows = signatureHighlights(signature, 5);
+	if (rows.length === 0) return '';
+	const scope = signatureScopeLabel(signature?.scope ?? '');
+	return [
+		`${label}${signature?.name ? `（${signature.name}）` : ''}的名单招牌${scope ? `（${scope}）` : ''}：`,
+		...rows.map((hero) => `- heroId=${hero.heroId} ${hero.games} 场 ${hero.wins} 胜${hero.players.length > 0 ? `（${hero.players.join('、')}）` : ''}`),
+	].join('\n');
+}
+
+export function buildPredictionSystemPrompt(): string {
+	return [
+		'你是 DOTA2 职业赛事的 BP 分析师。用户给你两支队伍、先选方与站内的英雄数据，',
+		'你要预测这两支队在这局里大概会怎么禁选。',
+		'',
+		'规则背景：7.40 起一共 24 手，每队 7 禁 5 选，先选方与后选方交替；后选方握着最后一手禁用和最后一手挑选。',
+		'',
+		'你必须遵守：',
+		'1. 每一边给 5 个挑选、不超过 7 个禁用；heroId 必须是用户给出的数据里出现过的数字。',
+		'2. 两边的英雄加起来不能重复（一个英雄一局只能用一次）。',
+		'3. 理由里的数字只能来自用户给出的字段（号位胜率与场次、职业出场与被禁、招牌英雄的场次与胜率）。',
+		'   这些数据之外的版本强弱、选手风格、历史战绩你都不知道，绝对不要编造。',
+		'4. 预测要讲得通：先选的队伍优先拿自己最需要的号位，后选的队伍留 counter；',
+		'   禁用优先掐对面招牌与版本高胜率点（依据里写得出数字的那几个）。',
+		'5. 每条理由不超过一句，用简体中文，不要客套话。',
+		'',
+		'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
+		'{"radiant":{"bans":[{"heroId":1,"reason":"…"}],"picks":[{"heroId":2,"reason":"…"}]},',
+		'"dire":{"bans":[{"heroId":3,"reason":"…"}],"picks":[{"heroId":4,"reason":"…"}]},"summary":"…"}',
+	].join('\n');
+}
+
+export function buildPredictionUserPrompt(input: PredictionPromptInput): string {
+	const radiant = input.radiantTeam.trim() || '天辉';
+	const dire = input.direTeam.trim() || '夜魇';
+	const first = input.firstPicker === 'radiant' ? `${radiant}（天辉）` : `${dire}（夜魇）`;
+	const meta = renderMeta(input.data);
+	const signatures = [
+		renderSignatureBlock(input.signatures?.radiant, '天辉'),
+		renderSignatureBlock(input.signatures?.dire, '夜魇'),
+	].filter(Boolean);
+
+	return [
+		`对局：天辉 ${radiant} vs 夜魇 ${dire}，先选方是 ${first}。`,
+		`版本与口径：${renderPatch(input.data)}${input.data.bracketLabel}，统计窗口是${input.data.windowLabel}，少于 ${input.data.minPositionMatches} 场的号位不算数。`,
+		'',
+		'各号位胜率前几名（胜率/场次）：',
+		meta,
+		...(signatures.length > 0 ? ['', '两边的名单招牌（按版本统计的真实对局）：', ...signatures] : []),
+		'',
+		'请给出天辉与夜魇各自的 ban 与 pick，以及一段整体预测说明。',
+	].join('\n');
+}
+
+export function buildPredictionMessages(input: PredictionPromptInput): PromptMessage[] {
+	return [
+		{ role: 'system', content: buildPredictionSystemPrompt() },
+		{ role: 'user', content: buildPredictionUserPrompt(input) },
+	];
+}
+
+/**
+ * 预测要写两边共 20 来个英雄加上理由，比"给一手建议"长得多。上限给 2200：
+ * 实测每条理由一两句话时整份约 800–1200 个 token，留一倍余量免得输出被截断。
+ */
+export const PREDICTION_MAX_TOKENS = 2200;
+
+export interface ParsedPredictedSide {
+	bans: { heroId: number; reason: string }[];
+	picks: { heroId: number; reason: string }[];
+}
+
+export interface ParsedPrediction {
+	radiant: ParsedPredictedSide;
+	dire: ParsedPredictedSide;
+	summary: string;
+}
+
+/** 一边最多能禁几个（7 手），解析时按它设上限。 */
+const MAX_PREDICTED_BANS = 7;
+const PREDICTED_PICKS = 5;
+
+function readPredictedSide(raw: unknown, allowed: ReadonlySet<number>, taken: Set<number>): ParsedPredictedSide | null {
+	if (!raw || typeof raw !== 'object') return null;
+	const read = (list: unknown, limit: number): { heroId: number; reason: string }[] => {
+		const rows: { heroId: number; reason: string }[] = [];
+		for (const item of Array.isArray(list) ? list : []) {
+			if (!item || typeof item !== 'object') continue;
+			const row = item as { heroId?: unknown; reason?: unknown };
+			const heroId = Number(row.heroId);
+			// 数据里不存在的英雄、或已经被另一边用掉的英雄，一律丢掉——重复的英雄在 DOTA 里不可能出现。
+			if (!Number.isInteger(heroId) || !allowed.has(heroId) || taken.has(heroId)) continue;
+			const reason = typeof row.reason === 'string' ? row.reason.trim().slice(0, 200) : '';
+			taken.add(heroId);
+			rows.push({ heroId, reason });
+			if (rows.length >= limit) break;
+		}
+		return rows;
+	};
+	// 先读禁用再读挑选：让"重复英雄"那条判据优先落在先出现的列表上，结果与模型给的顺序一致。
+	const bans = read((raw as { bans?: unknown }).bans, MAX_PREDICTED_BANS);
+	const picks = read((raw as { picks?: unknown }).picks, PREDICTED_PICKS);
+	// 每边五个挑选是规则，少一个就不是一局 BP 了；禁用少了还能看，所以只要求非空。
+	if (picks.length < PREDICTED_PICKS || bans.length === 0) return null;
+	return { bans, picks };
+}
+
+/**
+ * 解析预测回复。任何一步不对都返回 null：调用方退回本地推演，
+ * 而不是把半截结果摆到界面上（预测这一块最容易让读者当成事实）。
+ */
+export function parsePredictionReply(raw: string, allowedHeroIds: readonly number[]): ParsedPrediction | null {
+	if (!raw) return null;
+	const withoutFence = raw.replace(/```(?:json)?/gi, '');
+	const start = withoutFence.indexOf('{');
+	const end = withoutFence.lastIndexOf('}');
+	if (start < 0 || end <= start) return null;
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(withoutFence.slice(start, end + 1));
+	} catch {
+		return null;
+	}
+	if (!parsed || typeof parsed !== 'object') return null;
+
+	const allowed = new Set(allowedHeroIds);
+	const taken = new Set<number>();
+	const body = parsed as { radiant?: unknown; dire?: unknown; summary?: unknown };
+	const radiant = readPredictedSide(body.radiant, allowed, taken);
+	const dire = readPredictedSide(body.dire, allowed, taken);
+	if (!radiant || !dire) return null;
+
+	const summary = typeof body.summary === 'string' ? body.summary.trim().slice(0, 600) : '';
+	return { radiant, dire, summary };
 }

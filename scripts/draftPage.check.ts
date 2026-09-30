@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
  * 1. 脚本里 `element('x')` 找的每个 id，页面上都要有；
  * 2. 页面里不许用 `hidden` 类藏东西（Tailwind 的 utility 层会盖过脚本写的内联 display），
  *    要藏就用内联 `style="display: none"`，并且脚本里必须有让它显示出来的代码；
- * 3. 页面上那些 `data-*` 挂钩（属性、号位、阵营、先选权）要成组存在，缺一个按钮就少一档功能。
+ * 3. 页面上那些 `data-*` 挂钩（属性、号位、我打哪边、先选权、功能页签）要成组存在，缺一个按钮就少一档功能。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/draftPage.check.ts`）。
  */
@@ -58,7 +58,7 @@ assert.match(script, /style\.display/, '脚本必须用 style.display 控制显�
 
 // ---------------------------------------------------------------- 挂钩齐不齐
 
-for (const attr of ['data-attr', 'data-position', 'data-side', 'data-first-pick']) {
+for (const attr of ['data-attr', 'data-position', 'data-my-side', 'data-first-pick', 'data-tab']) {
 	assert.ok(page.includes(`${attr}="`), `页面上缺少 ${attr} 挂钩`);
 	assert.ok(script.includes(`[${attr}]`), `脚本没有监听 ${attr}`);
 }
@@ -113,12 +113,13 @@ assert.match(script, /addEventListener\('pageshow'/, '从 bfcache 返回时要�
 assert.match(script, /event\.key === AI_STORE_KEY/, '另一个标签页改了配置要跟上');
 // 变更判定要覆盖**全部**字段：只比地址与 key 的话，在设置页点完「测试连接」切回来不会重画。
 assert.match(script, /if \(sameAiConfig\(next, ai\)\) return;/, '重读配置后要按全部字段判等（含上次测试结果）');
-// 换了地址/key/模型要把**两处**模型产物都撤掉：建议面板（aiResult）与复盘文字（verdictAi）。
-// 上一版只撤了前者，复盘面板还挂着上个模型的文字，而 renderAll() 不会重画它。
+// 换了地址/key/模型要把**三处**模型产物都撤掉：建议面板（aiResult）、复盘文字（verdictAi）、
+// 模型给的预测（prediction）。上一版只撤了前者，复盘面板还挂着上个模型的文字，而 renderAll()
+// 不会重画它；加了预测之后这是同一件事的第三处。
 	assert.match(
 		script,
-		/if \(!sameAiTarget\(next, ai\)\) \{\s*aiGeneration \+= 1;\s*aiResult = null;\s*verdictAi = null;\s*renderVerdict\(\);/,
-		'换了地址/key/模型要撤掉上一份 AI 建议与复盘文字、重画复盘面板，并推进配置世代号',
+		/if \(!sameAiTarget\(next, ai\)\) \{[\s\S]{0,400}?aiGeneration \+= 1;[\s\S]{0,200}?aiResult = null;[\s\S]{0,200}?verdictAi = null;[\s\S]{0,400}?renderVerdict\(\);[\s\S]{0,200}?renderPrediction\(\);/,
+		'换了地址/key/模型要撤掉上一份 AI 建议、复盘文字与模型预测，并重画这两处、推进配置世代号',
 	);
 /*
  * 只撤"当时已经落在面板上"的那份还不够：请求是异步的，最长能跑 30 秒。这中间另一个标签页
@@ -128,9 +129,9 @@ assert.match(script, /if \(sameAiConfig\(next, ai\)\) return;/, '重读配置后
 	assert.match(script, /let aiGeneration = 0;/, '要有配置世代号');
 	assert.equal(
 		(script.match(/if \(generation !== aiGeneration\) return;/g) ?? []).length,
-		2,
-	'复盘与建议两条 await 之后都要丢弃过期回复',
-);
+		3,
+	'复盘、建议与整局预测三条 await 之后都要丢弃过期回复',
+	);
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
 assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
 // 三条调用路径走同一个入口：退让顺序、超时、按服务商拼的请求头都只写一遍。
@@ -166,7 +167,7 @@ assert.ok(!/data!\s*[.,)]/.test(script), '不要用 data! 压类型：收窄后�
  * 1. 右边的 BP 板要和左边的英雄池**等高**。面板本身会被栅拉高，但里面那层只有内容高度，
  *    改回两列挑选（或去掉 flex 拉伸）就会空出四五百像素。
  * 2. 挑选区排**一列**，禁用区保持小格子，两者的高度差靠栅格分配。
- * 3. 比赛下拉必须限宽：原生 select 会按最长的那条 option 撑开，窄屏上顶出横向滚动条
+ * 3. 两个队伍下拉必须限宽：原生 select 会按最长的那条 option 撑开，窄屏上顶出横向滚动条
  *    （实测 390px 视口下页面被撑到 534px）。
  */
 assert.ok(page.includes('class="draft-board '), 'BP 板要带 draft-board 类');
@@ -175,7 +176,8 @@ assert.match(page, /@media \(min-width: 1280px\)/, '等高拉伸要放在 xl 断
 assert.match(page, /\.draft-board-grid\s*\{[^}]*flex:\s*1 1 auto/, 'draft-board-grid 必须撑满面板高度');
 assert.ok(page.includes('一行一手'), '文案要说明这张表是一行一手');
 assert.ok(!page.includes('min-w-56'), '比赛下拉不能用 min-w 定宽，会被最长的 option 撑破布局');
-assert.match(page, /id="draft-match"[^>]*class="[^"]*w-full[^"]*sm:w-72/, '比赛下拉要限宽');
+assert.match(page, /id="draft-radiant-team"[^>]*class="[^"]*w-full[^"]*sm:w-60/, '天辉那支队伍的下拉要限宽');
+assert.match(page, /id="draft-dire-team"[^>]*class="[^"]*w-full[^"]*sm:w-60/, '夜魇那支队伍的下拉要限宽');
 
 /**
  * 右侧 BP 板照客户端的排法：天辉一列、夜魇一列、中间夹手号，一行一手。

@@ -12,6 +12,8 @@ import type { HeroMatchups } from './draftMatchup.ts';
 import { matchupRate } from './draftMatchup.ts';
 import type { FoeForm } from './draftFoe.ts';
 import { foeHeroLine, foeHighlights } from './draftFoe.ts';
+import type { TeamSignature } from './teamSignature.ts';
+import { signatureHighlights, signatureLine } from './teamSignature.ts';
 
 /**
  * 阵容分析的打分层：**先把候选和依据算出来，再交给模型排序和解释**。
@@ -557,6 +559,17 @@ export interface AdviseInput {
 	/** 对面近期的英雄偏好；没有就按「不认识这支队」算。 */
 	foeForm?: FoeForm | null;
 	/**
+	 * 两边**名单里算出来的招牌英雄**（战队页那一套，按版本统计）。
+	 *
+	 * 与 `foeForm` 是两种依据：那是"近 30 天真的在拿"的实战窗口，这是"这几个人本来就是这一手"的
+	 * 阵容底子。分开给、合并成一句依据，是因为它们能互相印证也能互相矛盾——用窗口覆盖招牌时
+	 * 数据里写得出来，读者才判断得了。
+	 *
+	 * 按**实际阵营**给，不按"我方/对面"：`advise` 会自己按 `ourSide` 取对应的那一侧，
+	 * 替对面落子（把对面当 `ourSide`）时人称不会翻错。
+	 */
+	signatures?: { radiant?: TeamSignature | null; dire?: TeamSignature | null } | null;
+	/**
 	 * 线上对位（谁在线上打谁、和谁走一路）。**可选增强**：拿不到就少一条依据，
 	 * 不影响号位胜率、估值与其它依据——它与整局对位是两套口径，不能互相顶替。
 	 */
@@ -639,6 +652,13 @@ export function advise(input: AdviseInput): Advice | null {
 	const { data, recorded, ourSide, firstPicker } = input;
 	const foeForm = input.foeForm ?? null;
 	const foeSide = input.foeSide ?? 'theirs';
+	/*
+	 * 两边的名单招牌按**实际阵营**取：`advise` 内部一律用「我方 / 对面」的视角，
+	 * 由 `ourSide` 决定哪边是我方。替对面落子时 `ourSide` 传的就是对面，这里自然跟着翻。
+	 */
+	const signatures = input.signatures ?? null;
+	const ourSignature = signatures?.[ourSide] ?? null;
+	const theirSignature = signatures?.[ourSide === 'radiant' ? 'dire' : 'radiant'] ?? null;
 	const lanes = input.lanes ?? null;
 	const limit = input.limit ?? 5;
 	const state = snapshot(recorded);
@@ -739,6 +759,9 @@ export function advise(input: AdviseInput): Advice | null {
 			// 对面近期真拿过的英雄单独点一句：这一手是抢对面的熟手，还是与我们无关。
 			const foeLine = foeHeroLine(foeForm, hero.id, foeSide);
 			if (foeLine) reasons.push(foeLine);
+			// 名单里的招牌：挑选时先看我们自己的人本来就会什么（我们的人拿它，是"顺手"而不是"新练"）。
+			const sigLine = signatureLine(ourSignature, hero.id, 'ours') || signatureLine(theirSignature, hero.id, 'theirs');
+			if (sigLine) reasons.push(sigLine);
 			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
@@ -803,6 +826,9 @@ export function advise(input: AdviseInput): Advice | null {
 		// 对面的熟手优先禁：这一句是他们近期比赛里的次数与胜率，不是「版本强势」的转述。
 		const foeLine = foeHeroLine(foeForm, hero.id, foeSide);
 		if (foeLine) reasons.push(foeLine);
+		// 名单里的招牌：禁用时先看对面那几个人本来就会什么（熟手被对面的熟手拿走，威胁更实）。
+		const sigLine = signatureLine(theirSignature, hero.id, 'theirs') || signatureLine(ourSignature, hero.id, 'ours');
+		if (sigLine) reasons.push(sigLine);
 		const counter = counterSummary(data.matchups, hero.id, ourIds);
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
 		// 对面拿它之后，我们这条线要被压成什么样——与整局对位分开写。
@@ -834,8 +860,25 @@ export function advise(input: AdviseInput): Advice | null {
 	const shown = candidates.slice(0, limit);
 	const shownIds = new Set(shown.map((candidate) => candidate.heroId));
 	const byHeroId = new Map(candidates.map((candidate) => [candidate.heroId, candidate]));
-	const foeCandidates = foeHighlights(foeForm)
-		.map((row) => byHeroId.get(row.heroId))
+	/*
+	 * 「对面擅长」那一栏：**实战窗口**（`foeForm`）与**名单招牌**（`theirSignature`）合起来，
+	 * 谁先谁后按各自的数据强度定——窗口是近 30 天真的在拿，招牌是这几个人的底子，窗口在前。
+	 * 替对面落子（`foeSide === 'ours'`）时两栏都是「它自己」的，招牌那半也同样要带上。
+	 */
+	const foeHeroIds: number[] = [];
+	const seenFoe = new Set<number>();
+	const addFoe = (ids: readonly number[]): void => {
+		for (const heroId of ids) {
+			if (seenFoe.has(heroId)) continue;
+			seenFoe.add(heroId);
+			foeHeroIds.push(heroId);
+		}
+	};
+	addFoe(foeHighlights(foeForm).map((row) => row.heroId));
+	addFoe(signatureHighlights(theirSignature).map((row) => row.heroId));
+	if (foeSide === 'ours') addFoe(signatureHighlights(ourSignature).map((row) => row.heroId));
+	const foeCandidates = foeHeroIds
+		.map((heroId) => byHeroId.get(heroId))
 		.filter((candidate): candidate is AdviceCandidate => candidate !== undefined && !shownIds.has(candidate.heroId));
 
 	const gaps = ourBase.slots.filter((slot) => !slot.settled).map((slot) => slot.position);

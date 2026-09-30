@@ -1,16 +1,16 @@
 ---
 import Layout from '../layouts/Layout.astro';
 import { loadDraftData } from '../lib/draftData';
-import { formatMatchTime } from '../lib/format';
 import { ATTRIBUTE_ICON } from '../lib/heroApi';
-import { getTournaments } from '../lib/tournamentsApi';
 import { inlineJson } from '../lib/inlineJson';
-import type { EsportsMatch } from '../data/types';
+import { loadDraftTeams } from '../lib/draftTeams';
 
 /**
- * 阵容分析：观赛时手动录 BP，再由数据层与模型一起给出建议。
+ * 阵容分析：三件事放在一页上——**预测**（这两队大概会怎么禁选）、**对抗**（你和 AI 轮流走 BP）、
+ * **复盘**（两边阵容都定下来之后比一比）。
  *
  * 页面本身是静态的，英雄数据与号位胜率在构建期写进来（见 `lib/draftData.ts`），
+ * 两支队伍来自门户名录（见 `lib/draftTeams.ts`），
  * 唯一的运行时外部依赖是用户自己填的模型 key，直接从浏览器发出去，服务端不经手。
  */
 
@@ -19,42 +19,21 @@ const data = await loadDraftData();
 const payload = inlineJson(data);
 
 /**
- * 比赛选择器用的赛程快照。
+ * 两个选择框的选项。
  *
- * 这是构建期的：跟站内赛程页一样不会自己刷新。观赛时通常已经知道自己看的是哪场，
- * 所以它只是省去打字的入口，选不到就手输队名。
+ * **服务端渲染**：脚本没跑（或还在下载）时，两个框照样能选，选了也不会丢——
+ * 队名、队标、名单、招牌英雄是从 `/draft-teams.json` 取的，那份晚到几百毫秒不影响任何操作。
+ * 以前这里是一个「选比赛」的下拉加两个纯文本框：文本框要求用户先知道队名的写法，
+ * 输错一个字符既不报错、也拿不到对面那半数据。
  */
-const bundle = await getTournaments();
-const now = Math.floor(Date.now() / 1000);
-const byId = new Map<string, EsportsMatch>();
-for (const match of [...bundle.live, ...bundle.events.flatMap((event) => event.matches ?? [])]) {
-	if (!byId.has(match.id)) byId.set(match.id, match);
+const catalog = await loadDraftTeams();
+/** 按门户地区分组；不在门户里的那些（没有地区标签）统一放到最后。 */
+const grouped = [...catalog.sections.map((section) => ({ label: section.label, teams: [] as typeof catalog.teams })), { label: '其他', teams: [] as typeof catalog.teams }];
+for (const team of catalog.teams) {
+	const index = catalog.sections.findIndex((section) => section.key === team.region);
+	grouped[index >= 0 ? index : grouped.length - 1]!.teams.push(team);
 }
-/** 排序：进行中 → 未开赛（近的在前）→ 已结束（新的在前）。 */
-const statusRank = (match: EsportsMatch): number => (match.status === 'live' ? 0 : match.status === 'upcoming' ? 1 : 2);
-const matches = [...byId.values()]
-	.sort((a, b) => statusRank(a) - statusRank(b) || (statusRank(a) === 2 ? b.startTime - a.startTime : a.startTime - b.startTime))
-	.slice(0, 24);
-const matchLabel = (match: EsportsMatch): string => {
-	const status = match.status === 'live' ? '进行中' : match.startTime > now ? '未开赛' : '已结束';
-	/**
-	 * 实时接口给的比赛偶尔没有开赛时间（`startTime` 是 0），直接算会得到 NaN，
-	 * 格式化函数会抛 RangeError 把整页构建打断，所以这里先挡住。
-	 */
-	if (!Number.isFinite(match.startTime) || match.startTime <= 0) return `${match.home.name} vs ${match.away.name} · ${match.eventName} · ${status}`;
-	const time =
-		status === '未开赛'
-			? formatMatchTime(match.startTime, now)
-			: `${Math.abs(Math.round((now - match.startTime) / 3600))} 小时${status === '进行中' ? '前开赛' : '前'}`;
-	return `${match.home.name} vs ${match.away.name} · ${match.eventName} · ${time}`;
-};
-
-/**
- * 赛程里的队伍 id 有两种来源：走 OpenDota 的那条线是 `od-team-<数字 id>`，可以直接用；
- * 别的来源（Liquipedia 那条线）没有 id，就不写这个属性——前端会回落到按队名查
- * `/draft-teams.json`。**不在这里猜 id**：猜错等于把别人的 BP 习惯装到这场对手头上。
- */
-const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.id)?.[1] ?? '';
+const groups = grouped.filter((group) => group.teams.length > 0);
 ---
 
 <Layout
@@ -67,7 +46,8 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">阵容分析</p>
 				<h1 class="mt-2 font-display text-3xl sm:text-4xl">BP 陪练台</h1>
 				<p class="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
-					看比赛时把双方的 ban/pick 点进来，轮到你这边时看建议。顺序按 7.40 起的队长模式：24 手、每队 7 禁 5 选，
+					选两支队伍，先看这两队的 BP 大概会怎么走；也可以自己坐在一边，和 AI 一手一手对着禁选；
+					两边阵容定下来之后还能让数据层把这套对局比一遍。顺序按 7.40 起的队长模式：24 手、每队 7 禁 5 选，
 					后选方握着最后一手禁用和最后一手挑选。号位胜率取 {data.bracketLabel}、{data.windowLabel}的统计。
 				</p>
 			</div>
@@ -93,89 +73,123 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 		<!-- 控制条 -->
 		<div class="mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface/60 px-4 py-3">
 			<!--
-				下拉的宽度不能交给 min-width 决定：原生 select 会按最长的 option 撑开（比赛名加赛事名很长），
+				两个下拉的宽度不能交给 min-width 决定：原生 select 会按最长的 option 撑开，
 				在窄屏上直接把整页顶出横向滚动条。这里限定成"窄屏占满、宽屏固定"。
+				默认的「未指定」不是空话：没选队伍时页面照样能录 BP，只是没有队标、名单与招牌英雄。
 			-->
 			<label class="flex w-full min-w-0 items-center gap-2 text-xs text-muted sm:w-auto">
-				选比赛
-				<select id="draft-match" class="w-full min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream sm:w-72 sm:flex-none">
-					<option value="">不选，手动填队名</option>
-					{matches.map((match) => (
-						<option value={match.id} data-home={match.home.name} data-away={match.away.name} data-home-id={teamIdOf(match.home)} data-away-id={teamIdOf(match.away)}>
-							{matchLabel(match)}
-						</option>
+				<span class="shrink-0 text-[#62a86f]">天辉</span>
+				<select id="draft-radiant-team" class="w-full min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream sm:w-60 sm:flex-none">
+					<option value="">未指定</option>
+					{groups.map((group) => (
+						<optgroup label={group.label}>
+							{group.teams.map((team) => (
+								<option value={team.id}>{team.name}</option>
+							))}
+						</optgroup>
+					))}
+				</select>
+			</label>
+			<label class="flex w-full min-w-0 items-center gap-2 text-xs text-muted sm:w-auto">
+				<span class="shrink-0 text-dota-light">夜魇</span>
+				<select id="draft-dire-team" class="w-full min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream sm:w-60 sm:flex-none">
+					<option value="">未指定</option>
+					{groups.map((group) => (
+						<optgroup label={group.label}>
+							{group.teams.map((team) => (
+								<option value={team.id}>{team.name}</option>
+							))}
+						</optgroup>
 					))}
 				</select>
 			</label>
 
-			<label class="flex items-center gap-2 text-xs text-muted">
-				我方
-				<input id="draft-our-team" type="text" maxlength="24" placeholder="留空也行" class="w-36 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint" />
-			</label>
-			<label class="flex items-center gap-2 text-xs text-muted">
-				对方
-				<input id="draft-their-team" type="text" maxlength="24" placeholder="留空也行" class="w-36 rounded-lg border border-line bg-surface-2 px-2 py-1.5 text-xs text-cream placeholder:text-faint" />
-			</label>
-
-			<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="我方阵营" data-bp-only>
-				<span>我方阵营</span>
-				<button type="button" data-side="radiant" class="filter-chip">天辉</button>
-				<button type="button" data-side="dire" class="filter-chip">夜魇</button>
-			</div>
 			<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="先选权" data-bp-only>
 				<span>先选权</span>
-				<button type="button" data-first-pick="ours" class="filter-chip">我方</button>
-				<button type="button" data-first-pick="theirs" class="filter-chip">对方</button>
-			</div>
-			<!--
-				跳过 BP：不走 24 手禁用/挑选，直接给两边各挑五个英雄再看对比。
-				给"只想复盘一套阵容"和"已经知道两边选了什么"这两种场景用。
-			-->
-			<label class="flex items-center gap-2 text-xs text-muted" title="不走 24 手 ban/pick，直接给两边各选五个英雄">
-				<input id="draft-direct-mode" type="checkbox" class="h-3.5 w-3.5 accent-[#c6522c]" />
-				直接选阵容
-			</label>
-			<label class="flex items-center gap-2 text-xs text-muted" data-bp-only>
-				<input id="draft-ai-side" type="checkbox" class="h-3.5 w-3.5 accent-[#c6522c]" />
-				对面交给 AI
-			</label>
-			<!--
-				开关旁边就写清它为什么是灰的。原因只在下面设置区里存一份等于没说——那个距离
-				有一百多行，而且用户的第一反应是盯着这个点不动的开关。
-			-->
-			<span id="draft-ai-hint" class="text-xs text-faint" data-bp-only role="status" aria-live="polite"></span>
-
-			<div class="ml-auto flex items-center gap-2" data-bp-only>
-				<button id="draft-undo" type="button" class="filter-chip">撤销</button>
-				<button id="draft-skip" type="button" class="filter-chip">跳过这手</button>
-				<button id="draft-reset" type="button" class="filter-chip">清空</button>
+				<button type="button" data-first-pick="radiant" class="filter-chip">天辉</button>
+				<button type="button" data-first-pick="dire" class="filter-chip">夜魇</button>
 			</div>
 		</div>
 
 		<!--
-			「对面擅长什么」那行：只有指定了对方队名、而且真取到数据时才出现。
-			初值用内联 display 而不是留空元素——空段落在版面里照样占一段间距。
+			三个功能是**并列的三块界面**，不是三个独立页面：队伍与先选权在上面共用，
+			切来切去不会丢已经录进去的 BP。默认停在「AI 预测」，因为它是这一页最省事的用法。
+			页签排在队伍卡片**前面**：手机上两张名单卡就有两三屏高，把切换藏到后面等于让人先滚一遍。
 		-->
-		<p id="draft-foe-status" class="mb-4 text-xs leading-relaxed text-muted" style="display: none"></p>
+		<div class="mb-5 flex flex-wrap items-center gap-2" role="tablist" aria-label="功能">
+			<button type="button" role="tab" id="draft-tab-predict" data-tab="predict" class="filter-chip" aria-pressed="true">AI 预测</button>
+			<button type="button" role="tab" id="draft-tab-versus" data-tab="versus" class="filter-chip" aria-pressed="false">和 AI 的对手 BP</button>
+			<button type="button" role="tab" id="draft-tab-lineup" data-tab="lineup" class="filter-chip" aria-pressed="false">阵容分析</button>
+		</div>
+
+		<!--
+			两队的队标、名单与招牌英雄。构建期只把队名放进 `<option>`（原生下拉画不了图），
+			这一块的内容由 `/draft-teams.json` 到位之后由脚本填；没选队伍时是「未指定队伍」的占位。
+		-->
+		<div id="draft-teams-preview" class="mb-5 grid grid-cols-1 gap-3 lg:grid-cols-2"></div>
+
+		<!-- AI 预测：给这两支队推一份完整的禁选 -->
+		<section id="draft-predict-panel" data-panel="predict" class="mb-5 rounded-2xl border border-line bg-surface/60 p-4" aria-label="AI 预测">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+				<button id="draft-predict-run" type="button" class="filter-chip">预测整局 BP</button>
+				<span id="draft-predict-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
+			</div>
+			<div id="draft-predict-box" class="mt-4" style="display: none"></div>
+		</section>
+
+		<!--
+			对抗模式的控制条与当前手。都是这一块专有：预测那条路不录 BP，复盘那条路自己填阵容。
+		-->
+		<div data-panel="versus" class="mb-5 flex flex-col gap-3">
+			<div class="flex flex-wrap items-center gap-x-4 gap-y-3 rounded-2xl border border-line bg-surface/60 px-4 py-3">
+				<div class="flex items-center gap-2 text-xs text-muted" role="group" aria-label="你打哪边">
+					<span>你打哪边</span>
+					<button type="button" data-my-side="radiant" class="filter-chip">天辉</button>
+					<button type="button" data-my-side="dire" class="filter-chip">夜魇</button>
+				</div>
+				<label class="flex items-center gap-2 text-xs text-muted">
+					<input id="draft-ai-side" type="checkbox" class="h-3.5 w-3.5 accent-[#c6522c]" />
+					对面交给 AI
+				</label>
+				<!--
+					开关旁边就写清它为什么是灰的。原因只在下面设置区里存一份等于没说——那个距离
+					有一百多行，而且用户的第一反应是盯着这个点不动的开关。
+				-->
+				<span id="draft-ai-hint" class="text-xs text-faint" role="status" aria-live="polite"></span>
+				<div class="ml-auto flex items-center gap-2">
+					<button id="draft-undo" type="button" class="filter-chip">撤销</button>
+					<button id="draft-skip" type="button" class="filter-chip">跳过这手</button>
+					<button id="draft-reset" type="button" class="filter-chip">清空</button>
+				</div>
+			</div>
+
+			<!-- 当前手 -->
+			<div id="draft-banner" class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface-2/70 px-4 py-3 text-sm" role="status" aria-live="polite">
+				<span id="draft-banner-step" class="font-display text-lg text-gold">第 1 手</span>
+				<span id="draft-banner-turn" class="text-cream">天辉禁用</span>
+				<span id="draft-banner-detail" class="text-xs text-faint"></span>
+			</div>
+
+			<!--
+				「对面擅长什么」那行：只有指定了对方、而且真取到数据时才出现。
+				初值用内联 display 而不是留空元素——空段落在版面里照样占一段间距。
+			-->
+			<p id="draft-foe-status" class="text-xs leading-relaxed text-muted" style="display: none"></p>
+		</div>
 
 		<!--
 			阵容复盘：双方各五个号位都落人之后才开放（脚本控制 disabled）。
-			放在两种模式都能看到的位置——「直接选阵容」那条路没有逐手建议，这里就是主输出。
+			结果**整幅宽度**给出来：那张对比表列了七八个维度，挤在半栏里读不了。
 		-->
-		<div class="mb-5 flex flex-wrap items-center gap-3">
-			<button id="draft-verdict" type="button" class="filter-chip" disabled>分析双方阵容</button>
-			<span id="draft-verdict-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
-		</div>
-		<div id="draft-verdict-box" class="mb-5" style="display: none"></div>
-
-		<!-- 当前手 -->
-		<div id="draft-banner" class="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-line bg-surface-2/70 px-4 py-3 text-sm" role="status" aria-live="polite">
-			<span id="draft-banner-step" class="font-display text-lg text-gold">第 1 手</span>
-			<span id="draft-banner-turn" class="text-cream">我方禁用</span>
-			<span id="draft-banner-detail" class="text-xs text-faint"></span>
+		<div data-panel="lineup" class="mb-5">
+			<div class="flex flex-wrap items-center gap-3">
+				<button id="draft-verdict" type="button" class="filter-chip" disabled>分析双方阵容</button>
+				<span id="draft-verdict-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
+			</div>
+			<div id="draft-verdict-box" class="mt-4" style="display: none"></div>
 		</div>
 
-		<div class="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+		<div id="draft-grid" data-panel="workspace" class="grid grid-cols-1 items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
 			<!--
 				左列：英雄池 + 建议。建议紧挨着池子放，因为候选卡片点一下就是录入这一手，
 				眼睛和鼠标都不用跑到另一栏去；顺带把左列的高度撑起来，跟右边的 BP 板差不多齐。
@@ -218,7 +232,7 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 				</div>
 
 				<!-- 建议 -->
-				<section id="draft-advice-panel" class="rounded-2xl border border-line bg-surface/60 p-4" aria-label="建议">
+				<section id="draft-advice-panel" data-panel="versus" class="rounded-2xl border border-line bg-surface/60 p-4" aria-label="建议">
 					<!--
 						轮到对面时这块是主界面：AI 替对面落子。默认自动出招，想自己代打就取消上面的勾选，
 						这时按钮会露出来，由人点一下。
@@ -246,31 +260,31 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 			</div>
 
 			<!--
-				直接选阵容：跳过 24 手 BP，两边各挑五个英雄。
-				「填我方 / 填对方」决定下一次点英雄池往哪边放；格子点了就把人移出去。
+				阵容分析：不走 24 手 BP，两边各挑五个英雄再比。
+				「填天辉 / 填夜魇」决定下一次点英雄池往哪边放；格子点了就把人移出去。
 			-->
-			<div id="draft-direct-panel" class="rounded-2xl border border-line bg-surface/60 p-4" style="display: none">
+			<div id="draft-direct-panel" data-panel="lineup" class="rounded-2xl border border-line bg-surface/60 p-4">
 				<div class="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-xs text-muted">
 					<span>点英雄池里的英雄，填到</span>
-					<button type="button" id="draft-direct-ours" class="filter-chip" aria-pressed="true">我方</button>
-					<button type="button" id="draft-direct-theirs" class="filter-chip" aria-pressed="false">对方</button>
+					<button type="button" id="draft-direct-radiant" class="filter-chip" aria-pressed="true">天辉</button>
+					<button type="button" id="draft-direct-dire" class="filter-chip" aria-pressed="false">夜魇</button>
 					<span id="draft-direct-hint" class="text-faint" role="status" aria-live="polite"></span>
 				</div>
 				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 					<div>
-						<p id="draft-direct-label-ours" class="mb-2 text-xs font-semibold text-gold">我方阵容</p>
-						<div id="draft-direct-slots-ours" class="grid grid-cols-5 gap-2"></div>
+						<p id="draft-direct-label-radiant" class="mb-2 text-xs font-semibold text-[#62a86f]">天辉阵容</p>
+						<div id="draft-direct-slots-radiant" class="grid grid-cols-5 gap-2"></div>
 					</div>
 					<div>
-						<p id="draft-direct-label-theirs" class="mb-2 text-xs font-semibold text-dota-light">对方阵容</p>
-						<div id="draft-direct-slots-theirs" class="grid grid-cols-5 gap-2"></div>
+						<p id="draft-direct-label-dire" class="mb-2 text-xs font-semibold text-dota-light">夜魇阵容</p>
+						<div id="draft-direct-slots-dire" class="grid grid-cols-5 gap-2"></div>
 					</div>
 				</div>
-				<p class="mt-3 text-xs text-faint">点格子可以移除那个英雄；点英雄池里已经选中的英雄也能移除。两边各满五个，「分析双方阵容」就会亮。</p>
+				<p class="mt-3 text-xs text-faint">点格子可以移除那个英雄；点英雄池里已经选中的英雄也能移除。两边各满五个，上面的「分析双方阵容」就会亮。</p>
 			</div>
 
 			<!-- BP 板 -->
-			<div id="draft-board-panel" class="draft-board rounded-2xl border border-line bg-surface/60 p-4">
+			<div id="draft-board-panel" data-panel="versus" class="draft-board rounded-2xl border border-line bg-surface/60 p-4">
 				<!--
 					照客户端的排法：两侧是阵营列，中间夹一列手号，**一行一手**按顺序往下走。
 					禁用和挑选不是两段，而是在同一列里按手号混排：禁用格打叉变灰，挑选格是头像。
@@ -317,7 +331,10 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 			对位（谁好打谁）来自 STRATZ 的高分局统计，只按场次筛（≥ {data.matchupMinGames} 场，接近五五开的也留着），
 			共 {data.matchupPairs.toLocaleString('zh-CN')} 对；它不区分分路，是个粗口径的克制信号。
 			分路对位（线上谁打谁、和谁走一路）是另一份数据：同样来自 STRATZ 的高分局统计，按号位记录线上胜负，
-			只留记了结果 ≥ {data.laneMinGames} 场的格子，单独加载；它只做横向对比，**不进上面的胜率**。
+			只留记了结果 ≥ {data.laneMinGames} 场的格子，单独加载；它只做横向对比，不进上面的胜率。
+			队伍名单来自 Liquipedia，每个人的招牌英雄按版本统计（本版本样本不够时回退到近 90 天，口径会写在卡片上）；
+			名单里跨了版本时不写版本号，免得把两套窗口的数字说成同一个版本。
+			「AI 预测」交给模型时，英雄与数字也都是上面这几份数据里挑出来的，模型不额外联网。
 			建议是按号位胜率做的启发式估计，不是胜率预测，也不代表任何队伍的真实战术。
 		</p>
 
@@ -390,6 +407,8 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 	.draft-page .draft-side-label {
 		display: flex;
 		align-items: baseline;
+		/* 队名 + 先选标记比阵营名长得多：窄屏上要能折到第二行，不然会把"天辉"挤成一列。 */
+		flex-wrap: wrap;
 		gap: 0.35rem;
 		font-size: 0.8rem;
 		color: var(--color-cream);
@@ -697,6 +716,114 @@ const teamIdOf = (team: { id: string }): string => /^od-team-(\d+)$/.exec(team.i
 	}
 	.direct-slot:hover {
 		border-color: var(--color-gold-deep);
+	}
+
+	/*
+	 * 三个功能面板的显隐。
+	 *
+	 * **不用 `hidden` 类也不用内联 display**：这几块里有 flex 容器与 grid 容器，写死一种 display
+	 * 会把它们压平（对战控制条是 flex，栅格是 grid）。所以判据挂在属性上，脚本只切
+	 * `data-active`，未点亮的那块整块收起来。
+	 * 默认（脚本还没跑）全部收着，点亮由脚本负责——首屏不会闪一下用不上的那一块。
+	 */
+	.draft-page [data-panel]:not([data-active='true']) {
+		display: none !important;
+	}
+
+	/* 队伍卡片：队标在浅色底板上（黑队徽的可见性见 MatchRow 的注释），右边是名单与招牌。 */
+	.team-brief {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+		border: 1px solid var(--color-line);
+		border-radius: 1rem;
+		background: var(--color-surface);
+		padding: 0.75rem 1rem;
+	}
+	.team-brief-logo {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex: 0 0 auto;
+		width: 2.75rem;
+		height: 2.75rem;
+		overflow: hidden;
+		border: 1px solid var(--color-line);
+		border-radius: 0.5rem;
+		background: var(--color-plate);
+		color: var(--color-plate-ink);
+		font-size: 0.7rem;
+		font-weight: 600;
+	}
+	.team-brief-logo img {
+		width: 100%;
+		height: 100%;
+		object-fit: contain;
+		padding: 2px;
+	}
+	.team-brief-member {
+		display: flex;
+		/* 一位选手一整块：名字一行、招牌一行，窄屏上不会把第二个英雄挤到没有名字的那一行。 */
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+	.team-brief-hero {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		border: 1px solid var(--color-line);
+		border-radius: 0.375rem;
+		background: var(--color-surface-2);
+		padding: 0.1rem 0.35rem;
+		font-size: 0.65rem;
+		color: var(--color-muted);
+	}
+	.team-brief-hero img {
+		width: 1.1rem;
+		height: 1.4rem;
+		border-radius: 2px;
+		object-fit: cover;
+		object-position: top;
+	}
+
+	/* AI 预测：两张队卡并排，每边分「禁用 / 挑选」两段。 */
+	.predict-side {
+		border: 1px solid var(--color-line);
+		border-radius: 0.75rem;
+		background: var(--color-surface-2);
+		padding: 0.75rem;
+	}
+	.predict-row {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.375rem;
+	}
+	.predict-hero {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		border: 1px solid var(--color-line);
+		border-radius: 0.5rem;
+		background: var(--color-surface);
+		padding: 0.15rem 0.4rem 0.15rem 0.15rem;
+		font-size: 0.7rem;
+		color: var(--color-cream);
+	}
+	.predict-hero img {
+		width: 1.5rem;
+		height: 1.7rem;
+		border-radius: 3px;
+		object-fit: cover;
+		object-position: top;
+	}
+	.predict-hero[data-kind='ban'] {
+		color: var(--color-muted);
+	}
+	.predict-hero[data-kind='ban'] img {
+		filter: brightness(0.68) saturate(0.8);
 	}
 
 	@media (prefers-reduced-motion: reduce) {
