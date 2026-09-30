@@ -10,9 +10,9 @@ import {
 	buildAdviceMessages,
 	buildChatRequest,
 	buildPredictionMessages,
+	parsePredictionReplyDetailed,
 	buildVerdictMessages,
 	parseAdviceReply,
-	parsePredictionReply,
 	parseVerdictReply,
 	VERDICT_MAX_TOKENS,
 } from '../lib/draftPrompt.ts';
@@ -286,6 +286,8 @@ if (data) {
 	let directSide: TeamSide = 'radiant';
 	/** 最后一次预测结果；换队、改先选、换版本都会作废。 */
 	let prediction: DraftPrediction | null = null;
+	/** 模型这轮给的禁选不合法时的原因；非空表示"下面这份是站内推的"。 */
+	let rejected = '';
 	/** 预测正在跑（模型那条路要几秒），避免重复点。 */
 	let predictBusy = false;
 
@@ -1301,6 +1303,8 @@ if (data) {
 		 */
 		async function runPrediction(): Promise<void> {
 			if (predictBusy) return;
+			// 新的一轮：上一轮"被拒的原因"要清掉，否则会挂在这一轮的卡片上。
+			rejected = '';
 			const local = predictDraftLocal({ data: draft, firstPicker: firstPick, signatures: signatures(), forms, lanes });
 			if (!local) {
 				if (predictStatus) predictStatus.textContent = '号位样本不足，推不出整局 BP';
@@ -1337,14 +1341,22 @@ if (data) {
 					}
 					return;
 				}
-				const parsed = parsePredictionReply(
+				const result = parsePredictionReplyDetailed(
 					reply.content,
 					draft.heroes.map((hero) => hero.id),
 				);
-				if (!parsed) {
-					if (predictStatus) predictStatus.textContent = '模型的回复解析不了，上面是按站内数据推的';
+				if (!result.ok) {
+					/*
+					 * **把原因说出来。** 上一版这里只写一句"解析不了"，用户完全不知道自己该重试、
+					 * 该换模型，还是该等我们改提示词——而实测这件事是间歇的：同一提示词上一把通过、
+					 * 这一把被拒，被拒的原因有好几种（缺号位、两边撞了同一个英雄、挑选不足五个……）。
+					 */
+					rejected = result.reason;
+					if (predictStatus) predictStatus.textContent = `模型这次给的禁选不合法，已退回站内推演：${result.reason}`;
 					return;
 				}
+				rejected = '';
+				const parsed = result.prediction;
 				/*
 				 * **挑选用模型的，禁用用"模型的 + 站内补齐"。**
 				 *
@@ -1490,6 +1502,7 @@ if (data) {
 			 * 实测模型十次里十次都会写出与挑选冲突的禁用，所以这段话基本每次都会出现。
 			 */
 			const notes: string[] = [];
+			if (rejected) notes.push(`模型这轮给的禁选不合法，下面是站内推的：${rejected}`);
 			if (prediction.droppedBans) notes.push(`模型给的禁用里有 ${prediction.droppedBans} 条与挑选撞了同一个英雄（一局里不能既禁又选），已丢弃`);
 			/*
 			 * 补齐不是保证能凑满：站内那份禁用也可能与已经定下来的英雄撞车。
@@ -1793,6 +1806,7 @@ if (data) {
 		/** 换队、改先选之后，上一次的预测与复盘都不再对应当前的盘面。 */
 		function invalidateDerived(): void {
 			prediction = null;
+			rejected = '';
 			if (predictStatus) predictStatus.textContent = '';
 			renderPrediction();
 			verdict = null;

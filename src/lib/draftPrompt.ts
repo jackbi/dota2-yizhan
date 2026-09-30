@@ -802,6 +802,17 @@ export interface ParsedPrediction {
 	droppedBans: number;
 }
 
+/**
+ * 解析结果。**失败也要说清是哪一条不过**，因为调用方（页面）现在只写一句"模型的回复解析不了"，
+ * 用户看到的是一句没有信息量的提示——他没法判断该改配置、重试，还是等我们改提示词。
+ *
+ * 实测这件事是**间歇**的：同一条提示词、同一个模型，这一把通过、下一把被拒，
+ * 而"被拒"的原因有好几种（缺号位、两边撞了同一个英雄、挑选不足五个……）。
+ */
+export type PredictionParseResult =
+	| { ok: true; prediction: ParsedPrediction }
+	| { ok: false; reason: string };
+
 /** 一边最多能禁几个（7 手），解析时按它设上限。 */
 const MAX_PREDICTED_BANS = 7;
 const PREDICTED_PICKS = 5;
@@ -823,8 +834,16 @@ function rowsOf(value: unknown): Record<string, unknown>[] {
  * `taken` 是两边共用的集合，先读到的先占位——所以"两边选中同一个英雄"这种回复会在读第二边时
  * 被丢掉，凑不满五个挑选就整份作废（一个英雄不可能同时在两边）。
  */
-function readPicks(raw: Record<string, unknown>, allowed: ReadonlySet<number>, taken: Set<number>): ParsedPredictedSide['picks'] | null {
+function readPicks(
+	raw: Record<string, unknown>,
+	allowed: ReadonlySet<number>,
+	taken: Set<number>,
+	who: string,
+): { picks: ParsedPredictedSide['picks'] } | { reason: string } {
 	const picks: ParsedPredictedSide['picks'] = [];
+	let droppedPosition = 0;
+	let droppedUnknown = 0;
+	let droppedTaken = 0;
 	for (const row of rowsOf(raw.picks)) {
 		if (picks.length >= PREDICTED_PICKS) break;
 		const position = Number(row.position);
@@ -832,17 +851,38 @@ function readPicks(raw: Record<string, unknown>, allowed: ReadonlySet<number>, t
 		 * 号位是硬要求：界面上要写"这个人在这个位置上会不会它"，没有号位就写不出来
 		 * ——那正是上一版被一眼看出来的问题（"二号位的天穹守望者"）。
 		 */
-		if (!Number.isInteger(position) || position < 1 || position > 5) continue;
+		if (!Number.isInteger(position) || position < 1 || position > 5) {
+			droppedPosition += 1;
+			continue;
+		}
 		const heroId = Number(row.heroId);
-		if (!Number.isInteger(heroId) || !allowed.has(heroId) || taken.has(heroId)) continue;
+		if (!Number.isInteger(heroId) || !allowed.has(heroId)) {
+			droppedUnknown += 1;
+			continue;
+		}
+		if (taken.has(heroId)) {
+			droppedTaken += 1;
+			continue;
+		}
 		taken.add(heroId);
 		picks.push({ heroId, position, reason: typeof row.reason === 'string' ? row.reason.trim().slice(0, 200) : '' });
 	}
 	// 每边五个挑选是规则，少一个就不是一局 BP 了。
-	if (picks.length < PREDICTED_PICKS) return null;
+	if (picks.length < PREDICTED_PICKS) {
+		const why = [
+			droppedPosition > 0 ? `${droppedPosition} 条号位缺失或不在 1–5` : '',
+			droppedUnknown > 0 ? `${droppedUnknown} 条英雄不在我们的数据里` : '',
+			droppedTaken > 0 ? `${droppedTaken} 条与另一边的挑选撞了同一个英雄` : '',
+		].filter(Boolean);
+		return {
+			reason: `${who}的挑选凑不满五个（只认出 ${picks.length} 个）${why.length > 0 ? `：${why.join('、')}` : '：它给的 picks 本来就不够'}`,
+		};
+	}
 	// 五个挑选要**刚好占满 1 到 5**：两个人都算二号位、一号位没人，那不是一局阵容。
-	if (new Set(picks.map((pick) => pick.position)).size !== PREDICTED_PICKS) return null;
-	return picks;
+	if (new Set(picks.map((pick) => pick.position)).size !== PREDICTED_PICKS) {
+		return { reason: `${who}五个挑选的号位没有占满 1 到 5（给的是 ${picks.map((pick) => pick.position).join('、')}）` };
+	}
+	return { picks };
 }
 
 /**
@@ -873,20 +913,22 @@ function readBans(raw: Record<string, unknown>, allowed: ReadonlySet<number>, ta
  * 解析预测回复。任何一步不对都返回 null：调用方退回本地推演，
  * 而不是把半截结果摆到界面上（预测这一块最容易让读者当成事实）。
  */
-export function parsePredictionReply(raw: string, allowedHeroIds: readonly number[]): ParsedPrediction | null {
-	if (!raw) return null;
+export function parsePredictionReplyDetailed(raw: string, allowedHeroIds: readonly number[]): PredictionParseResult {
+	if (!raw || !raw.trim()) return { ok: false, reason: '模型返回了空内容' };
 	const withoutFence = raw.replace(/```(?:json)?/gi, '');
 	const start = withoutFence.indexOf('{');
 	const end = withoutFence.lastIndexOf('}');
-	if (start < 0 || end <= start) return null;
+	if (start < 0 || end <= start) {
+		return { ok: false, reason: `回复里找不到 JSON 对象（前 80 个字：${raw.trim().slice(0, 80)}）` };
+	}
 
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(withoutFence.slice(start, end + 1));
-	} catch {
-		return null;
+	} catch (error) {
+		return { ok: false, reason: `JSON 没解析成功（${error instanceof Error ? error.message.slice(0, 80) : '格式错误'}）` };
 	}
-	if (!parsed || typeof parsed !== 'object') return null;
+	if (!parsed || typeof parsed !== 'object') return { ok: false, reason: '回复不是一个 JSON 对象' };
 
 	const allowed = new Set(allowedHeroIds);
 	const taken = new Set<number>();
@@ -900,18 +942,31 @@ export function parsePredictionReply(raw: string, allowedHeroIds: readonly numbe
 	 * 一个号位、一条理由），禁用只是背景，所以挑选必须先占位：一边禁掉、另一边选中的英雄，
 	 * 结果应该是"禁用那条被丢掉"，而不是"挑选消失、整份预测作废"。
 	 */
-	const radiantPicks = readPicks(radiantRaw, allowed, taken);
-	const direPicks = readPicks(direRaw, allowed, taken);
-	if (!radiantPicks || !direPicks) return null;
+	const radiantPicks = readPicks(radiantRaw, allowed, taken, '天辉');
+	const direPicks = readPicks(direRaw, allowed, taken, '夜魇');
+	// 哪一边先不合格就报哪一边：两边都报会让人以为是两个问题。
+	if ('reason' in radiantPicks) return { ok: false, reason: radiantPicks.reason };
+	if ('reason' in direPicks) return { ok: false, reason: direPicks.reason };
 	const radiantBans = readBans(radiantRaw, allowed, taken);
 	const direBans = readBans(direRaw, allowed, taken);
 	// 两边一条禁用都没有，说明模型没按格式来（或全被冲突吃掉）——这种不算预测。
-	if (radiantBans.bans.length + direBans.bans.length === 0) return null;
+	if (radiantBans.bans.length + direBans.bans.length === 0) {
+		return { ok: false, reason: '两边一条禁用都没给（或者给的禁用全与挑选撞了同一个英雄）' };
+	}
 	const summary = typeof body.summary === 'string' ? body.summary.trim().slice(0, 600) : '';
 	return {
-		radiant: { bans: radiantBans.bans, picks: radiantPicks },
-		dire: { bans: direBans.bans, picks: direPicks },
-		summary,
-		droppedBans: radiantBans.dropped + direBans.dropped,
+		ok: true,
+		prediction: {
+			radiant: { bans: radiantBans.bans, picks: radiantPicks.picks },
+			dire: { bans: direBans.bans, picks: direPicks.picks },
+			summary,
+			droppedBans: radiantBans.dropped + direBans.dropped,
+		},
 	};
+}
+
+/** 只关心"能不能用"的调用方用这个；要说明为什么不能用就用 `parsePredictionReplyDetailed`。 */
+export function parsePredictionReply(raw: string, allowedHeroIds: readonly number[]): ParsedPrediction | null {
+	const result = parsePredictionReplyDetailed(raw, allowedHeroIds);
+	return result.ok ? result.prediction : null;
 }

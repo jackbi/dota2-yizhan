@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { predictDraftLocal } from '../src/lib/draftPredict.ts';
-import { buildPredictionMessages, parsePredictionReply } from '../src/lib/draftPrompt.ts';
+import { buildPredictionMessages, parsePredictionReply, parsePredictionReplyDetailed } from '../src/lib/draftPrompt.ts';
 import { FAMILIARITY_WEIGHT, buildRosterProfile } from '../src/lib/teamSignature.ts';
 import { mergeBans } from '../src/lib/draftPredict.ts';
 
@@ -398,6 +398,24 @@ const fromDire = predictDraftLocal({ data, firstPicker: 'dire' });
 	assert.equal(parsePredictionReply('模型今天不想说话', allowed), null, '不是 JSON 的回复要判成没结果');
 	assert.equal(parsePredictionReply('', allowed), null, '空回复要判成没结果');
 	ok('重复、编造、缺挑选、没禁用、号位缺失或重复的回复一律判成"这次没结果"');
+
+	/*
+	 * **失败要说出原因**：页面以前只写一句"解析不了"，用户没法判断该重试、该换模型，
+	 * 还是该等我们改提示词。实测这件事是间歇的——同一提示词上一把通过、这一把被拒。
+	 * 所以每种失败都要带一句能读懂的说明，并且指到具体哪一边、哪几条。
+	 */
+	const named = (raw: unknown) => {
+		const result = parsePredictionReplyDetailed(JSON.stringify(raw), allowed);
+		return result.ok ? '' : result.reason;
+	};
+	assert.match(named(noPosition), /天辉的挑选凑不满五个/, '缺号位要指到具体那一边');
+	assert.match(named(invented), /英雄不在我们的数据里/, '编出来的英雄要说清是哪一类问题');
+	assert.match(named(samePosition), /号位没有占满 1 到 5/, '号位重复要说清是号位的问题');
+	assert.match(named(noBans), /一条禁用都没给/, '没禁用要说清');
+	assert.equal(named(base), '', '合格的回复不该带原因');
+	const prose = parsePredictionReplyDetailed('模型今天不想说话', allowed);
+	assert.ok(!prose.ok && /找不到 JSON/.test(prose.reason), '不是 JSON 也要说清');
+	ok('解析失败给出可读的原因，并指到具体哪一边、哪一类问题');
 }
 
 console.log(`draftPredict 全部断言通过（${cases} 组）`);
