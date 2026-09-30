@@ -7,10 +7,81 @@ import { JIANXUE_FENGHOU, JIANXUE_VIDEOS, OB_MEMBER_VIDEOS } from '../data/obVid
 import { fetchLiveSnapshot } from '../lib/liveApi';
 import { localizeAvatars } from '../lib/avatars';
 import { localizeCovers } from '../lib/covers';
-import { formatIso } from '../lib/format';
+import { formatIso, formatMatchTime } from '../lib/format';
+import { fetchPatchNames } from '../lib/patchesApi';
+import { localizePatchIcons } from '../lib/patchIcons';
+import { heroIconKey } from '../lib/patchNotes';
+import { loadObPlayerStats } from '../lib/obPlayers';
 
 const snapshot = await fetchLiveSnapshot();
 const liveOf = (m: (typeof OB_MEMBERS)[number]) => snapshot.statuses[`${m.platform}:${m.roomId}`];
+
+/** 卡片上最多列几个英雄。列太多会把卡片撑得比视频区还长。 */
+const OB_HERO_CHIPS = 5;
+
+/*
+ * 各人的天梯与英雄池：账号 id 取自 Liquipedia 选手页，段位与对局来自 STRATZ（见 `lib/obPlayers`）。
+ * 拿不到的人这里就没有条目，卡片按「这个账号没有可用的公开对局」处理——**不用别人的数据顶**。
+ */
+const playerStats = await loadObPlayerStats(OB_MEMBERS);
+const now = Math.floor(Date.now() / 1000);
+
+/*
+ * 英雄图标复用更新日志那一套（同一个 Valve CDN、同一个已发布目录），不新开图片通道——
+ * 图标只有 20px 大，多存一份没有意义。英雄名与 key 都取自名字表，不从图片文件名反推
+ * （127 个英雄里有 5 个的文件名不是 `npc_dota_hero_<key>.png`）。
+ */
+const poolHeroIds = [
+	...new Set(
+		[...playerStats.values()].flatMap((stat) => (stat.pool?.heroes ?? []).slice(0, OB_HERO_CHIPS).map((hero) => hero.heroId)),
+	),
+];
+const heroById = new Map<number, { name: string; key: string }>();
+try {
+	const names = await fetchPatchNames();
+	for (const [id, hero] of names.heroes) heroById.set(id, { name: hero.name, key: hero.key });
+} catch {
+	// 拿不到名字表就退化成"没有英雄图标"，这一块是附加信息，不该让整页失败。
+}
+const heroIcons =
+	poolHeroIds.length > 0
+		? await localizePatchIcons({
+				heroes: poolHeroIds.flatMap((heroId) => {
+					const hero = heroById.get(heroId);
+					return hero ? [{ key: hero.key, name: hero.name }] : [];
+				}),
+				items: [],
+			})
+		: new Map<string, string>();
+
+/**
+ * 交给卡片的那份：英雄已经切好、图标也备好了（组件不碰数据源，与 `RosterMemberCard` 一致）。
+ * 口径文案只有一处来源——`pool.scope` 决定写「7.41f 版本」还是「近 90 天」，
+ * 与战队页上的标签同一套说法。
+ */
+function heroChipsOf(memberId: string): { name: string; icon?: string; games: number; wins: number }[] {
+	const stat = playerStats.get(memberId);
+	if (!stat?.pool) return [];
+	/*
+	 * 名字表没拿到时**不丢英雄**：退回「英雄 #id」。这样"有池子但没名字"与"没有池子"
+	 * 在页面上仍然是两种不同的样子，读者不会把前者当成"这账号没打过"。
+	 */
+	return stat.pool.heroes.slice(0, OB_HERO_CHIPS).map((hero) => {
+		const heroInfo = heroById.get(hero.heroId);
+		return {
+			name: heroInfo?.name ?? `英雄 #${hero.heroId}`,
+			icon: heroInfo ? heroIcons.get(heroIconKey(heroInfo.key)) : undefined,
+			games: hero.games,
+			wins: hero.wins,
+		};
+	});
+}
+
+function heroScopeOf(memberId: string): string | undefined {
+	const pool = playerStats.get(memberId)?.pool;
+	if (!pool) return undefined;
+	return pool.scope === 'patch' ? `${pool.version} 版本` : '近 90 天';
+}
 
 // 头像原本是平台接口顺带返回的 CDN 地址（`LiveStatus.avatar`），这里取回字节换成本站路径。
 // key 用 `平台:房间号`，和分屏页保持一致——否则同一个人会被当成两张图各下一遍。
@@ -205,7 +276,18 @@ const stats: { label: string; value: string; accent?: boolean }[] = [
 		</div>
 
 		<div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
-			{OB_MEMBERS.map((m) => <ObMemberCard member={m} live={liveOf(m)} avatar={avatars.get(roomKey(m))} covers={covers} />)}
+			{OB_MEMBERS.map((m) => (
+				<ObMemberCard
+					member={m}
+					live={liveOf(m)}
+					avatar={avatars.get(roomKey(m))}
+					covers={covers}
+					stat={playerStats.get(m.id)}
+					heroes={heroChipsOf(m.id)}
+					heroScope={heroScopeOf(m.id)}
+					now={now}
+				/>
+			))}
 		</div>
 
 		<section class="mt-12 rounded-2xl border border-line bg-surface p-6">

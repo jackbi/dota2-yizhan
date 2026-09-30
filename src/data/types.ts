@@ -27,7 +27,21 @@ export interface ObMember {
 	membership: '正式成员' | '编外';
 	role: string;
 	achievement: string;
+	/**
+	 * 手写的「招牌英雄」——**社区认知，不是统计**。
+	 *
+	 * 有 `accountId` 的人会另外用 STRATZ 的真实对局算出英雄池（按版本统计、带场次与胜率），
+	 * 卡片上那份优先；这一串只在拿不到真实数据时兜底（退役太久、账号匿名都算拿不到）。
+	 */
 	champions: string[];
+	/**
+	 * Dota 账号 id，取自 **Liquipedia 选手页的 `|playerid=`**（站内战队页用的是同一套解析，
+	 * 见 `liquipediaApi.fetchLiquipediaPlayerIds`）——不靠昵称猜：同一个昵称能搜出好几个
+	 * 近期活跃的账号，猜错就是把别人的战绩挂在他头上。
+	 *
+	 * 拿不到或不确定时**不写**，卡片上就不出现「天梯 / 擅长英雄」那一块。
+	 */
+	accountId?: number;
 	tag: string;
 	description: string;
 	/** 社区流传的梗，非官方 */

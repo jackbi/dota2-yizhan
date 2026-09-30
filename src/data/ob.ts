@@ -18,6 +18,8 @@ import type { ObMember } from './types';
 export const OB_MEMBERS: ObMember[] = [
 	{
 		id: 'yyf',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 90045009,
 		name: 'YYF',
 		realName: '姜岑',
 		aliases: ['枫哥', '月夜枫', '胖头鱼', '石佛', '沪上皇', '姜瘤儿', '不粘锅', 'Escape Master', '僵尸王', '饭皇'],
@@ -35,6 +37,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'zhou',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 90137663,
 		name: 'Zhou',
 		realName: '陈尧',
 		aliases: ['鲷哥', 'zhou 神', '都督', '天命鲷', '农民周', '最 C', '头铁鲷', '天梯惩罚者'],
@@ -52,6 +56,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: '820',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 109081055,
 		name: '820',
 		realName: '邹倚天',
 		aliases: ['566', '乌总', '乌鲁鲁', '八老板', '网恋教父', '乌贼', '不爱你', '日麻教父'],
@@ -73,6 +79,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'longdd',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 90892194,
 		name: 'LongDD',
 		realName: '黄翔',
 		aliases: ['龙神', '龙弟弟', '矮子龙', '爆眼龙', '面子龙', '胆小菇', '龙虾', '龙怼怼', '霍比特龙', '体操龙', '小气龙', '巨龙输醒', '子龙'],
@@ -90,6 +98,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'zippo',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 90881881,
 		name: 'ZippO',
 		realName: '周雄',
 		aliases: ['宝哥', '生日宝', '敬业宝', '多宝道人', '蛇哥', '验尸宝', '多宝鱼', '唯一 B 神', '斯内克', '钢蛇宝', '上帝之宝', '法医周雄'],
@@ -106,6 +116,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'dd',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 89371588,
 		name: 'DD',
 		realName: '谢彬',
 		aliases: ['奶哥哥', '奶子 D', '二维马', '唐门门主', '彬彬神', '蟹兵', '龟龟', 'D 能儿', '3 秒 BKB'],
@@ -123,6 +135,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'zsmj',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 113705693,
 		name: 'ZSMJ',
 		realName: '龚建',
 		aliases: ['马甲哥', '甲鱼', '方丈', '田姐', '7 分钟 3800', '左手摸鸡', '总是没鸡', '剑神', '蛛丝马迹', '宇宙第一大刷子', '杠精', '舞王', '鹰眼'],
@@ -140,6 +154,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'hao',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 88508515,
 		name: 'Hao',
 		realName: '陈智豪',
 		aliases: ['豪娘', '上将豪', '砍手豪', '核桃 Hao', '广州拖把王', '广州家政王', '平西王', '栗山 Hao', '逐日者', '伊人 Hao'],
@@ -156,6 +172,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'mu',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 89157606,
 		name: 'Mu',
 		realName: '张盼',
 		aliases: ['大 Mu', '大 Mu 金仙', '东尼大木', '东尼', 'CDmu', 'Mu 神', '木木', '东腻'],
@@ -172,6 +190,8 @@ export const OB_MEMBERS: ObMember[] = [
 	},
 	{
 		id: 'sansheng',
+		// 账号 id 取自 Liquipedia 选手页的 `|playerid=`（同一套解析见 liquipediaApi）。
+		accountId: 100883708,
 		name: 'SanSheng',
 		realName: '王兆辉',
 		aliases: ['狗哥', '狗妹', '烟头狗', '垃圾狗', '妇女之友'],
