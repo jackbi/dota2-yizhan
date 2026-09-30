@@ -20,7 +20,13 @@ import { summarizeHeroPool } from './heroPool.ts';
  *
  * TTL 改长短不用动它：条目形状没变，老条目只是早一点或晚一点过期。
  */
-export const HERO_POOL_CACHE_VERSION = 1;
+/**
+ * 2026-09-30 从 1 升到 2：`summarizeHeroPool` 的判据换了——除了"本版本 ≥5 场"，
+ * 还要求能凑出 ≥5 个英雄，否则退到窗口；顺带把每人保留的英雄数从 5 提到 10。
+ * 老缓存里存的是旧判据算出来的池子（有人只剩一个英雄），读的时候 `v` 对不上，
+ * 会当作没有缓存重新取——这正是加版本号的用处。
+ */
+export const HERO_POOL_CACHE_VERSION = 2;
 
 export interface HeroPoolCacheEntry {
 	v?: number;

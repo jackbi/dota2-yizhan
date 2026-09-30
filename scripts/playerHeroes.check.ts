@@ -37,13 +37,18 @@ function games(heroId: number, count: number, wins: number, beforePatch = false)
 	}));
 }
 
-// 1. 本版本样本够（≥5 场）就用本版本，且不掺版本之前的场次
+// 1. 本版本样本够（≥5 场，且能凑出 ≥5 个英雄）就用本版本，且不掺版本之前的场次
 {
 	const pool = summarizeHeroPool(
 		[
 			...games(1, 3, 2),
 			...games(2, 2, 2),
 			...games(3, 1, 0),
+			// 门槛是"能凑出几个英雄"，所以本版本要有足够多打满两场的英雄才走这条路。
+			...games(4, 2, 2),
+			...games(5, 2, 1),
+			...games(6, 2, 1),
+			...games(7, 2, 0),
 			// 上一个版本打了 5 场同一个英雄——回退时它会是第一名，本版本够用就不该出现
 			...games(9, 5, 5, true),
 		],
@@ -52,12 +57,16 @@ function games(heroId: number, count: number, wins: number, beforePatch = false)
 	assert.ok(pool, '本版本样本够，应当有结果');
 	assert.equal(pool.scope, 'patch', '样本全在本版本内，口径就是 patch');
 	assert.equal(pool.version, '7.41f');
-	assert.equal(pool.games, 6, '只统计本版本的 6 场');
+	assert.equal(pool.games, 14, '只统计本版本的 14 场');
 	assert.deepEqual(
 		pool.heroes.map((h) => [h.heroId, h.games, h.wins]),
 		[
 			[1, 3, 2],
 			[2, 2, 2],
+			[4, 2, 2],
+			[5, 2, 1],
+			[6, 2, 1],
+			[7, 2, 0],
 		],
 		'场次多的在前；只打一场的英雄（3）不进榜；上版本的英雄（9）在这条路上不出现',
 	);
@@ -77,9 +86,37 @@ function games(heroId: number, count: number, wins: number, beforePatch = false)
 }
 
 // 3. 门槛：一个英雄只打过一场就不算「擅长」；全都只打过一场时宁可不给结果
+/*
+ * 2b. **本版本场次够、但英雄凑不满**时要退到窗口。
+ *
+ * 这条是被一个真实的界面误读逼出来的：Ame 的池子在页面上只剩一个英雄，看起来像
+ * "这位职业选手只会一个英雄"。原因是判据只看场次——6 场打 6 个英雄也算"样本够"，
+ * 于是本版本那条路上一个达标的英雄都没有。现在再加一条"至少凑出 5 个英雄"，
+ * 凑不满就退到 90 天，并**照实标成「近 90 天」**（口径宽一点没关系，别摆个空池子）。
+ */
+{
+	const pool = summarizeHeroPool(
+		[
+			...games(1, 3, 2),
+			...games(2, 2, 1),
+			// 本版本 6 场，但只有上面两个英雄打满两场——凑不出 5 个
+			...games(3, 1, 0),
+			// 窗口里的老样本这时要顶上来
+			...games(9, 6, 4, true),
+			...games(10, 5, 3, true),
+		],
+		OPTIONS,
+	);
+	assert.ok(pool);
+	assert.equal(pool.scope, 'window', '本版本凑不出池子时要退到窗口，并把口径标成 window');
+	assert.equal(pool.games, 17, '退到窗口就统计整个窗口的场次');
+	assert.equal(pool.heroes[0]?.heroId, 9, '退到窗口后按整个窗口排，场次最多的在前');
+	ok('本版本场次够但英雄凑不满：退到窗口，标签跟着改成「近 90 天」');
+}
+
 {
 	const oneEach = summarizeHeroPool([1, 2, 3, 4, 5, 6].map((heroId) => ({ heroId, win: true, startTime: PATCH_START + heroId })), OPTIONS);
-	assert.equal(oneEach, null, '每个英雄都只打一场，等于没有招牌英雄，返回 null 而不是硬凑五个');
+	assert.equal(oneEach, null, '每个英雄都只打一场，等于没有招牌英雄，返回 null 而不是硬凑一组');
 
 	const withTwo = summarizeHeroPool([...games(7, 2, 1), ...games(8, 1, 1), ...games(9, 1, 0), ...games(10, 1, 0)], OPTIONS);
 	assert.deepEqual(

@@ -8,10 +8,25 @@
 
 /** 本版本至少要这么多场，才认为样本够用、不必回退。 */
 export const MIN_PATCH_GAMES = 5;
+/**
+ * 本版本至少要能凑出这么多**英雄**，否则整份池子回退到窗口。
+ *
+ * 只按「场次」判断够不够是不够的：一个选手本版本打了 6 场、每场换一个英雄，
+ * 每个英雄都只有 1 场、过不了 `MIN_HERO_GAMES`，于是"本版本"这条路上只剩一两个英雄——
+ * 实测 Ame 的池子就显示成只有 1 个英雄，看起来像"这位职业选手只会一个英雄"。
+ * 池子太薄，BP 里的"他会不会这个"也就无从谈起，所以宁可退到 90 天并**照实标成「近 90 天」**。
+ */
+export const MIN_POOL_HEROES = 5;
 /** 一个英雄至少要打这么多场才算「擅长」——只打一场就上榜是噪音。 */
 export const MIN_HERO_GAMES = 2;
-/** 最多列几个。 */
-export const TOP_HEROES = 5;
+/**
+ * 最多列几个。
+ *
+ * 5 太少了：一线选手一个版本能拿的远不止五个（pool 里留的本来就是"打够场次"的那些），
+ * 只留 5 个会让"他没打过它"变成一个很弱的判断。10 个既够 BP 里判断熟不熟，也不至于把池子
+ * 摊成一堆 2 场的噪音（门槛仍是每人每英雄 ≥ `MIN_HERO_GAMES`）。
+ */
+export const TOP_HEROES = 10;
 
 export interface PlayerHeroStat {
 	heroId: number;
@@ -66,17 +81,29 @@ export function summarizeHeroPool(
 	 */
 	const hasPatch = Number.isFinite(options.patchStart) && options.patchStart > 0;
 	const inPatch = hasPatch ? rows.filter((row) => row.startTime >= options.patchStart) : [];
-	const chosen = inPatch.length >= MIN_PATCH_GAMES ? inPatch : rows;
+	/** 把一批对局按英雄合计。 */
+	const aggregate = (list: readonly PlayerMatchRow[]): Map<number, { games: number; wins: number }> => {
+		const perHero = new Map<number, { games: number; wins: number }>();
+		for (const row of list) {
+			const entry = perHero.get(row.heroId) ?? { games: 0, wins: 0 };
+			entry.games += 1;
+			if (row.win) entry.wins += 1;
+			perHero.set(row.heroId, entry);
+		}
+		return perHero;
+	};
+	/*
+	 * 本版本够不够用，要看**能凑出几个英雄**、不能只看场次：6 场打了 6 个英雄，结果是 0 个够门槛。
+	 * 那种情况退到整个窗口，`scope` 跟着变成 `window`，页面标「近 90 天」——宁可口径宽一点，
+	 * 也不要摆一个只有一两个英雄的"本版本池子"出来（那看起来像"这位选手只会一个英雄"）。
+	 */
+	const patchPerHero = aggregate(inPatch);
+	const patchHeroes = [...patchPerHero.values()].filter((stat) => stat.games >= MIN_HERO_GAMES).length;
+	const chosen = inPatch.length >= MIN_PATCH_GAMES && patchHeroes >= MIN_POOL_HEROES ? inPatch : rows;
 	const scope: PlayerHeroPool['scope'] =
 		!hasPatch || chosen.some((row) => row.startTime < options.patchStart) ? 'window' : 'patch';
 
-	const perHero = new Map<number, { games: number; wins: number }>();
-	for (const row of chosen) {
-		const entry = perHero.get(row.heroId) ?? { games: 0, wins: 0 };
-		entry.games += 1;
-		if (row.win) entry.wins += 1;
-		perHero.set(row.heroId, entry);
-	}
+	const perHero = aggregate(chosen);
 
 	const heroes = [...perHero]
 		.filter(([, stat]) => stat.games >= MIN_HERO_GAMES)
