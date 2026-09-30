@@ -24,6 +24,7 @@
 | `.cache/translate/` | 机器翻译结果 | 永久 |
 | `.cache/liquipedia/` | Liquipedia 赛程页解析结果 | 30 分钟 |
 | `.cache/liquipedia/tiers.json` | 各届赛事的档位（Tier 1–4） | 7 天 |
+| `.cache/liquipedia/team-portal.json` | 活跃战队门户的地区与队伍名单（战队名录的主来源） | 24 小时 |
 | `.cache/liquipedia/rosters.json` | 各战队的人员名单 | 12 小时 |
 | `.cache/liquipedia/player-ids.json` | 选手的 Steam 账号 id（从选手页取） | 7 天 |
 | `.cache/stratz/player-heroes.json` | 选手按版本统计的招牌英雄 | 24 小时 |
