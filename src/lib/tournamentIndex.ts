@@ -1,7 +1,8 @@
-import type { EsportsEvent, EsportsMatch, LeagueTier, MatchStatus, TeamRef } from '../data/types';
+import type { EsportsEvent, EsportsMatch, MatchStatus, TeamRef } from '../data/types';
 import { fetchLiquipediaPlayerIds, fetchLiquipediaTeamRosters } from './liquipediaApi';
 import type { TeamRoster } from './liquipediaParse';
 import { loadPlayerHeroPools } from './playerHeroes';
+import { getTeamPortal } from './teamPortal';
 import { getTournaments } from './tournamentsApi';
 
 /**
@@ -18,9 +19,6 @@ export interface TeamEventRef {
 	status: MatchStatus;
 	startTime: number;
 	endTime: number;
-	/** 这一届的档位；取不到时缺省。战队页靠它判断这支队算不算一线队。 */
-	tier?: LeagueTier;
-	showmatch?: boolean;
 }
 
 export interface TeamDetail {
@@ -47,6 +45,20 @@ export interface TournamentIndex {
 	eventIds: Set<string>;
 	/** 可渲染详情页的队伍，key 为队伍 id。 */
 	teams: Map<string, TeamDetail>;
+	/**
+	 * Liquipedia 门户的地区分区（战队名录的骨架），每区是一串队伍 id。
+	 * 门户抓不到时是空数组，页面退回"窗口里出现过的队伍"单列一区。
+	 */
+	regions: TournamentRegionRef[];
+	/** 在门户任何地区里出现过的队伍 id；`regions` 为空时也是空集。 */
+	portalIds: Set<string>;
+}
+
+/** 门户的一个地区区块。队伍顺序就是门户上的顺序。 */
+export interface TournamentRegionRef {
+	key: string;
+	label: string;
+	teamIds: string[];
 }
 
 async function buildIndex(): Promise<TournamentIndex> {
@@ -77,8 +89,6 @@ async function buildIndex(): Promise<TournamentIndex> {
 					status: event.status,
 					startTime: event.startTime,
 					endTime: event.endTime,
-					tier: event.tier,
-					showmatch: event.showmatch,
 				}
 			: undefined;
 		const home = touchTeam(match.home, eventRef);
@@ -106,6 +116,32 @@ async function buildIndex(): Promise<TournamentIndex> {
 	for (const team of teams.values()) {
 		team.matches.sort((a, b) => b.startTime - a.startTime);
 		team.events.sort((a, b) => b.startTime - a.startTime);
+	}
+
+	/*
+	 * 门户里那些**这几届赛事没出现过**的队伍也要进索引：它们没有战绩，但有队标、名单与招牌英雄，
+	 * 页面照样成立（`/teams/[id]` 靠这份索引生成静态路径）。反过来，窗口里出现过、门户没收录的
+	 * 队伍留在索引里不动，由页面放进最后那个「其他」区块——名录换了主来源，但不该让已有的队伍页
+	 * 从站上消失（对阵页、赛事页都还链着它们）。
+	 */
+	const portal = await getTeamPortal();
+	const regions: TournamentRegionRef[] = [];
+	const portalIds = new Set<string>();
+	for (const region of portal) {
+		const teamIds: string[] = [];
+		for (const team of region.teams) {
+			const entry = teams.get(team.id);
+			if (entry) {
+				// 窗口里那份有比赛数据，只补它缺的字段；名字与队标以已经有数据的那份为准。
+				if (!entry.logo && team.logo) entry.logo = team.logo;
+				if (!entry.wiki) entry.wiki = team.wiki;
+			} else {
+				teams.set(team.id, { id: team.id, name: team.name, logo: team.logo, wiki: team.wiki, wins: 0, losses: 0, matches: [], events: [] });
+			}
+			teamIds.push(team.id);
+			portalIds.add(team.id);
+		}
+		if (teamIds.length > 0) regions.push({ key: region.key, label: region.label, teamIds });
 	}
 
 	/*
@@ -152,6 +188,8 @@ async function buildIndex(): Promise<TournamentIndex> {
 		matchList: [...matches.values()].sort((a, b) => b.startTime - a.startTime),
 		eventIds: new Set(bundle.events.map((event) => event.id)),
 		teams,
+		regions,
+		portalIds,
 	};
 }
 

@@ -149,8 +149,9 @@ const OTHER_LOGO = 'https://liquipedia.net/commons/images/thumb/b/b7/Ivory_2024_
 
 	const pages = [
 		'src/components/MatchRow.astro',
+		// 战队名录的卡片抽成了组件（名录页自己不再画队标），它也是"一处队标"。
+		'src/components/TeamCard.astro',
 		'src/pages/matches/[id].astro',
-		'src/pages/teams.astro',
 		'src/pages/teams/[id].astro',
 		'src/pages/tournaments/[id].astro',
 	];
@@ -168,8 +169,8 @@ const OTHER_LOGO = 'https://liquipedia.net/commons/images/thumb/b/b7/Ivory_2024_
 			imgs += 1;
 		}
 	}
-	assert.equal(imgs, 7, '场次行两处、对阵页两处、战队列表、战队详情、赛事页各一处，共 7 处队标');
-	ok('底板：五处页面、七张队标都用浅色底板且不裁切');
+	assert.equal(imgs, 7, '场次行两处、对阵页两处、战队卡、战队详情、赛事页各一处，共 7 处队标');
+	ok('底板：五个文件、七张队标都用浅色底板且不裁切');
 }
 
 console.log(`teamLogos 全部断言通过（${cases} 组）`);

@@ -1,13 +1,15 @@
 import path from 'node:path';
 import type { EsportsMatch } from '../data/types';
 import { readCacheJson, writeCacheFile } from './buildCache';
-import type { LeagueTierInfo, TeamRoster } from './liquipediaParse';
+import { reportSource, sourceState } from './dataHealth';
+import type { LeagueTierInfo, TeamPortalRegion, TeamRoster } from './liquipediaParse';
 import {
 	eventPathOf,
 	parseBracketMatches,
 	parseLeagueTier,
 	parseMatches,
 	parseTeamRoster,
+	parseTeamPortal,
 } from './liquipediaParse';
 
 /**
@@ -33,6 +35,8 @@ const PAGE = 'Liquipedia:Matches';
 /** 署名与回链用的地址。 */
 export const LIQUIPEDIA_SOURCE_URL = 'https://liquipedia.net/dota2/Liquipedia:Matches';
 export const LIQUIPEDIA_LABEL = 'Liquipedia';
+/** 战队名录那份「活跃战队」名单的出处，页面要署名回链。 */
+export const TEAM_PORTAL_URL = 'https://liquipedia.net/dota2/Portal:Teams';
 
 const CONTACT = (process.env.LIQUIPEDIA_CONTACT ?? '').trim();
 /**
@@ -220,8 +224,7 @@ async function loadEventMatches(pagePaths: string[]): Promise<EsportsMatch[]> {
 /*
  * ---- 赛事档位 --------------------------------------------------------------------
  *
- * 档位（Tier 1–4）在赛事页的 Infobox 里，用来回答"这支队算不算一线队"——
- * 判据与理由见 `lib/leagueTier.ts`。
+ * 档位（Tier 1–4）在赛事页的 Infobox 里，赛事页拿它画徽章、做档位筛选（见 `lib/leagueTier.ts`）。
  *
  * **抓根页面，不抓阶段子页**：实测阶段子页上没有 Infobox（`PGL/Wallachia/9/Group_Stage`
  * 就没有），而 `sourceUrl` 恰恰常常指向子页。所以这里统一按 `eventPathOf()` 归到根页面。
@@ -573,4 +576,74 @@ async function loadPlayerIds(playerPages: string[]): Promise<Map<string, number>
 
 	await writePlayerIdCache(next);
 	return out;
+}
+
+/*
+ * ---- 活跃战队门户（Portal:Teams） ---------------------------------------------------
+ *
+ * 战队名录原来完全由"我们这几届赛事里出现过谁"反推，再用赛事档位去猜哪支算一线队。
+ * 那条口径必然走样：打进 T1 预选赛的队会被算进来，休赛期没打 T1/T2 的强队会被漏掉。
+ * `Portal:Teams` 的 Regions 面板是 Liquipedia 人工维护的「现在活跃的强队名单」，
+ * 按地区分好，正是名录需要的那个轴——顺带也就不必再拿档位给**队伍**分层。
+ *
+ * 读的是渲染结果（`action=parse`），解析在 `parseTeamPortal()`：门户模板内部走 Liquipedia
+ * 自己的 LPDB 查询，没有公开接口。一天一次足够——队籍、活跃状态不会一天一变，
+ * 而抓不到时退回过期缓存，比"整页六个地区一起消失"好得多。
+ */
+
+const TEAM_PORTAL_CACHE_FILE = path.join(process.cwd(), '.cache', 'liquipedia', 'team-portal.json');
+const TEAM_PORTAL_PAGE = 'Portal:Teams';
+const TEAM_PORTAL_TTL_SECONDS = 24 * 3600;
+
+interface TeamPortalCacheEntry {
+	v?: number;
+	at: number;
+	regions: TeamPortalRegion[];
+}
+
+async function readTeamPortalCache(): Promise<TeamPortalCacheEntry | null> {
+	const hit = await readCacheJson<TeamPortalCacheEntry>(TEAM_PORTAL_CACHE_FILE, (value) => {
+		const entry = value as TeamPortalCacheEntry;
+		return entry?.v === CACHE_VERSION && typeof entry.at === 'number' && Array.isArray(entry.regions);
+	});
+	return hit?.value ?? null;
+}
+
+let teamPortalPromise: Promise<TeamPortalRegion[]> | null = null;
+
+/**
+ * 门户里的地区与队伍。拿不到就退回过期缓存；连缓存都没有时返回空数组，
+ * 战队页只按"我们窗口里出现过的队伍"分区（见 `tournamentIndex`）。
+ */
+export function fetchLiquipediaTeamPortal(): Promise<TeamPortalRegion[]> {
+	teamPortalPromise ??= loadTeamPortal();
+	return teamPortalPromise;
+}
+
+async function loadTeamPortal(): Promise<TeamPortalRegion[]> {
+	const cached = await readTeamPortalCache();
+	const count = (regions: TeamPortalRegion[]): number => regions.reduce((sum, region) => sum + region.teams.length, 0);
+	const detail = (regions: TeamPortalRegion[]): string => `${regions.length} 个地区 ${count(regions)} 支`;
+
+	if (cached && Date.now() - cached.at < TEAM_PORTAL_TTL_SECONDS * 1000) {
+		await reportSource('liquipedia-teams', '活跃战队门户', sourceState(false, count(cached.regions)), detail(cached.regions));
+		return cached.regions;
+	}
+	if (OFFLINE) {
+		const regions = cached?.regions ?? [];
+		await reportSource('liquipedia-teams', '活跃战队门户', sourceState(false, count(regions)), regions.length > 0 ? detail(regions) : '离线构建且没有缓存');
+		return regions;
+	}
+
+	const html = await fetchPage(TEAM_PORTAL_PAGE);
+	const regions = html ? parseTeamPortal(html) : [];
+	if (regions.length === 0) {
+		const fallback = cached?.regions ?? [];
+		await reportSource('liquipedia-teams', '活跃战队门户', sourceState(false, count(fallback)), fallback.length > 0 ? `门户抓取失败，退回过期缓存（${detail(fallback)}）` : '门户没有抓到任何地区');
+		return fallback;
+	}
+
+	await writeCacheFile(TEAM_PORTAL_CACHE_FILE, JSON.stringify({ v: CACHE_VERSION, at: Date.now(), regions }));
+	await reportSource('liquipedia-teams', '活跃战队门户', sourceState(true, count(regions)), detail(regions));
+	return regions;
 }

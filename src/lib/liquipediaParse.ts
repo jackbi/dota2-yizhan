@@ -19,12 +19,25 @@ import { routeSlug } from './routeSlug.ts';
 
 const slug = routeSlug;
 
-interface ParsedTeam {
+export interface ParsedTeam {
 	name: string;
 	short: string;
 	logo?: string;
 	/** Liquipedia 页面标题，例如 `Team_Liquid`；取名单要靠它。 */
 	wiki?: string;
+}
+
+/**
+ * 队伍的站内 id，按 **Liquipedia 页面标题**生成。
+ *
+ * 为什么不按队名：同一支队在不同页面上的**显示名不一样**。门户里
+ * `Inner_Circle_x_Insanity` 显示成「IC x Insanity」，赛程页显示成「Inner Circle x Insanity」——
+ * 按队名生成会得到两个 id、两个页面，同一支队被劈成两半（实测）。页面标题是它的规范名，
+ * 两处都一样；`routeSlug` 顺带把下划线折成连字符，所以今天窗口里 46 支队算出来的 id
+ * 与按队名算的完全一致，换过来不会动任何一条已有 URL。
+ */
+export function liquipediaTeamId(wiki: string): string {
+	return `lp-team-${slug(wiki)}`;
 }
 
 /** 解百分号编码；`%` 后面不是合法编码时原样返回，不能让一个怪地址把整页解析打断。 */
@@ -132,7 +145,7 @@ export interface LeagueTierInfo {
  * **另一个坑：档位与"表演赛"是两个字段。** Liquipedia 的 wikitext 是
  * `liquipediatier=3` + `liquipediatiertype=showmatch` 两条，渲染出来是
  * `Showmatch (Tier 3)`——也就是说表演赛**仍然有正式档位**，不是"没有档位"。
- * 所以这里两个都读出来，由调用方决定怎么用（一线队只看档位）。
+ * 所以这里两个都读出来，由调用方决定怎么用（赛事页：档位给徽章与筛选，`showmatch` 只当提示）。
  *
  * 认不出的值返回 undefined（页面不显示档位），不猜。实测 Liquipedia 用的是 1–4。
  */
@@ -192,8 +205,8 @@ function parseMatchBlock(block: string, pagePath: string, nowSec: number): Espor
 		startTime,
 		status,
 		bo: boText ? Number(boText) : undefined,
-		home: { id: `lp-team-${slug(home.name)}`, name: home.name, logo: home.logo, wiki: home.wiki, score: score?.[0] },
-		away: { id: `lp-team-${slug(away.name)}`, name: away.name, logo: away.logo, wiki: away.wiki, score: score?.[1] },
+		home: { id: liquipediaTeamId(home.wiki ?? home.name), name: home.name, logo: home.logo, wiki: home.wiki, score: score?.[0] },
+		away: { id: liquipediaTeamId(away.wiki ?? away.name), name: away.name, logo: away.logo, wiki: away.wiki, score: score?.[1] },
 		winner: homeWon ? 'home' : awayWon ? 'away' : undefined,
 		source: 'liquipedia',
 		// 指回**这一场所在的页面**（可能是阶段子页），赛事页补全要靠它取回路径。
@@ -265,6 +278,88 @@ export function parseBracketMatches(html: string, pagePath: string, nowSec: numb
  * 判据用模板参数而不是章节标题：`status=active` 是现役、`status=inactive` 是离队（要丢）、
  * `type=staff` 是教练组。标题会变、会缺席（Team Liquid 就没有 `===Stand-ins===`），参数不会。
  */
+
+/*
+ * ---- Portal:Teams 的「Regions」面板 --------------------------------------------------
+ */
+
+/** 门户里的一个地区分组，顺序就是门户上的顺序。 */
+export interface TeamPortalRegion {
+	/** 地区键（`north-america`、`eastern-europe-cis`…），由门户的 `<h4 id>` 归一化而来。 */
+	key: string;
+	/** 门户原文里的地区名（`Eastern Europe & CIS`）；没配中文标签时直接显示它。 */
+	label: string;
+	teams: ParsedTeam[];
+}
+
+/** 门户里一支队伍那一行的开头。属性顺序与多出来的类名都不管，只认这个类名。 */
+const PORTAL_ROW_RE = /<span[^>]*class="team-template-team-standard"[^>]*>([\s\S]*?)<br\s*\/?>/g;
+const PORTAL_PANEL_SPLIT = '<div class="panel-box wiki-bordercolor-light">';
+/** 地区标题：`id` 是稳定的键，`<h4>` 里的文字是给它自己看的名字（没有时退回 id）。 */
+const PORTAL_REGION_RE = /<h4 id="([^"]+)"[^>]*>([\s\S]*?)<\/h4>/;
+/** 门户那行图带 `srcset`（1.5x / 2x 两档），取最大的一档——卡片要 2x 才不糊。 */
+const PORTAL_SRCSET_RE = /srcset="([^"]*)"/;
+
+/** 门户里的地区名带 HTML 实体（`Eastern Europe &amp; CIS`）。 */
+function decodeEntities(value: string): string {
+	return value.replace(/&amp;/g, '&').replace(/&nbsp;|&#160;/g, ' ').replace(/&quot;/g, '"');
+}
+
+/** `srcset` 里最大的一档；没有就返回 undefined，调用方退回 `src`。 */
+function widestSrcset(row: string): string | undefined {
+	const set = row.match(PORTAL_SRCSET_RE)?.[1];
+	if (!set) return undefined;
+	return set
+		.split(',')
+		.map((item) => item.trim().split(/\s+/)[0])
+		.filter((item) => item.length > 0)
+		.at(-1);
+}
+
+/**
+ * `Portal:Teams` 的「Regions」面板：一个地区一个 `panel-box`，里面是一串队伍。
+ *
+ * 为什么要读这个门户：Dota 2 没有升降级分区、DPC 也停了，「哪些是现在还活跃的强队」这件事
+ * 只有 Liquipedia 在人工维护（模板内部走它自己的 LPDB 查询，**没有公开接口**，只能读渲染结果）。
+ * 面板里每支队都带 `team-template-image-icon`，和赛程页那一段是同一套模板，所以能共用
+ * `TEAM_ANCHOR_RE` / `TEAM_WIKI_RE`——**队名不能拿来猜页面标题**这条教训在赛程页吃过一次
+ * （见 `TEAM_WIKI_RE` 的注释），这里同样只认 href。
+ *
+ * 空面板直接跳过：门户将来加地区时，宁可少一个区块，也不要抄一个空标题上页面。
+ */
+export function parseTeamPortal(html: string): TeamPortalRegion[] {
+	const out: TeamPortalRegion[] = [];
+	for (const panel of html.split(PORTAL_PANEL_SPLIT).slice(1)) {
+		const heading = panel.match(PORTAL_REGION_RE);
+		if (!heading) continue;
+		const raw = heading[1];
+
+		const teams: ParsedTeam[] = [];
+		const seen = new Set<string>();
+		for (const row of panel.matchAll(PORTAL_ROW_RE)) {
+			const segment = row[1];
+			const name = segment.match(TEAM_ANCHOR_RE)?.[1]?.trim();
+			const wiki = segment.match(TEAM_WIKI_RE)?.[1];
+			if (!name || !wiki || seen.has(name)) continue;
+			seen.add(name);
+			const src = widestSrcset(segment) ?? segment.match(TEAM_LOGO_RE)?.[1];
+			teams.push({
+				name,
+				short: '',
+				logo: src ? `https://liquipedia.net${src}` : undefined,
+				wiki: decodeSafe(wiki),
+			});
+		}
+
+		if (teams.length === 0) continue;
+		// `<h4>` 里那点文字在渲染结果里常常是空的（标题由 id 撑起来），这时拿 id 当名字，
+		// 至少比显示 `eastern-europe-cis` 强。
+		const label = decodeEntities(heading[2].replace(/<[^>]*>/g, ' ')).trim() || decodeEntities(raw).replace(/_/g, ' ');
+		// 键只认 `id`（门户的稳定标识），名字取 `<h4>` 里的文字——两者不一致时以 id 为准。
+		out.push({ key: slug(decodeEntities(raw)), label, teams });
+	}
+	return out;
+}
 
 /** 战队名单里的一个人。 */
 export interface RosterMember {

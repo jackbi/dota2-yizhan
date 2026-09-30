@@ -1,0 +1,60 @@
+---
+import { formatMatchTime } from '../lib/format';
+import type { TeamDetail } from '../lib/tournamentIndex';
+
+/**
+ * 战队名录里的一张卡片。抽成组件是因为现在有两处要画同一张卡：
+ * 门户给的地区分区，以及最后那个「窗口里出现过、门户没收录」的折叠区块。
+ *
+ * `data-name` / `data-playing` 是搜索与计数脚本用的（构建期就把卡片画进 HTML，
+ * 脚本只切可见性，不回服务器要数据）。
+ */
+
+interface Props {
+	team: TeamDetail;
+	/** 窗口内已完赛的场次与胜率；一场没打时胜率是 null，不按 0% 显示。 */
+	played: number;
+	winRate: number | null;
+	/** 最近一场未打完对阵的开赛时间；没有就是 null。 */
+	next: number | null;
+	live: boolean;
+	/** 最近一场已完赛的开赛时间；没有就是 null。 */
+	last: number | null;
+	now: number;
+}
+
+const { team, played, winRate, next, live, last, now } = Astro.props;
+/** 队标没有、或那张图没取回来时用的占位——和详情页保持一致。 */
+const initial = team.name.trim().slice(0, 2).toUpperCase();
+---
+
+<a
+	href={`/teams/${team.id}`}
+	data-name={team.name.toLowerCase()}
+	data-playing={next !== null ? '1' : '0'}
+	class="team-card group flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2"
+>
+	<span class="relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-line bg-plate text-xs font-semibold text-plate-ink">
+		{initial}
+		{team.logo ? (
+			<img src={team.logo} alt="" loading="lazy" referrerpolicy="no-referrer" class="absolute inset-0 h-full w-full object-contain p-0.5" />
+		) : null}
+	</span>
+
+	<span class="min-w-0 flex-1">
+		<span class="flex items-center gap-1.5">
+			<span class="min-w-0 truncate font-display text-base text-cream transition group-hover:text-dota-light">{team.name}</span>
+			{live ? <span class="shrink-0 rounded bg-[#22c55e]/15 px-1.5 py-0.5 text-[10px] font-semibold text-[#4ade80]">比赛中</span> : null}
+		</span>
+		<span class="mt-1 flex items-center gap-1.5 text-xs text-muted">
+			<span class="min-w-0 truncate">
+				{played > 0 ? `${team.wins} 胜 ${team.losses} 负` : '暂无完赛记录'}
+				{winRate === null ? '' : ` · 胜率 ${winRate}%`}
+				{team.events.length > 0 ? ` · ${team.events.length} 项赛事` : ''}
+			</span>
+		</span>
+		<span class="mt-0.5 block truncate text-xs text-faint">
+			{next !== null ? `下一场 ${formatMatchTime(next, now)}` : last !== null ? `最近一场 ${formatMatchTime(last, now)}` : '赛程待定'}
+		</span>
+	</span>
+</a>
