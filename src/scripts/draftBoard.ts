@@ -1375,6 +1375,8 @@ if (data) {
 					source: 'model',
 					droppedBans: parsed.droppedBans,
 					filledBans: radiantBans.filled + direBans.filled,
+					// 模型没给手号：让前端按队长模式的固定顺序排（界面上会写明这一点）。
+					assignedSteps: true,
 				};
 				if (predictStatus) predictStatus.textContent = '';
 			} catch {
@@ -1478,6 +1480,7 @@ if (data) {
 			if (!prediction) {
 				predictBox.innerHTML = '';
 				predictBox.style.display = 'none';
+				renderPredictBoard();
 				return;
 			}
 			const source = prediction.source === 'model' ? '模型预测' : '按站内数据推演';
@@ -1504,6 +1507,83 @@ if (data) {
 				${summary}
 				${dropped}
 				${firstLine}`;
+			renderPredictBoard();
+		}
+
+		/**
+		 * 把预测结果摆到 24 手的板子上（与「和 AI 的对手 BP」那块同一种板子）。
+		 *
+		 * 为什么要有它：清单式地读"他们禁了什么"看不出**顺序**，而顺序正是判断"这一手禁它对不对"
+		 * 的关键（第 1 手禁掉一个别人本来也不急着拿的英雄，等于白禁）。本地推演的手号是真手号
+		 * （它就是一手一手推出来的），模型只给清单——那种情况按队长模式的固定顺序排下去，
+		 * 并在下面写明"手号是排的"，别让读者以为是模型说的。
+		 */
+		function renderPredictBoard(): void {
+			const panel = element<HTMLDivElement>('draft-predict-board-panel');
+			const grid = element<HTMLDivElement>('draft-predict-grid');
+			if (!panel || !grid) return;
+			if (!prediction) {
+				panel.style.display = 'none';
+				grid.innerHTML = '';
+				return;
+			}
+			panel.style.display = '';
+
+			const hands: (number | null)[] = new Array(CM_STEPS.length).fill(null);
+			const place = (side: TeamSide, rows: readonly { heroId: number; step?: number }[], action: 'ban' | 'pick'): void => {
+				// 这一方在这个动作上拥有的手号，按顺序排；本地推演给了 `step` 就直接用它。
+				const slots = CM_STEPS.filter((entry) => entry.action === action && sideOfOwner(entry.owner, firstPick) === side).map((entry) => entry.step);
+				rows.forEach((row, index) => {
+					const step = Number.isInteger(row.step) ? (row.step as number) : slots[index];
+					if (step && step >= 1 && step <= hands.length) hands[step - 1] = row.heroId;
+				});
+			};
+			place('radiant', prediction.radiant.bans, 'ban');
+			place('dire', prediction.dire.bans, 'ban');
+			place('radiant', prediction.radiant.picks, 'pick');
+			place('dire', prediction.dire.picks, 'pick');
+
+			const nameOf = (side: TeamSide) => `${side === 'radiant' ? '天辉' : '夜魇'}${teamNameOf(side) ? ` · ${teamNameOf(side)}` : ''}`;
+			const radiantName = element<HTMLSpanElement>('draft-predict-name-radiant');
+			const direName = element<HTMLSpanElement>('draft-predict-name-dire');
+			if (radiantName) radiantName.textContent = nameOf('radiant');
+			if (direName) direName.textContent = nameOf('dire');
+
+			grid.innerHTML = '';
+			for (const entry of CM_STEPS) {
+				const side = sideOfOwner(entry.owner, firstPick);
+				const row = document.createElement('div');
+				row.className = 'draft-row';
+				row.dataset.action = entry.action;
+				if (CM_PHASE_STARTS.includes(entry.step)) row.dataset.phaseStart = 'true';
+				const left = document.createElement('div');
+				const middle = document.createElement('div');
+				const right = document.createElement('div');
+				middle.className = 'draft-step';
+				middle.innerHTML = `<span>${entry.step}</span><span class="draft-step-action">${entry.action === 'ban' ? '禁' : '选'}</span>`;
+				const cell = side === 'radiant' ? left : right;
+				cell.className = 'draft-cell';
+				cell.dataset.side = side;
+				cell.dataset.action = entry.action;
+				const heroId = hands[entry.step - 1];
+				const hero = typeof heroId === 'number' ? heroById.get(heroId) : undefined;
+				if (hero) {
+					cell.dataset.state = 'filled';
+					cell.title = `第 ${entry.step} 手 ${side === 'radiant' ? '天辉' : '夜魇'}${entry.action === 'ban' ? '禁用' : '挑选'} ${hero.name}`;
+					cell.innerHTML = `<img src="${esc(hero.img)}" alt="${esc(hero.name)}" loading="lazy" referrerpolicy="no-referrer" />`;
+				} else {
+					cell.dataset.state = 'empty';
+				}
+				row.append(left, middle, right);
+				grid.append(row);
+			}
+
+			const note = element<HTMLParagraphElement>('draft-predict-board-note');
+			if (note) {
+				note.textContent = prediction.assignedSteps
+					? '一行一手，中间是手号；禁用打叉变灰，挑选是头像。模型只给了两边各自的禁选清单，这里的手号是按队长模式的顺序排的，不是模型说的。'
+					: '一行一手，中间是手号；禁用打叉变灰，挑选是头像。手号是推演出来的真实顺序。';
+			}
 		}
 
 		// ------------------------------------------------------------ 交互

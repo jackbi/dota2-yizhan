@@ -37,6 +37,12 @@ export interface PredictedPick {
 	position?: number;
 	/** 一句话依据（本地路径取打分层的头一条依据；模型路径是模型写的）。 */
 	reason: string;
+	/**
+	 * 这一手是第几手（1–24）。**本地推演是真手号**（它就是一手一手推出来的）；
+	 * 模型只给"禁选清单"、不给手号，前端会按队长模式的固定顺序把手号排给它，
+	 * 所以界面上要写清手号是怎么来的，别让读者当成模型给的。
+	 */
+	step?: number;
 }
 
 export interface PredictedSide {
@@ -58,6 +64,13 @@ export interface DraftPrediction {
 	droppedBans?: number;
 	/** 只有模型那条路会有：禁用不足 7 条时，由站内引擎补齐的条数。理由同上，要照实说。 */
 	filledBans?: number;
+	/**
+	 * 手号是不是**排出来的**而不是模型给的。
+	 *
+	 * 模型只回答"两边各禁什么、各选什么"，不给手号；界面上要按队长模式的 24 手顺序
+	 * 把它们摆到板子上，那就得说清这是排出来的，别让读者以为模型连手号都说了。
+	 */
+	assignedSteps?: boolean;
 }
 
 /**
@@ -233,7 +246,7 @@ export function predictDraftLocal(input: PredictInput): DraftPrediction | null {
 		used.add(top.heroId);
 		recorded = [...recorded, top.heroId];
 		const bucket = side === 'radiant' ? radiant : dire;
-		const pick: PredictedPick = { heroId: top.heroId, position: top.position, reason: top.reasons[0] ?? '' };
+		const pick: PredictedPick = { heroId: top.heroId, position: top.position, reason: top.reasons[0] ?? '', step: entry.step };
 		if (entry.action === 'ban') bucket.bans.push(pick);
 		else bucket.picks.push(pick);
 	}

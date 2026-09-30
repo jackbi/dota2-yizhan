@@ -141,6 +141,25 @@ const groups = grouped.filter((group) => group.teams.length > 0);
 				<span id="draft-predict-status" class="text-xs text-faint" role="status" aria-live="polite"></span>
 			</div>
 			<div id="draft-predict-box" class="mt-4" style="display: none"></div>
+			<!--
+				预测的 24 手排布：与「和 AI 的对手 BP」那块是同一种板子（一行一手、中间手号）。
+				放在这里是因为清单式地看"他们禁了什么"看不出**顺序**——而顺序正是判断
+				"这一手禁它对不对"的关键。限宽是因为格子的尺寸是按客户端调的（禁用 55×30、挑选 70×40），
+				铺满 1100px 会把两列拉到两头，看着不像那个东西。
+			-->
+			<div id="draft-predict-board-panel" class="draft-board mx-auto mt-4 max-w-lg rounded-2xl border border-line bg-surface/60 p-4" style="display: none">
+				<div class="draft-board-head">
+					<p class="draft-side-label" data-side="radiant">
+						<span class="draft-side-name" id="draft-predict-name-radiant">天辉</span>
+					</p>
+					<p class="draft-board-head-mid"></p>
+					<p class="draft-side-label" data-side="dire">
+						<span class="draft-side-name" id="draft-predict-name-dire">夜魇</span>
+					</p>
+				</div>
+				<div id="draft-predict-grid" class="draft-board-grid"></div>
+				<p id="draft-predict-board-note" class="mt-2 text-xs text-faint"></p>
+			</div>
 		</section>
 
 		<!--
