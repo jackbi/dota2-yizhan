@@ -1,4 +1,6 @@
 import type { LeagueTier } from '../data/types';
+// 只借类型：`liquipediaParse.ts` 是纯模块（档位那份形状定义在那里）。
+import type { LeagueTierInfo } from './liquipediaParse.ts';
 
 /**
  * 赛事档位怎么用：显示文案，以及「什么样算一线队」。
@@ -44,6 +46,38 @@ export const FIRST_TIER_MAX: LeagueTier = 2;
 export interface TieredEvent {
 	tier?: LeagueTier;
 	showmatch?: boolean;
+}
+
+/** 档位是挂在**赛事 id** 上的，所以还原的时候也要能拿到 id。 */
+export interface TieredEventRef extends TieredEvent {
+	id: string;
+}
+
+/**
+ * 一批赛事 → `赛事 id → 档位`。
+ *
+ * 降级那一轮（主源挂了、走缓存）靠它把档位还原回来：缓存里存的是**赛事**，
+ * 而对阵重建出来的是新的赛事对象，档位不会自己跟过去。少了这一句，那一轮全站赛事
+ * 都没有档位，战队页默认视图（一线队）就是 0 支——读者看到一页空白，数据其实还在缓存里。
+ */
+export function tierMapOf(events: readonly TieredEventRef[]): Map<string, LeagueTierInfo> {
+	const out = new Map<string, LeagueTierInfo>();
+	for (const event of events) {
+		if (event.tier === undefined) continue;
+		// `showmatch` 只在有值时带上：这份对象会被写进缓存，多一个 undefined 键会让形状漂。
+		out.set(event.id, event.showmatch ? { tier: event.tier, showmatch: true } : { tier: event.tier });
+	}
+	return out;
+}
+
+/** 把档位贴到赛事上。表里没有的赛事保持没有档位——页面不显示徽章，这是正常的一档。 */
+export function applyEventTiers(events: TieredEventRef[], tiers: Map<string, LeagueTierInfo>): void {
+	for (const event of events) {
+		const info = tiers.get(event.id);
+		if (!info) continue;
+		event.tier = info.tier;
+		if (info.showmatch) event.showmatch = true;
+	}
 }
 
 /**

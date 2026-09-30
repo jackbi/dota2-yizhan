@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { FIRST_TIER_MAX, LEAGUE_TIER_META, SHOWMATCH_META, bestTierOf, isFirstTier } from '../src/lib/leagueTier.ts';
+import {
+	FIRST_TIER_MAX,
+	LEAGUE_TIER_META,
+	SHOWMATCH_META,
+	applyEventTiers,
+	bestTierOf,
+	isFirstTier,
+	tierMapOf,
+} from '../src/lib/leagueTier.ts';
 
 /**
  * 「这支队算不算一线队」这条判据的自检。
@@ -11,6 +19,8 @@ import { FIRST_TIER_MAX, LEAGUE_TIER_META, SHOWMATCH_META, bestTierOf, isFirstTi
  * 2. **表演赛不算档位**：Liquipedia 里表演赛**也有**正式档位（两个独立字段），
  *    照单全收会把主播队算成"打过 T3 赛事"的职业队；
  * 3. **边界是 ≤ T2**：写在两处（`FIRST_TIER_MAX` 与页面上的说明），这里把它钉成唯一来源。
+ * 4. **降级那一轮要把档位从缓存还原**（`tierMapOf` / `applyEventTiers`）：档位挂赛事上、
+ *    不在对阵上，走缓存重建时不会自己跟过去——漏了就是"所有赛事都没档位、一线队 0 支"。
  *
  * 跑：`pnpm check`（或 `node --experimental-strip-types scripts/leagueTier.check.ts`）。
  */
@@ -61,6 +71,38 @@ const ok = (label: string): void => {
 	}
 	assert.equal(LEAGUE_TIER_META[1].label, 'T1');
 	ok('档位徽章：1–4 都有文案与配色');
+}
+
+// 5. 档位从缓存还原：降级那一轮全站都靠这两步，漏了就是「一线队 0 支」
+{
+	const tiers = tierMapOf([
+		{ id: 'blast-slam-8', tier: 1 },
+		{ id: 'pgl-wallachia-9', tier: 2, showmatch: false },
+		{ id: 'betboom-streamers-battle-15', tier: 3, showmatch: true },
+		{ id: 'no-tier-event' },
+	]);
+	assert.equal(tiers.size, 3, '没有档位的那届不进表（页面本来就不挂徽章）');
+	assert.deepEqual(tiers.get('blast-slam-8'), { tier: 1 }, '普通赛事不带 showmatch 键');
+	assert.deepEqual(tiers.get('betboom-streamers-battle-15'), { tier: 3, showmatch: true }, '表演赛的标记要带上');
+
+	const events = [
+		{ id: 'blast-slam-8' },
+		{ id: 'betboom-streamers-battle-15' },
+		{ id: 'no-tier-event' },
+		{ id: 'brand-new-event' },
+	];
+	applyEventTiers(events, tiers);
+	assert.deepEqual(
+		events.map((event) => [event.id, event.tier, event.showmatch]),
+		[
+			['blast-slam-8', 1, undefined],
+			['betboom-streamers-battle-15', 3, true],
+			['no-tier-event', undefined, undefined],
+			['brand-new-event', undefined, undefined],
+		],
+		'贴档位只动表里有的；表里没有的、以及这一轮新出现的赛事，保持没有档位',
+	);
+	ok('档位还原：缓存 → 赛事，缺的不猜');
 }
 
 console.log(`leagueTier 全部断言通过（${cases} 组）`);

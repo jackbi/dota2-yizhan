@@ -2,6 +2,7 @@ import path from 'node:path';
 import { seedEvents } from '../data/tournaments';
 import { readCacheJson, writeCacheFile } from './buildCache';
 import { reportSource } from './dataHealth';
+import { applyEventTiers, tierMapOf } from './leagueTier';
 import type { LeagueTierInfo } from './liquipediaParse';
 import {
 	LIQUIPEDIA_LABEL,
@@ -442,8 +443,15 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 		const cachedMatches = cached?.events.flatMap((event) => event.matches ?? []) ?? [];
 		const refreshed = refreshCachedMatches(cachedMatches, proMatches, nowSec);
 		if (cached && refreshed.length > 0) {
+			const events = sortEvents(buildEvents(refreshed));
+			/*
+			 * 档位挂**赛事**上、不在对阵上，这一轮又没抓页面——只能从缓存里那份赛事还原。
+			 * 不还原的后果实测过：离线构建那一轮所有赛事都没档位，战队页默认视图（一线队）
+			 * 变成 0 支，读者看到一页空白，而数据其实就在缓存里。
+			 */
+			applyEventTiers(events, tierMapOf(cached.events));
 			return {
-				events: sortEvents(buildEvents(refreshed)),
+				events,
 				live: dedupeMatches([...(cached.live ?? []), ...opendotaLive]),
 				updatedAt: cached.updatedAt,
 				degraded: true,
@@ -469,12 +477,7 @@ async function assembleBundle(): Promise<TournamentsBundle> {
 	}
 
 	const events = sortEvents(buildEvents(calendarMatches));
-	for (const event of events) {
-		const info = eventTiers.get(event.id);
-		if (!info) continue;
-		event.tier = info.tier;
-		if (info.showmatch) event.showmatch = true;
-	}
+	applyEventTiers(events, eventTiers);
 
 	const bundle: TournamentsBundle = {
 		events,
