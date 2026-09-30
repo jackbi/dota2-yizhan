@@ -19,14 +19,20 @@ const data = await loadDraftData();
 const payload = inlineJson(data);
 
 /**
- * 两个选择框的选项。
+ * 两个选择框的选项，以及队伍卡片要用的那份资料（队标、名单、招牌英雄、OpenDota id）。
  *
- * **服务端渲染**：脚本没跑（或还在下载）时，两个框照样能选，选了也不会丢——
- * 队名、队标、名单、招牌英雄是从 `/draft-teams.json` 取的，那份晚到几百毫秒不影响任何操作。
- * 以前这里是一个「选比赛」的下拉加两个纯文本框：文本框要求用户先知道队名的写法，
- * 输错一个字符既不报错、也拿不到对面那半数据。
+ * 两处都用**服务端渲染 + 内联**，而不是让浏览器去 `/draft-teams.json` 取：
+ * - 选项写进 HTML，脚本没跑（或还在下载）时两个框照样能选，选了也不会丢；
+ * - 这份资料内联在页面里，选中队伍之后立刻就能画出队标、名单与招牌英雄。
+ *   早先它是单独取的一份静态文件，取不到时页面只会显示"未指定队伍"——
+ *   和"真的没选队"长得一模一样，用户根本看不出是数据没到（实测被这么误解过）。
+ *   它 30 KB 上下，而页面本来就内联了 28 KB 的英雄数据，多这一份换掉一整条失败路径是划算的。
+ *
+ * `/draft-teams.json` 仍然保留，供程序取用（内容与这里的内联那份**完全一致**，同一个
+ * `loadDraftTeams()` 单飞）；浏览器这边只把它当作内联缺失时的退路。
  */
 const catalog = await loadDraftTeams();
+const teamsPayload = inlineJson(catalog);
 /** 按门户地区分组；不在门户里的那些（没有地区标签）统一放到最后。 */
 const grouped = [...catalog.sections.map((section) => ({ label: section.label, teams: [] as typeof catalog.teams })), { label: '其他', teams: [] as typeof catalog.teams }];
 for (const team of catalog.teams) {
@@ -347,6 +353,8 @@ const groups = grouped.filter((group) => group.teams.length > 0);
 
 	<!-- 构建期数据：英雄、号位胜率、职业样本。用 is:inline 避免被当成模块打包。 -->
 	<script type="application/json" id="draft-data" set:html={payload} is:inline />
+	<!-- 构建期数据：队伍目录（队标、名单、招牌英雄、OpenDota id）。与 /draft-teams.json 同源。 -->
+	<script type="application/json" id="draft-teams" set:html={teamsPayload} is:inline />
 </Layout>
 
 <!--

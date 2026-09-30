@@ -75,6 +75,18 @@ assert.match(page, /\[1, 2, 3, 4, 5\]\.map/, '号位筛选要覆盖 1 到 5');
 assert.ok(page.includes('id="draft-data"'), '页面要带上构建期数据');
 assert.ok(page.includes("import '../scripts/draftBoard'"), '页面要加载客户端脚本');
 
+/**
+ * 队伍目录必须**内联**在页面里。
+ *
+ * 这一条是被真实误解读出来的：它原先是一份单独取的静态文件，取不到（或那份还是旧格式）时，
+ * 队伍卡片只会显示"未指定队伍"——和"真的没选队"长得一模一样，用户选了队之后看到这句话，
+ * 只会以为选择没生效。所以现在内联进 HTML，脚本再备一条网络退路。
+ */
+assert.ok(page.includes('id="draft-teams"'), '队伍目录要内联进页面，不能只靠一次网络请求');
+assert.match(script, /function readTeams\(\)/, '脚本要能读页面内联的那份队伍目录');
+assert.match(script, /if \(!teams\) void loadTeamsFromNetwork\(\)/, '内联缺失时要留一条网络退路');
+assert.match(script, /那支队的资料没取到/, '"选了队但资料没到"要与"没选队"分开说，否则用户以为选择没生效');
+
 // ---------------------------------------------------------------- 人机对战
 
 /**

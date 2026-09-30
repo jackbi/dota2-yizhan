@@ -140,6 +140,23 @@ function readData(): DraftData | null {
 	}
 }
 
+/**
+ * 页面内联的队伍目录。
+ *
+ * 与英雄数据一样是**构建期写进 HTML 的**，所以选中队伍之后立刻就能画出队标、名单与招牌英雄，
+ * 不用等一次请求。以前这一份是单独取的静态文件，取不到时页面只会显示"未指定队伍"，
+ * 和"真的没选队"完全一样——用户看不出是数据没到（实测被这么误解过）。
+ */
+function readTeams(): DraftTeamCatalog | null {
+	const raw = document.getElementById('draft-teams')?.textContent ?? '';
+	try {
+		const parsed = JSON.parse(raw) as DraftTeamCatalog;
+		return Array.isArray(parsed?.teams) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
 interface Stored {
 	recorded?: (number | null)[];
 	/** 先选方所在的阵营。 */
@@ -583,20 +600,27 @@ if (data) {
 		// ------------------------------------------------------------ 队伍与招牌英雄
 
 		/**
-		 * 拉队伍目录。**失败也不影响录 BP**：这一块是队标、名单与招牌英雄，缺了只是少一段信息。
-		 * 到位之后要把和它有关的三处都重画一遍：队伍卡片、对手的近期习惯、候选里的招牌依据。
+		 * 装下队伍目录，并把与它有关的三处重画一遍：队伍卡片、对手的近期习惯、候选里的招牌依据。
 		 */
-		async function loadTeams(): Promise<void> {
+		function applyTeams(body: DraftTeamCatalog): void {
+			teamsById.clear();
+			for (const team of body.teams) teamsById.set(team.id, team);
+			renderTeams();
+			scheduleFoe();
+			renderAdvice();
+		}
+
+		/**
+		 * 退路：内联那份缺失或坏了（页面被手工改过、或被别的工具重写过）时，再按老办法取一次
+		 * `/draft-teams.json`。**失败也不影响录 BP**，只是队伍卡片会写明"没取到资料"。
+		 */
+		async function loadTeamsFromNetwork(): Promise<void> {
 			try {
 				const res = await fetch('/draft-teams.json');
 				if (!res.ok) return;
 				const body = (await res.json()) as DraftTeamCatalog;
 				if (!Array.isArray(body?.teams)) return;
-				teamsById.clear();
-				for (const team of body.teams) teamsById.set(team.id, team);
-				renderTeams();
-				scheduleFoe();
-				renderAdvice();
+				applyTeams(body);
 			} catch {
 				// 拉不到就保持 null。
 			}
@@ -632,10 +656,27 @@ if (data) {
 				card.className = 'team-brief';
 				const tint = side === 'radiant' ? 'text-[#62a86f]' : 'text-dota-light';
 				if (!entry) {
+					/*
+					 * 两种"没有卡片"要分开说：**没选队**与**选了但资料没到**。
+					 * 上一版两种情况都写"未指定队伍"，用户选了队之后看到这句只会以为选择没生效
+					 * （实测被这么误解过）——所以选了队却查不到资料时，必须说清是资料的问题。
+					 * 第三种是"这支队已经不在名录里"（降级被移出门户、改了名）：那种情况刷新也没用，
+					 * 直接让人换一支，别把人耗在刷新上。
+					 */
+					const picked = teamIdOf(side);
+					const select = side === 'radiant' ? radiantSelect : direSelect;
+					const inList = Boolean(picked && select && [...select.options].some((option) => option.value === picked));
+					const camp = side === 'radiant' ? '天辉' : '夜魇';
+					const title = !picked ? `${camp}未指定队伍` : inList ? `${camp}那支队的资料没取到` : `${camp}这支队已不在名录里`;
+					const note = !picked
+						? '在上面选一支队，就能看到队标、名单与招牌英雄'
+						: inList
+							? '队名已经记下了，刷新一次就能看到队标、名单与招牌英雄'
+							: '它可能改名或已经不在活跃名录里了，重选一支来看看';
 					card.innerHTML = `<span class="team-brief-logo">${side === 'radiant' ? '天' : '夜'}</span>
 						<span class="min-w-0 flex-1">
-							<span class="block text-sm text-cream">${side === 'radiant' ? '天辉' : '夜魇'}未指定队伍</span>
-							<span class="mt-0.5 block text-xs text-faint">在上面选一支队，就能看到队标、名单与招牌英雄</span>
+							<span class="block text-sm text-cream">${esc(title)}</span>
+							<span class="mt-0.5 block text-xs text-faint">${note}</span>
 						</span>`;
 					teamsPreview.append(card);
 					continue;
@@ -1928,6 +1969,12 @@ if (data) {
 		if (radiantSelect) radiantSelect.value = radiantTeamId;
 		if (direSelect) direSelect.value = direTeamId;
 		if (aiSideInput) aiSideInput.checked = aiSide;
+		/*
+		 * 队伍目录优先用页面内联的那份：装在 `renderAll()` 之前，所以首屏画出来的就是真卡片，
+		 * 不会先闪一下"未指定队伍"。内联那份缺失或坏了才走网络（见 `loadTeamsFromNetwork`）。
+		 */
+		const teams = readTeams();
+		if (teams) applyTeams(teams);
 		buildPool();
 		buildBoard();
 		bindControls();
@@ -1935,8 +1982,7 @@ if (data) {
 		syncAiControls();
 		renderAll();
 		renderPrediction();
-		// 队伍目录：队标、名单与招牌英雄都靠它；到位之后自己会重画。
-		void loadTeams();
+		if (!teams) void loadTeamsFromNetwork();
 		// 线上对位是可选增强，慢慢取，取到了自己会重画一次。
 		void loadLanes();
 	}
