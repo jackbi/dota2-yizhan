@@ -12,8 +12,15 @@ import type { HeroMatchups } from './draftMatchup.ts';
 import { matchupRate } from './draftMatchup.ts';
 import type { FoeForm } from './draftFoe.ts';
 import { foeHeroLine, foeHighlights } from './draftFoe.ts';
-import type { TeamSignature } from './teamSignature.ts';
-import { signatureHighlights, signatureLine } from './teamSignature.ts';
+import type { RosterProfile } from './teamSignature.ts';
+import {
+	FAMILIARITY_WEIGHT,
+	familiarityBonus,
+	rosterFamilyLine,
+	rosterOutOfPool,
+	signatureHighlights,
+	signatureLine,
+} from './teamSignature.ts';
 
 /**
  * 阵容分析的打分层：**先把候选和依据算出来，再交给模型排序和解释**。
@@ -59,6 +66,15 @@ const CONTEST_CAP = 3;
  * 所以给建议时始终把对位的原始数字写在依据里，让人能自己判断值不值。
  */
 export const COUNTER_WEIGHT = 1.5;
+
+/**
+ * 重排号位时的熟手权重（只给 `assignLineup` 用，不参与打分）。
+ *
+ * 取得比 `FAMILIARITY_WEIGHT` 重一档：这一步是**贴标签**（谁打几号位），不是估强弱。
+ * 实测用打分那一档（0.04）时，五号位选手的熟手会被胜率挤到一号位去（戴泽站一号位、
+ * 裂魂人站五号位），读者一眼就看出"这不像他们"。
+ */
+export const ASSIGNMENT_COMFORT_WEIGHT = 0.3;
 
 // 官方角色标签的下标，顺序见 `heroApi.ROLE_ORDER`（核心/辅助/爆发/控制/打野/耐久/逃生/推进/先手）。
 const ROLE_CARRY = 0;
@@ -568,7 +584,7 @@ export interface AdviseInput {
 	 * 按**实际阵营**给，不按"我方/对面"：`advise` 会自己按 `ourSide` 取对应的那一侧，
 	 * 替对面落子（把对面当 `ourSide`）时人称不会翻错。
 	 */
-	signatures?: { radiant?: TeamSignature | null; dire?: TeamSignature | null } | null;
+	signatures?: { radiant?: RosterProfile | null; dire?: RosterProfile | null } | null;
 	/**
 	 * 线上对位（谁在线上打谁、和谁走一路）。**可选增强**：拿不到就少一条依据，
 	 * 不影响号位胜率、估值与其它依据——它与整局对位是两套口径，不能互相顶替。
@@ -579,6 +595,14 @@ export interface AdviseInput {
 	 * 替对面落子时传 `ours`：同一个队的数据，人称要翻过来。
 	 */
 	foeSide?: 'ours' | 'theirs';
+	/**
+	 * 熟手加成的权重覆盖，默认 `FAMILIARITY_WEIGHT`。
+	 *
+	 * 给"整局预测"留的：预测回答的是"**他们两会怎么打**"（人偏向熟手），建议回答的是
+	 * "该怎么打"（胜率优先，熟手只当同档里的优先项）。两者的权重不该是同一个数，
+	 * 实测差别主要在禁用上——预测那一档会把对面的熟手更多地禁掉，见 `draftPredict` 的注释。
+	 */
+	familiarityWeight?: number;
 }
 
 const pct = (rate: number): string => `${(rate * 100).toFixed(1)}%`;
@@ -645,6 +669,70 @@ function positionRisk(hero: DraftHero, position: number, matches: number): strin
 }
 
 /**
+ * 把**已经选好**的一队英雄重新分配到五个号位上（每个号位一个人，让号位胜率之和最大）。
+ *
+ * 打分里那个 `FAMILIARITY_WEIGHT` 是"这一手值不值"的尺度；**这一步不是估强度**，
+ * 而是"把这五个人放回他们本来站的位置"，所以熟手权重单独取一档（见下面的注释）。
+ *
+ * 为什么需要它：逐手推演时每一手都按"当时的阵容"算号位，五手下来同一个号位会被算到两次
+ * （实测输出里出现过两个"1 号位"），读者看到的是自相矛盾的一列。整局推完之后收尾重排一次，
+ * 五个号位就恰好各占一个；模型那条路本来就要求它给满 1–5，两边对得上。
+ *
+ * 分配用的口径与打分完全一致（号位胜率，`bestAssignment` 穷举 5!），不另算一套。
+ */
+export function assignLineup(
+	data: DraftData,
+	heroIds: readonly number[],
+	options: { profile?: RosterProfile | null; familiarityWeight?: number } = {},
+): { heroId: number; position: number }[] {
+	if (heroIds.length === 0) return [];
+	const byId = new Map(data.heroes.map((hero) => [hero.id, hero]));
+	const ids = heroIds.slice(0, 5);
+	/*
+	 * 重排号位时的熟手权重**取得比打分层重**：这一步不是"估强度"，而是"把这五个人放回他们本来
+	 * 站的位置"。号位是固定的（用户的原话：几号位挺固定的，除非摇摆），所以名单说了就按名单，
+	 * 名单没说的才让胜率决定。取 0.3 意味着"宁可让号位胜率差几个百分点，也要把熟手放回他的位置"——
+	 * 用打分层的 0.04 时实测仍会把五号位的熟手挤到一号位去（戴泽站一号位）。
+	 */
+	const weight = options.familiarityWeight ?? ASSIGNMENT_COMFORT_WEIGHT;
+	/*
+	 * 每个(英雄, 号位)格子的分：号位胜率 + 熟手加成。
+	 *
+	 * **带上熟手加成**是这一步的关键：只用胜率排的话，一个五号位选手的熟手会被排到一号位去
+	 * （实测出现过戴泽站一号位、裂魂人站五号位），读者一眼就看出"这不像他们"。
+	 * 这里不碰 `estimate` 那套（那会把加成算两遍），自己穷举 5! —— 五个英雄就是 120 种排法，很便宜。
+	 */
+	const cell = (hero: DraftHero, position: number): number => {
+		const sample = hero.positions[position - 1];
+		const base = sample && sample[0] > 0 ? sample[1] / sample[0] : NEUTRAL_WIN_RATE;
+		return base + familiarityBonus(options.profile ?? null, position, hero.id, weight);
+	};
+	const heroes = ids.map((id) => byId.get(id)).filter((hero): hero is DraftHero => Boolean(hero));
+	let bestTotal = -Infinity;
+	let bestPositions = heroes.map((_, index) => index + 1);
+	const used = new Array(5).fill(false);
+	const picked: number[] = [];
+	const walk = (index: number, total: number): void => {
+		if (index === heroes.length) {
+			if (total > bestTotal) {
+				bestTotal = total;
+				bestPositions = [...picked];
+			}
+			return;
+		}
+		for (let position = 1; position <= 5; position += 1) {
+			if (used[position - 1]) continue;
+			used[position - 1] = true;
+			picked[index] = position;
+			walk(index + 1, total + cell(heroes[index], position));
+			used[position - 1] = false;
+		}
+	};
+	walk(0, 0);
+	return heroes.map((hero, index) => ({ heroId: hero.id, position: bestPositions[index] ?? index + 1 }));
+}
+
+/**
  * 给当前这一手出建议。顺序走完、或者一份英雄数据都没有时返回 null，
  * 调用方按"这次给不出建议"处理，不要挡住录制。
  */
@@ -659,6 +747,7 @@ export function advise(input: AdviseInput): Advice | null {
 	const signatures = input.signatures ?? null;
 	const ourSignature = signatures?.[ourSide] ?? null;
 	const theirSignature = signatures?.[ourSide === 'radiant' ? 'dire' : 'radiant'] ?? null;
+	const familiarityWeight = input.familiarityWeight ?? FAMILIARITY_WEIGHT;
 	const lanes = input.lanes ?? null;
 	const limit = input.limit ?? 5;
 	const state = snapshot(recorded);
@@ -759,9 +848,23 @@ export function advise(input: AdviseInput): Advice | null {
 			// 对面近期真拿过的英雄单独点一句：这一手是抢对面的熟手，还是与我们无关。
 			const foeLine = foeHeroLine(foeForm, hero.id, foeSide);
 			if (foeLine) reasons.push(foeLine);
-			// 名单里的招牌：挑选时先看我们自己的人本来就会什么（我们的人拿它，是"顺手"而不是"新练"）。
-			const sigLine = signatureLine(ourSignature, hero.id, 'ours') || signatureLine(theirSignature, hero.id, 'theirs');
-			if (sigLine) reasons.push(sigLine);
+			/*
+			 * 名单里的招牌：挑选时先看我们自己的人本来就会什么（我们的人拿它，是"顺手"而不是"新练"）。
+			 * 顺序是"号位对得上的"优先：同一支队里，二号位的人在打它 ≠ 一号位的人会打它，
+			 * 所以先试 `rosterFamilyLine`（带号位与选手名），再回落到不分号位的那句。
+			 */
+			const family = rosterFamilyLine(ourSignature, position, hero.id, 'ours');
+			const sigLine =
+				family ||
+				signatureLine(ourSignature, hero.id, 'ours') ||
+				rosterFamilyLine(theirSignature, position, hero.id, 'theirs') ||
+				signatureLine(theirSignature, hero.id, 'theirs');
+			/*
+			 * 号位对得上时把它放到依据的**第一条**：它是这一手里最team-specific的事实，
+			 * 而且预测那条路取的就是 `reasons[0]`（本地上层用它当这手的理由）。
+			 */
+			if (family) reasons.unshift(sigLine);
+			else if (sigLine) reasons.push(sigLine);
 			// 对位（克制）单独列一条，数字原样给出来：它是个粗口径信号，让人能自己判断。
 			const counter = counterSummary(data.matchups, hero.id, theirIds);
 			if (counter.pairs > 0) reasons.push(counterText(counter, theirIds, byId, '对阵对面已选'));
@@ -797,13 +900,19 @@ export function advise(input: AdviseInput): Advice | null {
 				position,
 				rate: rate ?? NEUTRAL_WIN_RATE,
 				hasSample: rate !== null,
-				ranking: oursAfter.total - ourBase.total + structure.delta * COMPOSITION_WEIGHT,
+				// 熟手加成：这个号位上的那个人本版本真的在拿它。不参与排序的话，招牌就只是句装饰。
+				ranking:
+					oursAfter.total - ourBase.total + structure.delta * COMPOSITION_WEIGHT + familiarityBonus(ourSignature, position, hero.id, familiarityWeight),
 				reasons,
 				risk:
-					structureRisk ||
-					(rate === null
-						? '这个号位几乎没有高分局样本，估值只能当参考'
-						: positionRisk(hero, position, matches)),
+					[
+						// 最具体的一条放最前：这个人这个号位本版本没拿过它，比"样本少"更值得先看到。
+						rosterOutOfPool(ourSignature, position, hero.id),
+						structureRisk,
+						rate === null ? '这个号位几乎没有高分局样本，估值只能当参考' : positionRisk(hero, position, matches),
+					]
+						.filter(Boolean)
+						.join('；'),
 			});
 			continue;
 		}
@@ -826,9 +935,18 @@ export function advise(input: AdviseInput): Advice | null {
 		// 对面的熟手优先禁：这一句是他们近期比赛里的次数与胜率，不是「版本强势」的转述。
 		const foeLine = foeHeroLine(foeForm, hero.id, foeSide);
 		if (foeLine) reasons.push(foeLine);
-		// 名单里的招牌：禁用时先看对面那几个人本来就会什么（熟手被对面的熟手拿走，威胁更实）。
-		const sigLine = signatureLine(theirSignature, hero.id, 'theirs') || signatureLine(ourSignature, hero.id, 'ours');
-		if (sigLine) reasons.push(sigLine);
+		/*
+		 * 名单里的招牌：禁用时先看对面**那个号位**上的人本来就会什么
+		 * （这里的 `position` 正是"对面会拿它打几号位"，所以号位对得上的那句最有信息量）。
+		 */
+		const family = rosterFamilyLine(theirSignature, position, hero.id, 'theirs');
+		const sigLine =
+			family ||
+			signatureLine(theirSignature, hero.id, 'theirs') ||
+			rosterFamilyLine(ourSignature, position, hero.id, 'ours') ||
+			signatureLine(ourSignature, hero.id, 'ours');
+		if (family) reasons.unshift(sigLine);
+		else if (sigLine) reasons.push(sigLine);
 		const counter = counterSummary(data.matchups, hero.id, ourIds);
 		if (counter.pairs > 0) reasons.push(counterText(counter, ourIds, byId, '它打我们已选'));
 		// 对面拿它之后，我们这条线要被压成什么样——与整局对位分开写。
@@ -848,10 +966,23 @@ export function advise(input: AdviseInput): Advice | null {
 			position,
 			rate: rate ?? NEUTRAL_WIN_RATE,
 			hasSample: rate !== null,
-			// 自己更想要的英雄先不急着禁：威胁减去一半的自身收益。
-			ranking: threat + structureForThem.delta * COMPOSITION_WEIGHT - ownGain * 0.5,
+			/*
+			 * 自己更想要的英雄先不急着禁：威胁减去一半的自身收益。
+			 * 熟手加成加在威胁这一侧：对面那个位置上的人真的会拿它，这一手禁掉的价值就更实。
+			 */
+			ranking:
+				threat +
+				structureForThem.delta * COMPOSITION_WEIGHT -
+				ownGain * 0.5 +
+				familiarityBonus(theirSignature, position, hero.id, familiarityWeight),
 			reasons,
-			risk: ownGain > threat ? '我们自己拿它收益更大，后面还轮得到的话可以考虑留' : '禁用只是止损，补不上我们自己阵容的缺口',
+			// 对面那个位置上没人常拿它时也要说出来：这一手禁的是号位胜率，不是他们的熟手。
+			risk: [
+				rosterOutOfPool(theirSignature, position, hero.id),
+				ownGain > threat ? '我们自己拿它收益更大，后面还轮得到的话可以考虑留' : '禁用只是止损，补不上我们自己阵容的缺口',
+			]
+				.filter(Boolean)
+				.join('；'),
 		});
 	}
 

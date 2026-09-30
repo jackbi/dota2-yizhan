@@ -833,6 +833,54 @@ const groups = grouped.filter((group) => group.teams.length > 0);
 	.predict-hero[data-kind='ban'] img {
 		filter: brightness(0.68) saturate(0.8);
 	}
+	/* 禁用格右下角那个小数字：对面会拿它打几号位。 */
+	.predict-pos {
+		margin-left: 0.15rem;
+		border-radius: 0.25rem;
+		background: var(--color-surface-2);
+		padding: 0 0.25rem;
+		font-size: 0.6rem;
+		color: var(--color-faint);
+	}
+
+	/*
+	 * 挑选卡：头像 + 名字 + `几号位 · 谁` + 熟手与否 + 一句理由。
+	 * 不在该号位选手池子里的用**虚线框**标出来——这一版的重点就是让读者一眼看出
+	 * "这一手像不像他们"，所以不能用颜色单独承担（色觉差异下也要分得出）。
+	 */
+	.predict-grid {
+		display: grid;
+		gap: 0.375rem;
+		grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+	}
+	.predict-pick {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.4rem;
+		min-width: 0;
+		border: 1px solid var(--color-line);
+		border-radius: 0.5rem;
+		background: var(--color-surface);
+		padding: 0.35rem;
+	}
+	.predict-pick img {
+		flex: 0 0 auto;
+		width: 2.1rem;
+		height: 2.5rem;
+		border-radius: 0.25rem;
+		object-fit: cover;
+		object-position: top;
+	}
+	.predict-pick[data-familiar='false'] {
+		border-style: dashed;
+	}
+	/* 理由最多两行，再多会把卡片撑得很长；想看全的可以调宽窗口。 */
+	.predict-reason {
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		-webkit-box-orient: vertical;
+		overflow: hidden;
+	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.draft-slot[data-current='true'] {

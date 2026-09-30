@@ -3,6 +3,7 @@ import type { DraftData, DraftHero } from '../src/lib/draftData.ts';
 import { advise } from '../src/lib/draftScore.ts';
 import type { RecordedHand } from '../src/lib/draftOrder.ts';
 import { AOE_CLEAR_NAMES, SUMMON_ILLUSION_NAMES, TEAMFIGHT_NAMES } from '../src/data/heroTraits.ts';
+import { buildRosterProfile } from '../src/lib/teamSignature.ts';
 
 /**
  * 阵容分析打分层的自检。
@@ -426,5 +427,77 @@ const degraded = advise({ data: noSampleData, recorded: [], ourSide: OUR, firstP
 assert.ok(degraded, '没有号位样本时也要给建议，靠其他信号撑着');
 assert.equal(degraded.candidates[0]?.hasSample, false, '没有样本时要标出来');
 assert.ok(degraded.candidates.every((candidate) => candidate.reasons.length >= 1));
+
+// ---------------------------------------------------------------- 名单熟手进排序
+
+/**
+ * 「谁的英雄池」是这一版新加的信号，要钉住三件事：
+ *
+ * 1. **它真的进排序**，不是只写在理由里——两个在号位胜率上完全同分的英雄，
+ *    只有"这个号位上的这个人本版本拿哪个打过"这一条差别时，熟手那个必须排前面；
+ * 2. 号位对得上时，依据的第一条就是"哪个号位的谁在打它"；
+ * 3. 号位对不上时，**风险那一栏必须说出来**（"放这里算摇摆"）——
+ *    上一版正是缺这句，页面上才会出现"某人的天穹守望者"这种读者一眼就不对、界面却只字不提的情况。
+ */
+{
+	// 301 与 302 在三号位同分，且角色/体系标签都一样：除了英雄池没有别的差别。
+	const rostered: DraftData = { ...data, heroes: [hero(301, [null, null, 0.55, null, null]), hero(302, [null, null, 0.55, null, null]), hero(303, [null, null, 0.5, null, null])] };
+	const profile = buildRosterProfile('Xtreme Gaming', [
+		{
+			nick: 'zeal',
+			position: 3,
+			scope: '7.41f 版本',
+			heroes: [
+				{ heroId: 302, games: 8, wins: 5 },
+				// 301 也归三号位：下面拿它验"被算到别的号位时要写摇摆"。
+				{ heroId: 301, games: 5, wins: 2 },
+			],
+		},
+	]);
+	// 七个禁用已跳过 → 现在轮到先选方挑第一个（第 8 手）。
+	const skippedBans: RecordedHand[] = [null, null, null, null, null, null, null];
+	const pickAdvice = (signatures: Parameters<typeof advise>[0]['signatures']) =>
+		advise({ data: rostered, recorded: skippedBans, ourSide: OUR, firstPicker: OUR, limit: 5, signatures });
+
+	const plain = pickAdvice(undefined);
+	const withRoster = pickAdvice({ radiant: profile, dire: null });
+	assert.ok(plain && withRoster, '这一步应当有候选');
+	const orderOf = (advice: NonNullable<typeof plain>): number[] => advice.candidates.map((candidate) => candidate.heroId);
+	assert.deepEqual(orderOf(plain).slice(0, 2), [301, 302], '没有名单数据时同分按池子顺序，301 在前');
+	assert.deepEqual(orderOf(withRoster).slice(0, 2), [302, 301], '302 是这个号位选手的熟手，必须排到同分英雄前面');
+
+	const familiar = withRoster.candidates.find((candidate) => candidate.heroId === 302)!;
+	assert.match(familiar.reasons[0] ?? '', /3 号位是 zeal/, '号位对得上时，第一条依据就是"这个号位是他在打"');
+	assert.match(familiar.reasons[0] ?? '', /拿过它 8 场 5 胜/, '熟手依据要带场次与胜负');
+	assert.equal(familiar.risk.includes('摇摆'), false, '就在这个号位的池子里时不该写摇摆');
+
+	/*
+	 * 同一个英雄要是被算到别的号位上（301 只有一号位样本，池子在三号位），
+	 * 风险那一栏必须点出来这是摇摆——这正是"这个人会不会它"的另一种说法。
+	 */
+	const crossPosition = advise({
+		data: { ...rostered, heroes: [hero(301, [0.55, null, null, null, null]), hero(302, [null, null, 0.55, null, null])] },
+		recorded: skippedBans,
+		ourSide: OUR,
+		firstPicker: OUR,
+		limit: 5,
+		signatures: { radiant: profile, dire: null },
+	});
+	const onePosition = crossPosition?.candidates.find((candidate) => candidate.heroId === 301);
+	assert.ok(onePosition, '301 应当出现在候选里');
+	assert.match(onePosition.risk, /摇摆/, `一号位样本的它被算到三号位时要写清是摇摆，实际：${onePosition.risk}`);
+	assert.match(onePosition.risk, /3 号位 zeal 在打它/, '要指明它在别的号位是谁在打');
+
+	/*
+	 * 权重可以按调用方覆盖：预测那条路要的更重（"他们两会怎么打"偏向熟手）。
+	 * 差值应当是**权重之差**本身——302 打了 8 场，正好在封顶线上，折算系数是 1。
+	 */
+	const at = (weight: number) =>
+		advise({ data: rostered, recorded: skippedBans, ourSide: OUR, firstPicker: OUR, limit: 5, signatures: { radiant: profile, dire: null }, familiarityWeight: weight })
+			?.candidates.find((candidate) => candidate.heroId === 302)?.ranking ?? 0;
+	assert.ok(Math.abs(at(0.2) - at(0.04) - 0.16) < 1e-9, '权重覆盖要线性生效（8 场时差值就是权重之差）');
+
+	console.log('  ✓ 名单熟手进排序：同分时熟手优先，号位对不上在风险里说清，权重可覆盖');
+}
 
 console.log('draftScore 全部断言通过');

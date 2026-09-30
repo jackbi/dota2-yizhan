@@ -1,5 +1,18 @@
 import assert from 'node:assert/strict';
-import { buildTeamSignature, signatureHeroOf, signatureHighlights, signatureLine, signatureScopeLabel } from '../src/lib/teamSignature.ts';
+import {
+	FAMILIARITY_WEIGHT,
+	buildRosterProfile,
+	buildTeamSignature,
+	familiarityBonus,
+	rosterFamilyLine,
+	rosterHeroOf,
+	rosterOutOfPool,
+	rosterPoolOf,
+	signatureHeroOf,
+	signatureHighlights,
+	signatureLine,
+	signatureScopeLabel,
+} from '../src/lib/teamSignature.ts';
 
 /**
  * 「战队 + 人员擅长英雄」折表这一层的自检。
@@ -119,6 +132,71 @@ const ok = (label: string): void => {
 	assert.equal(signatureHighlights(signature, 4).length, 1, '只有一条时就返回一条');
 	assert.equal(signatureHighlights(null).length, 0, '没有签名时返回空数组');
 	ok('依据文案带口径、带选手、人称可翻，不出现 undefined/NaN');
+}
+
+// ---------------------------------------------------------------- 按号位的池子
+
+/**
+ * 这一层是"这一手像不像他们"的关键：**号位必须对得上**。
+ *
+ * 合成一份的时候，把三号位的招牌算到二号位头上是看不出来的——用户的投诉正是这个形状
+ * （"我怎么没见过 XM 玩过天穹守望者"）。所以下面每一条都在钉"谁在哪个号位、他拿过什么"。
+ */
+const TEAM = [
+	{ nick: 'Ame', position: 1, scope: '7.41f 版本', heroes: [{ heroId: 41, games: 7, wins: 3 }] },
+	{ nick: 'Xm', position: 2, scope: '7.41f 版本', heroes: [{ heroId: 106, games: 6, wins: 4 }, { heroId: 9, games: 3, wins: 1 }] },
+	{ nick: 'zeal', position: 3, scope: '7.41f 版本', heroes: [{ heroId: 106, games: 4, wins: 1 }] },
+] as const;
+
+{
+	const profile = buildRosterProfile('Xtreme Gaming', TEAM);
+	assert.ok(profile, '有号位与招牌时要建出画像');
+	assert.deepEqual(profile!.positions.map((pool) => pool.position), [1, 2, 3], '按号位升序，缺的号位不占位');
+	assert.deepEqual(rosterPoolOf(profile, 2)?.players, ['Xm'], '二号位是谁要写出来');
+	assert.equal(rosterPoolOf(profile, 4), null, '名单里没有四号位时返回 null，不摆空池子');
+	// 同一个英雄两个号位都有人打：合并在各自号位里，不串号。
+	assert.equal(rosterHeroOf(profile, 2, 106)?.games, 6, '二号位看的是 Xm 的场次');
+	assert.equal(rosterHeroOf(profile, 3, 106)?.games, 4, '三号位看的是 zeal 的场次');
+	assert.equal(rosterHeroOf(profile, 2, 41), null, '一号位的英雄不算在二号位头上');
+	// 不分号位的那份还在：界面上的"这支队有人打它"仍然用得上。
+	assert.equal(signatureHeroOf(profile, 41)?.games, 7, '不分号位的合计保留着');
+	ok('画像按号位分组，同一英雄各号位各算，号位对不上就是查不到');
+}
+
+{
+	const profile = buildRosterProfile('Xtreme Gaming', TEAM);
+	// 号位对得上：这一句是"这个位置上的这个人在打它"。
+	assert.match(rosterFamilyLine(profile, 2, 106, 'theirs'), /对面（Xtreme Gaming） 2 号位是 Xm/, '要写清是哪个号位、谁');
+	assert.match(rosterFamilyLine(profile, 2, 106, 'theirs'), /拿过它 6 场 4 胜/, '场次胜负要能核对');
+	assert.match(rosterFamilyLine(profile, 2, 106, 'theirs'), /7\.41f 版本里/, '统计口径要跟着出来');
+	assert.match(rosterFamilyLine(profile, 2, 106, 'ours'), /我方（Xtreme Gaming）/, '人称要能翻');
+	assert.equal(rosterFamilyLine(profile, 1, 106, 'theirs'), '', '这个号位的人没打过它时不给这句');
+
+	// 号位对不上：必须写成"摇摆"，这正是上一版缺的那句。
+	assert.match(rosterOutOfPool(profile, 1, 106), /2 号位 Xm 在打它（6 场）/, '别的号位在打时要说是谁在打');
+	assert.match(rosterOutOfPool(profile, 1, 106), /摇摆/, '要点明这是摇摆而不是熟手');
+	assert.equal(rosterOutOfPool(profile, 2, 106), '', '就在这个号位的池子里时不写风险');
+	assert.match(rosterOutOfPool(profile, 2, 999), /没有人常拿它/, '谁都没打过时要说清是"数据里没有"');
+	// 没号位的名单（教练组那种）：不编号位，只留不分号位那份。
+	const noPosition = buildRosterProfile('T', [{ nick: 'Coach', scope: '7.41f 版本', heroes: [{ heroId: 5, games: 3, wins: 1 }] }]);
+	assert.deepEqual(noPosition?.positions, [], '没写号位的人不进制表，不给他编一个位置');
+	assert.equal(signatureHeroOf(noPosition, 5)?.games, 3, '但仍在不分号位的合计里');
+	ok('依据文案分得清"这个号位在打它"与"别的号位在打它"，缺号位时不编位置');
+}
+
+{
+	const profile = buildRosterProfile('Xtreme Gaming', TEAM);
+	// 加成随场次线性上升、满 8 场封顶；不在池子里一律 0（不给负分：不认识不等于不会玩）。
+	assert.equal(familiarityBonus(profile, 2, 999), 0, '不在池子里就是 0');
+	assert.equal(familiarityBonus(profile, 1, 106), 0, '别的号位在打也不算这个位置的熟手');
+	assert.ok(Math.abs(familiarityBonus(profile, 2, 9)! - (3 / 8) * FAMILIARITY_WEIGHT) < 1e-9, '3 场按 3/8 给分');
+	assert.ok(Math.abs(familiarityBonus(profile, 2, 106)! - (6 / 8) * FAMILIARITY_WEIGHT) < 1e-9, '6 场按 6/8 给分');
+	assert.ok(Math.abs(familiarityBonus(profile, 1, 41)! - (7 / 8) * FAMILIARITY_WEIGHT) < 1e-9, '7 场还没到封顶线');
+	// 打过 11 场的那位用来验封顶：再多也不过是"很熟"，不该被场次无限拉大。
+	const deep = buildRosterProfile('Cap', [{ nick: 'Deep', position: 4, scope: '7.41f 版本', heroes: [{ heroId: 5, games: 11, wins: 6 }] }]);
+	assert.equal(familiarityBonus(deep, 4, 5), FAMILIARITY_WEIGHT, '满 8 场及以上封顶');
+	assert.ok(familiarityBonus(profile, 2, 106)! < 0.05, '加成不能大到盖过号位胜率本身');
+	ok('熟手加成线性封顶、只认对得上的号位，不吃负分');
 }
 
 console.log(`teamSignature 全部断言通过（${cases} 组）`);

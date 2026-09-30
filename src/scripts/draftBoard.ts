@@ -31,8 +31,8 @@ import type { FoeForm } from '../lib/draftFoe.ts';
 import { MIN_PICKS, foeHeadline, foeHeroOf, foeHighlights, foeWinRate } from '../lib/draftFoe.ts';
 import type { DraftPrediction, PredictedSide } from '../lib/draftPredict.ts';
 import { predictDraftLocal } from '../lib/draftPredict.ts';
-import type { TeamSignature } from '../lib/teamSignature.ts';
-import { buildTeamSignature, signatureScopeLabel } from '../lib/teamSignature.ts';
+import type { RosterProfile } from '../lib/teamSignature.ts';
+import { buildRosterProfile, rosterPoolOf, signatureScopeLabel } from '../lib/teamSignature.ts';
 import type { LaneData } from '../lib/draftLanes.ts';
 import { formatNet } from '../lib/draftLanes.ts';
 
@@ -372,18 +372,24 @@ if (data) {
 			}
 		};
 
-		/** 两边名单折出来的招牌英雄；目录还没到货时两边都是 null。 */
-		const signatures = (): { radiant: TeamSignature | null; dire: TeamSignature | null } => ({
-			radiant: signatureOf('radiant'),
-			dire: signatureOf('dire'),
+		/** 两边的名单画像（含每个号位是谁、他在拿什么）；目录没到货时两边都是 null。 */
+		const signatures = (): { radiant: RosterProfile | null; dire: RosterProfile | null } => ({
+			radiant: rosterOf('radiant'),
+			dire: rosterOf('dire'),
 		});
 
-		function signatureOf(side: TeamSide): TeamSignature | null {
+		function rosterOf(side: TeamSide): RosterProfile | null {
 			const entry = teamEntryOf(side);
 			if (!entry || entry.roster.length === 0) return null;
-			return buildTeamSignature(
+			return buildRosterProfile(
 				entry.name,
-				entry.roster.map((member) => ({ nick: member.nick, scope: member.scope, heroes: member.heroes })),
+				// 号位要一起带上：没有它就只有"这支队爱用什么"，问不出"他们的二号位会拿什么"。
+				entry.roster.map((member) => ({
+					nick: member.nick,
+					position: member.position,
+					scope: member.scope,
+					heroes: member.heroes,
+				})),
 			);
 		}
 
@@ -1339,28 +1345,84 @@ if (data) {
 			}
 		}
 
-		/** 预测结果里的一边：禁用一行、挑选一行。每条都带理由（hover 看）。 */
+		/**
+		 * 预测结果里的一边。
+		 *
+		 * 挑选**逐张卡片**画：头像、名字、`几号位 · 谁`、以及"他在本窗口拿过它多少场"。
+		 * 这三样缺一样读者就没法核对——上一版只有头像和名字，于是"二号位的天穹守望者"
+		 * 这种一眼就不对的东西，页面上既没标号位、也没说这个人在不在这个位置上打它。
+		 * 不在池子里的用虚线框点出来，理由放在下面（不再只藏在 hover 里）。
+		 */
 		function renderPredictSide(side: TeamSide, data: PredictedSide): string {
 			const entry = teamEntryOf(side);
+			const profile = rosterOf(side);
 			const label = sideLabel(side);
 			const tint = side === 'radiant' ? '#62a86f' : 'var(--color-dota)';
-			const chip = (kind: 'ban' | 'pick', rows: readonly { heroId: number; reason: string }[]): string =>
-				rows
-					.map((row) => {
-						const hero = heroById.get(row.heroId);
-						const name = hero ? esc(hero.name) : `英雄 #${row.heroId}`;
-						const img = hero ? `<img src="${esc(hero.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '';
-						const why = row.reason ? ` title="${esc(row.reason)}"` : '';
-						return `<span class="predict-hero" data-kind="${kind}"${why}>${img}${name}</span>`;
-					})
-					.join('') || '<span class="text-xs text-faint">—</span>';
+			/** 这个英雄在这个号位的池子里那一行；不在就是 null。 */
+			const familiarOf = (position: number, heroId: number) =>
+				rosterPoolOf(profile, position)?.heroes.find((row) => row.heroId === heroId) ?? null;
+			const playerOf = (position: number): string => rosterPoolOf(profile, position)?.players.join('、') ?? '';
+
+			/*
+			 * 禁用格：位置是"**对面**会拿它打几号位"（禁用的价值就来自它落进对面哪个位置），
+			 * 所以这里不写"谁"，只标出号位，剩下的靠 hover 那句理由。
+			 */
+			const banChip = (row: { heroId: number; position: number; reason: string }): string => {
+				const hero = heroById.get(row.heroId);
+				const name = hero ? esc(hero.name) : `英雄 #${row.heroId}`;
+				const img = hero ? `<img src="${esc(hero.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '';
+				const title = [`对面会拿它打 ${row.position} 号位`, row.reason].filter(Boolean).join(' · ');
+				return `<span class="predict-hero" data-kind="ban" title="${esc(title)}">${img}${name}<span class="predict-pos">${row.position}</span></span>`;
+			};
+
+			/** 挑选卡：号位 + 选手 + 熟手与否，理由直接写在下面。 */
+			const pickCard = (row: { heroId: number; position: number; reason: string }): string => {
+				const hero = heroById.get(row.heroId);
+				const name = hero ? esc(hero.name) : `英雄 #${row.heroId}`;
+				const img = hero ? `<img src="${esc(hero.img)}" alt="" loading="lazy" referrerpolicy="no-referrer" />` : '';
+				const familiar = familiarOf(row.position, row.heroId);
+				const owner = playerOf(row.position);
+				const who = `${row.position} 号位${owner ? ` · ${esc(owner)}` : ''}`;
+				/*
+				 * 不在池子里时**把他的池子列出来**：读者第一反应是"这个人到底玩什么"，
+				 * 光说"不在池子里"等于让人自己去翻上面那张名单卡。
+				 */
+				const pool = rosterPoolOf(profile, row.position);
+				// 口径逐号位取：同队不同号位可能落在不同窗口里（一个人本版本打过、另一个靠回退）。
+				const scope = signatureScopeLabel(pool?.scope || profile?.scope || '');
+				const poolList = (pool?.heroes ?? [])
+					.slice(0, 5)
+					.map((hero) => heroById.get(hero.heroId)?.name ?? '')
+					.filter(Boolean)
+					.join('、');
+				const flag = familiar
+					? `<span class="text-gold">熟手 · ${scope ? `${esc(scope)}里` : '近期'} ${familiar.games} 场 ${familiar.wins} 胜</span>`
+					: `<span class="text-dota-light">不在${owner ? ` ${esc(owner)} ` : ''}这个位置的池子里${poolList ? `（他在拿：${esc(poolList)}）` : ''}</span>`;
+				return `<span class="predict-pick" data-familiar="${familiar ? 'true' : 'false'}">
+					${img}
+					<span class="min-w-0 flex-1">
+						<span class="block truncate text-xs text-cream">${name}</span>
+						<span class="block text-[10px] text-faint">${who}</span>
+						<span class="block text-[10px]">${flag}</span>
+						${row.reason ? `<span class="predict-reason mt-0.5 block text-[10px] leading-snug text-muted">${esc(row.reason)}</span>` : ''}
+					</span>
+				</span>`;
+			};
+
+			// 有几个挑选落在这个号位选手的池子之外——这一句让整份预测可核对，不用一张张看。
+			const outside = data.picks.filter((row) => !familiarOf(row.position, row.heroId)).length;
+			const outsideNote =
+				profile && outside > 0
+					? `<p class="mt-2 text-[10px] text-dota-light">${outside} 个挑选不在该号位选手的池子里（虚线框）：数据层没有他们的记录，或者这是模型自己挑的</p>`
+					: '';
 			const logo = entry ? `<span class="team-brief-logo" style="width:2rem;height:2rem">${logoMark(entry)}</span>` : '';
 			return `<div class="predict-side">
 				<p class="mb-2 flex items-center gap-2 text-sm text-cream">${logo}<span style="color:${tint}">${side === 'radiant' ? '天辉' : '夜魇'}</span>${esc(label)}</p>
 				<p class="mb-1 text-xs text-faint">禁用（${data.bans.length}）</p>
-				<div class="predict-row">${chip('ban', data.bans)}</div>
+				<div class="predict-row">${data.bans.map(banChip).join('') || '<span class="text-xs text-faint">—</span>'}</div>
 				<p class="mb-1 mt-3 text-xs text-faint">挑选（${data.picks.length}）</p>
-				<div class="predict-row">${chip('pick', data.picks)}</div>
+				<div class="predict-grid">${data.picks.map(pickCard).join('') || '<span class="text-xs text-faint">—</span>'}</div>
+				${outsideNote}
 			</div>`;
 		}
 
@@ -1373,7 +1435,7 @@ if (data) {
 			}
 			const source = prediction.source === 'model' ? '模型预测' : '按站内数据推演';
 			const summary = prediction.summary ? `<p class="mt-3 text-sm leading-relaxed text-muted">${esc(prediction.summary)}</p>` : '';
-			const firstLine = `<p class="text-xs text-faint">${source} · 先选方 ${esc(sideLabel(firstPick))} · 鼠标停在英雄上可以看到这一手的依据</p>`;
+			const firstLine = `<p class="text-xs text-faint">${source} · 先选方 ${esc(sideLabel(firstPick))} · 挑选的理由写在卡片上，禁用那行的号位是"对面会拿它打几号位"（鼠标停一下有依据）</p>`;
 			predictBox.style.display = '';
 			predictBox.innerHTML = `
 				<div class="grid grid-cols-1 gap-3 md:grid-cols-2">
