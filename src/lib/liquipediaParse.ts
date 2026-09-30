@@ -376,6 +376,27 @@ function cleanValue(raw: string | undefined): string {
 		.trim();
 }
 
+/**
+ * 战队页 Infobox 里的 `imagedark=`——**给深色界面的那版队标**。
+ *
+ * 站点是纯深色主题（`--color-surface-2` 是 `#2f140f`），而赛程页给的缩略图常常是
+ * `_lightmode`（Liquipedia 模板里那是给亮色界面用的）。实测叠在深色底上的平均亮度：
+ * Team Spirit 13.9、Team Lynx 12.6、Team Nemesis 25.9，而正常可看的 NAVI 73.2、
+ * Team Liquid 70.2——前几支在页面上就是「首字母 + 一块看不见的图」。换成 Infobox 里的
+ * `imagedark` 之后：Team Spirit 154.5、Team Lynx 131.0、Team Nemesis 40.9。
+ *
+ * **只认这一处，不靠文件名推**：试过把 `_lightmode` 换成 `_darkmode` 去问，11 支里有
+ * 名字对不上的（Team Lynx 的真名是 `Team_Lynx_full_darkmode.png`），推出来的地址查不到。
+ * 返回的是**文件名**（还带空格），要变成地址得再问一次 `imageinfo`。
+ */
+export function parseTeamDarkLogo(wikitext: string): string | undefined {
+	// Infobox 参数一行一个；值里可能有 `<ref>`，所以先取到行尾再清。
+	const line = wikitext.match(/^\|\s*imagedark\s*=\s*(.+)$/m)?.[1];
+	if (!line) return undefined;
+	const file = cleanValue(stripComments(line)).replace(/^\[\[File:/i, '').replace(/\]\]$/, '').trim();
+	return file.length > 0 ? file : undefined;
+}
+
 /** 片段们 → 参数字典。只认 `键=值` 形状的片段，嵌套模板（`{{Person|…}}`）自己跳过。 */
 function paramMap(segments: string[]): Map<string, string> {
 	const params = new Map<string, string>();

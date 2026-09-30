@@ -412,12 +412,22 @@ datafeed 是官网 `/patches` 页自己的数据源，118 个版本一个不缺�
   `buildEvents()` 归并出的 `event.teams` 还是**拷贝**——只改其中一个，线上表现就是
   一部分页面对了、一部分还在热链（这个漏过一次：先把对阵改对了，赛事页的「参赛队伍」那一栏没跟上）。
 
-**有一批队标在深色底上几乎看不见**，这是既有的问题、不是这次改造引入的：Liquipedia 对一部分队伍只给
-`_lightmode` 版本（据其模板，那是给亮色界面用的）。实测叠在站点的 `--color-surface-2`（`#2f140f`）
-上取平均亮度：Team Spirit 3.0、Team Lynx 2.3、Balu Team 3.5、Team Nemesis 26.4、Kalmychata 27.8（满分
-255），而 NAVI 103、Team Liquid 79.7 是正常的。这几支现在显示出来就是「首字母 + 一块看不见的图」。
-要修得走战队页那条线（那里的 Infobox 同时给 `image=` 与 `imagedark=`），或者直接用 STRATZ 按队伍 id
-给的队标——两件事都要先把队伍 slug 映射到 Valve 队伍 id。
+**深色背景要挑对那一版队标。** 赛程页给的缩略图常常是 `_lightmode`（Liquipedia 模板里那是给**亮色**
+界面用的），叠在站点的 `--color-surface-2`（`#2f140f`）上几乎是黑的：实测平均亮度 Team Spirit 13.9、
+Team Lynx 12.6、Team Nemesis 25.9，而可看的 NAVI 73.2、Team Liquid 70.2。现在从战队页 Infobox 读
+`imagedark=`（给深色背景的那一版，`parseTeamDarkLogo`），**下到了才换**：Team Spirit 154.5、
+Team Lynx 131.0、Team Nemesis 40.9、Team Liquid 125.1（同一套量法）。两条路都是 50 个一批：
+先批量取 wikitext 读文件名，再把文件名批量问成缩略图地址（`.cache/liquipedia/team-dark-logos.json`，
+一周）——`Special:FilePath` 那条路实测 403，被 Cloudflare 挡着，只能问 API。
+
+三个坑：
+
+- **别靠文件名猜**。想过把 `_lightmode` 换成 `_darkmode` 直接问，11 支里有名字对不上的
+  （Team Lynx 的真名是 `Team_Lynx_full_darkmode.png`），推出来的地址查不到。只认 Infobox。
+- **下到了才换**。深色版是另一个地址、另一个文件名，离线构建（还没下过）时如果先改写地址再本地化，
+  结果是把原来能显示的本地队标换成一张外链——本地化分两批做就是为了这个。
+- **Balu Team 与 Kalmychata 修不了**：这两支在 Liquipedia 上**没有页面**，也就没有 `imagedark`
+  （STRATZ 那边也没有，`cdn.stratz.com/images/dota2/teams/<id>.png` 实测 502）。它们的队标仍然偏暗。
 
 ### 赛事档位，以及「一线队」是怎么定的
 
