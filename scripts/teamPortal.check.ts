@@ -126,6 +126,18 @@ const PORTAL_HTML = `
 	assert.match(index, /getTeamPortal\(\)/, '索引要把门户并进来，否则门户独有队伍没有页面');
 	assert.match(index, /portalIds/, '要留一份"门户收录过谁"，名录页靠它分「其他」');
 
+	/*
+	 * 这一条守的是「一队两页」：门户里的显示名与页面标题不一样（IC x Insanity /
+	 * Inner Circle x Insanity），谁把 id 改成按 `team.name` 算，同一支队就会多出一个页面。
+	 * 单看 `liquipediaTeamId()` 本身是拦不住的——判据在调用点。
+	 */
+	const portal = read('src/lib/teamPortal.ts');
+	assert.match(
+		portal,
+		/liquipediaTeamId\(team\.wiki \?\? team\.name\)/,
+		'门户里的队伍 id 要按页面标题算（显示名会变），否则同一支队会有两个页面',
+	);
+
 	const page = read('src/pages/teams.astro');
 	assert.match(page, /index\.regions/, '名录页按门户的地区分区');
 	assert.doesNotMatch(page, /from '\.\.\/lib\/leagueTier'/, '名录页不该再依赖档位模块');
