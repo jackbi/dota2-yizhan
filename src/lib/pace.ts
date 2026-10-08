@@ -15,7 +15,17 @@ export function createPace(intervalMs: number): () => Promise<void> {
 		queue = queue.then(async () => {
 			const wait = lastRequestAt + intervalMs - Date.now();
 			if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-			lastRequestAt = Date.now();
+			/*
+			 * 记的是**本该出发的时刻**，不是实际醒来的时刻。
+			 *
+			 * `setTimeout` 不保证准点，实测能比墙钟早 1ms 左右；而 `Date.now()` 只有毫秒精度，
+			 * 每次记「实际时刻」等于把这 1ms 误差一轮轮累加下去——连着两次 30ms 间隔，CI 上量到过
+			 * 只有 59ms（`pace.check` 就是这么挂的，而且只在负载高的机器上挂）。
+			 * 按计划时刻记，误差不会累积：第 N 次调用不会早于「第一次 + N × 间隔」。
+			 *
+			 * 空闲很久时计划时刻早就过去了，`Math.max` 会把它拉回当前时间，语义与之前一致。
+			 */
+			lastRequestAt = Math.max(lastRequestAt + intervalMs, Date.now());
 		});
 		return queue;
 	};
