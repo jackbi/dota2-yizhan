@@ -22,10 +22,12 @@ jobs:
       - name: 逐个探测
         run: |
           probe() {
+            # 第三个参数之后原样交给 curl（多测一组头就能把"缺 header"与"出口 IP 被拦"分开）。
             local name="$1" url="$2" out
+            shift 2
             rm -f /tmp/body
             if out=$(curl -sS -o /tmp/body -w '%{http_code} %{size_download}B %{time_total}s' \
-              --max-time 25 -A 'Mozilla/5.0 (compatible; dota2-yizhan probe)' "$url" 2>&1); then
+              --max-time 25 -A 'Mozilla/5.0 (compatible; dota2-yizhan probe)' "$@" "$url" 2>&1); then
               printf '%-34s %-28s %s\n' "$name" "$out" "$(head -c 70 /tmp/body | tr -d '\r\n')"
             else
               printf '%-34s 失败：%s\n' "$name" "$out"
@@ -45,17 +47,28 @@ jobs:
 
           echo
           echo "== 微博 DOTA2 超话（资讯页第七栏）=="
-          # 这两个是超话页面自己用的接口，本机实测免登录、免 cookie 直接 200。
-          # runner 是境外数据中心 IP，微博对这类出口的态度只能在 runner 上量——本机通不代表这里通。
-          probe "超话 最新发帖（sort_time）" "https://weibo.com/ajax_proxy/chaohua/page?flowId=1008080a7614bd4a7b1331677f9bc690323e64_-_sort_time"
-          probe "超话 最新评论（feed）" "https://weibo.com/ajax_proxy/chaohua/page?flowId=1008080a7614bd4a7b1331677f9bc690323e64_-_feed"
+          # 超话页面自己用的接口，本机实测免登录、免 cookie 直接 200。runner 是境外数据中心 IP，
+          # 微博对这类出口的态度只能在 runner 上量。
+          #
+          # **必须跑两遍**：第一遍裸 curl、第二遍带上页面自己发的那几个头。上一轮只跑了裸的、
+          # 拿到 403，但站里的代码带 Referer 与 x-requested-with——只测裸的那份，
+          # 分不清 403 是出口 IP 被拦，还是缺了头（两者要采取的对策完全不同）。
+          SID=1008080a7614bd4a7b1331677f9bc690323e64
+          API="https://weibo.com/ajax_proxy/chaohua/page"
+          browser_headers=(
+            -A 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            -H "Referer: https://weibo.com/p/${SID}"
+            -H 'x-requested-with: XMLHttpRequest'
+            -H 'client-version: v1.1.250'
+            -H 'Accept: application/json, text/plain, */*'
+          )
+          probe "超话 最新发帖（裸 curl）" "${API}?flowId=${SID}_-_sort_time"
+          probe "超话 最新发帖（带浏览器头）" "${API}?flowId=${SID}_-_sort_time" "${browser_headers[@]}"
+          probe "超话 最新评论（带浏览器头）" "${API}?flowId=${SID}_-_feed" "${browser_headers[@]}"
           probe "微博热搜接口（已知 403，对照）" "https://weibo.com/ajax/side/hotSearch"
+          probe "m.weibo.cn container（本机 432，对照）" "https://m.weibo.cn/api/container/getIndex?containerid=${SID}"
 
-          # 配图：图床判 Referer——不带或带站外一律 403，只有它自己家的给图。这条量的是"带对 referer 能不能下"。
-          if out=$(curl -sS -o /tmp/img -w '%{http_code} %{size_download}B' --max-time 25 \
-            -A 'Mozilla/5.0 (compatible; dota2-yizhan probe)' -H 'Referer: https://weibo.com/' \
-            'https://wx2.sinaimg.cn/wap360/a28a3f2bly1ihuzfy8cbfj22dc35s1kz.jpg' 2>&1); then
-            printf '%-34s %s\n' "超话配图（带 weibo Referer）" "$out"
-          else
-            printf '%-34s 失败：%s\n' "超话配图（带 weibo Referer）" "$out"
-          fi
+          # 配图：图床判 Referer——不带或带站外一律 403，只有它自己家的给图。两条一起量才有意义。
+          PIC=https://wx2.sinaimg.cn/wap360/a28a3f2bly1ihuzfy8cbfj22dc35s1kz.jpg
+          probe "超话配图（不带 Referer）" "$PIC"
+          probe "超话配图（带 weibo Referer）" "$PIC" -H 'Referer: https://weibo.com/'
