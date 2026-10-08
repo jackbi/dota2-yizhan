@@ -16,10 +16,12 @@ export type { HupuReply, HupuThreadDetail } from './hupuThread';
 /**
  * 虎扑 DOTA2 区（`bbs.hupu.com/dota2`）的社区帖层：列表 + 详情。
  *
- * **为什么是虎扑**：微博与贴吧都试过，不是解析难度的问题，是根本取不到数据——
- * 微博的内容接口全部要登录态（`m.weibo.cn` 的 container 接口回 302 到 "Sina Visitor System"，
- * `weibo.com/ajax/side/hotSearch` 直接 403），贴吧直连 403、走读取代理拿到的是「百度安全验证」。
- * 虎扑的版块列表与帖子页直连就是服务端渲染好的 HTML，是少数能稳定抓的中文社区。
+ * **为什么是虎扑**：贴吧试过，不是解析难度的问题，是根本取不到数据——直连 403、走读取代理拿到的是
+ * 「百度安全验证」。虎扑的版块列表与帖子页直连就是服务端渲染好的 HTML，是少数能稳定抓的中文社区。
+ *
+ * （微博一度也在这张"取不到"的名单里，那是拿 `weibo.com/ajax/side/hotSearch` 与 `m.weibo.cn` 的
+ * container 接口试出来的——那几条确实要登录态。后来发现**超话页面走的是另一条路**
+ * （`weibo.com/ajax_proxy/chaohua/page`），免登录可抓，这一栏因此接在了 `weiboApi.ts`。）
  *
  * **详情走 `__NEXT_DATA__`，不抠渲染后的 DOM。** 帖子页是 Next.js，`<script id="__NEXT_DATA__">`
  * 里有一份完整的 JSON：主楼正文（HTML）、亮数、推荐数、浏览数、创建时间，以及
