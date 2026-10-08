@@ -42,3 +42,20 @@ jobs:
           echo
           echo "== 对照：构建期已经在用、确认能通的源 =="
           probe "dota2.com.cn 装备分类（对照）" "https://www.dota2.com.cn/itemscategory/json"
+
+          echo
+          echo "== 微博 DOTA2 超话（资讯页第七栏）=="
+          # 这两个是超话页面自己用的接口，本机实测免登录、免 cookie 直接 200。
+          # runner 是境外数据中心 IP，微博对这类出口的态度只能在 runner 上量——本机通不代表这里通。
+          probe "超话 最新发帖（sort_time）" "https://weibo.com/ajax_proxy/chaohua/page?flowId=1008080a7614bd4a7b1331677f9bc690323e64_-_sort_time"
+          probe "超话 最新评论（feed）" "https://weibo.com/ajax_proxy/chaohua/page?flowId=1008080a7614bd4a7b1331677f9bc690323e64_-_feed"
+          probe "微博热搜接口（已知 403，对照）" "https://weibo.com/ajax/side/hotSearch"
+
+          # 配图：图床判 Referer——不带或带站外一律 403，只有它自己家的给图。这条量的是"带对 referer 能不能下"。
+          if out=$(curl -sS -o /tmp/img -w '%{http_code} %{size_download}B' --max-time 25 \
+            -A 'Mozilla/5.0 (compatible; dota2-yizhan probe)' -H 'Referer: https://weibo.com/' \
+            'https://wx2.sinaimg.cn/wap360/a28a3f2bly1ihuzfy8cbfj22dc35s1kz.jpg' 2>&1); then
+            printf '%-34s %s\n' "超话配图（带 weibo Referer）" "$out"
+          else
+            printf '%-34s 失败：%s\n' "超话配图（带 weibo Referer）" "$out"
+          fi
