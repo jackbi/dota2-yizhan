@@ -333,6 +333,13 @@ export default defineConfig({
 				 * 区别是它不需要登录，所以只是不提交、不屏蔽抓取。
 				 */
 				if (url === `${SITE_ORIGIN}/settings`) return false;
+				/*
+				 * `/login` 同理：它是「点一下走 Steam 登录」的过路页，对外没有内容。
+				 * 而且它是 SSR 路由，`/login` 与 `/login/` 都 200、canonical 各指自己
+				 * （照 `Astro.url.pathname` 拼的），提交那个带斜杠的版本等于自己交一条重定向出去。
+				 * 它本来也只有 `/me` 那条 302 指向它，而 `/me` 已经被 robots.txt 挡掉了。
+				 */
+				if (url === `${SITE_ORIGIN}/login`) return false;
 				return true;
 			},
 		}),
