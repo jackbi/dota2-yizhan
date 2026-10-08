@@ -1,0 +1,42 @@
+# 静态资源的浏览器缓存。
+#
+# 为什么要有这份文件：**只有** `/_astro/*` 是 Cloudflare 适配器默认给长缓存的那一条，
+# 其余我们自己发布的文件（字体、六个图片频道）拿到的都是默认的
+# `max-age=0, must-revalidate`——浏览器每次切页面都要为它们逐个发一次条件请求。
+# 在这条到 Cloudflare 的链路上单程 0.5~1 秒，一轮页面下来就是"点一个链接要等一会儿"。
+#
+# 敢写 immutable 的前提是**文件名内容寻址**：
+# - 字体是 `scripts/fonts.mjs` 按子集切好、以内容 sha1 命名的（`…-9a7331f6.woff2`）；
+# - 六个图片频道是 `src/lib/localImages.ts` 按「键-地址哈希」命名的（`douyu-10059152-97f2a35b.jpg`）。
+# 内容一变文件名就变，所以旧文件的缓存永远不会指到新内容上。
+#
+# **别删 `/_astro/*` 那条**：适配器检测到我们自己提供了 `_headers` 就不再注入它，
+# 少了这条，样式与脚本会退回 `max-age=0`。
+#
+# 规则是**先匹配先生效**，所以这些都写成精确到目录的窄规则，宽规则要放最后（现在没有）。
+# 固定文件名的资源（logo.webp、favicon.png、donate/*.jpg、licenses/*.txt）故意不列进来：
+# 它们改名换图之后老访客得等缓存过期才看得到新内容。
+
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/avatars/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/covers/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/teamlogos/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/patch-heroes/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/patch-items/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/wmpvp-images/*
+  Cache-Control: public, max-age=31536000, immutable
