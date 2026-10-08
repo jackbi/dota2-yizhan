@@ -1,9 +1,20 @@
 import path from 'node:path';
-import type { NewsCardItem } from '../data/types';
-import { decodeEntities, summarizeArticle, toArticleContent } from './articleHtml';
+import { summarizeArticle, toArticleContent } from './articleHtml';
+import { NEWS_FEEDS, byDateDesc, newsFeedPageUrl, parseNewsFeedPage } from './newsFeed';
+import type { FeedItem, NewsFeedId, OfficialNews } from './newsFeed';
 import { cacheFile as cachePath, readCacheText, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource, sourceState } from './dataHealth';
+
+/**
+ * 栏目表、列表解析与卡片映射搬到了 `newsFeed.ts`（纯模块）：列表的「加载更多」是运行时
+ * 按需往回翻页的，那边不能引 `node:fs`。这里把它们再导出一次，页面与自检的引用不用改。
+ */
+export { FEED_LABEL, NEWS_FEEDS, toNewsCard } from './newsFeed';
+export type { NewsFeedId, OfficialNews } from './newsFeed';
+
+/** 列表页的筛选栏目：综合新闻汇总全部官方栏目。 */
+export const NEWS_FILTERS = NEWS_FEEDS.map((feed) => ({ id: feed.id, label: feed.label }));
 
 /**
  * 官方新闻层：构建期抓取 dota2.com.cn 的新闻列表与正文。
@@ -29,45 +40,6 @@ const LIST_TTL_SECONDS = 30 * 60;
 const ARTICLE_TTL_SECONDS = Number.POSITIVE_INFINITY;
 /** 官网是传统单机服务，别一次并发太多。 */
 const FETCH_CONCURRENCY = 6;
-
-/**
- * 官方新闻栏目。general 是官网新闻首页的混合流，作为主列表；
- * 其余栏目用于给文章打标签，列表页据此筛选。
- */
-export const NEWS_FEEDS = [
-	{ id: 'general', label: '综合新闻', path: '/news' },
-	{ id: 'gamenews', label: '官方新闻', path: '/news/gamenews' },
-	{ id: 'competition', label: '赛事新闻', path: '/news/competition' },
-	{ id: 'activity', label: '活动新闻', path: '/news/activity' },
-	{ id: 'announcement', label: '公告', path: '/news/announcement' },
-] as const;
-
-export type NewsFeedId = (typeof NEWS_FEEDS)[number]['id'];
-
-export const FEED_LABEL: Record<NewsFeedId, string> = {
-	general: '综合新闻',
-	gamenews: '官方新闻',
-	competition: '赛事新闻',
-	activity: '活动新闻',
-	announcement: '公告',
-};
-
-/** 列表页的筛选栏目：综合新闻汇总全部官方栏目，小道消息来自站内示例数据。 */
-export const NEWS_FILTERS = NEWS_FEEDS.map((feed) => ({ id: feed.id, label: feed.label }));
-
-export interface OfficialNews {
-	/** 官方文章 id（形如 220533），同时作为站内详情页的路由参数。 */
-	id: string;
-	title: string;
-	/** 官方原文地址，只用于构建期抓正文，不会出现在页面上。 */
-	url: string;
-	/** YYYY-MM-DD */
-	date: string;
-	img: string;
-	/** 文章被收录进哪些官网栏目，可能不止一个。 */
-	feeds: NewsFeedId[];
-	summary: string;
-}
 
 // ---------------------------------------------------------------- 抓取与缓存
 
@@ -130,64 +102,6 @@ async function fetchHtml(url: string, ttlSeconds: number): Promise<FetchedPage> 
 }
 
 
-// ---------------------------------------------------------------- 列表解析
-
-const ITEM_RE = /<a href="(https:\/\/www\.dota2\.com\.cn\/article\/details\/[^"]+)" class="item"[^>]*>([\s\S]*?)<\/a>/g;
-const TITLE_RE = /<h2 class="title">([\s\S]*?)<\/h2>/;
-const DATE_RE = /<p class="date">([\s\S]*?)<\/p>/;
-const IMG_RE = /<img src="([^"]+)"/;
-
-type FeedItem = Pick<OfficialNews, 'id' | 'title' | 'url' | 'date' | 'img'>;
-
-/**
- * 官网列表页一次只渲染当前栏目，其余栏目是空占位节点，
- * 而 `class="item"` 只在真正的条目上出现，所以整页扫描即可。
- */
-function parseFeedPage(html: string): FeedItem[] {
-	const items: FeedItem[] = [];
-	for (const match of html.matchAll(ITEM_RE)) {
-		const body = match[2];
-		const rawTitle = body.match(TITLE_RE)?.[1];
-		const date = body.match(DATE_RE)?.[1];
-		if (!rawTitle || !date) continue;
-		items.push({
-			id: match[1].match(/(\d+)\.html$/)?.[1] ?? match[1],
-			title: decodeEntities(rawTitle.replace(/<[^>]+>/g, '')).trim(),
-			url: match[1],
-			date: date.trim(),
-			img: body.match(IMG_RE)?.[1] ?? '',
-		});
-	}
-	return items;
-}
-
-function feedPageUrl(basePath: string, page: number): string {
-	return `${ORIGIN}${basePath}/${page === 1 ? 'index' : `index${page}`}.htm`;
-}
-
-/** 新文章在前，同日按 id 倒序。 */
-function byDateDesc(a: OfficialNews, b: OfficialNews): number {
-	if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-	return b.id.localeCompare(a.id);
-}
-
-// ---------------------------------------------------------------- 对外接口
-
-/** 官方新闻 → 列表卡片数据。没有入选具体栏目的文章按综合新闻展示。 */
-export function toNewsCard(item: OfficialNews, featured = false): NewsCardItem {
-	return {
-		id: item.id,
-		title: item.title,
-		summary: item.summary,
-		date: item.date,
-		img: item.img || undefined,
-		tags: item.feeds.length > 0 ? item.feeds.map((feed) => FEED_LABEL[feed]) : ['综合新闻'],
-		meta: '来源：DOTA2 官网',
-		href: `/news/${item.id}/`,
-		featured,
-	};
-}
-
 const articleCache = new Map<string, Promise<string>>();
 
 /** 单篇文章正文（已清洗）。同一篇文章在一次构建里只会抓一次。 */
@@ -222,10 +136,10 @@ async function loadNews(): Promise<OfficialNews[]> {
 	const byId = new Map<string, OfficialNews>();
 	for (const feed of NEWS_FEEDS) {
 		for (let page = 1; page <= LIST_PAGES; page++) {
-			const fetched = await fetchHtml(feedPageUrl(feed.path, page), LIST_TTL_SECONDS);
+			const fetched = await fetchHtml(newsFeedPageUrl(feed.path, page), LIST_TTL_SECONDS);
 			if (fetched.network) listFetched += 1;
 			if (!fetched.text) continue;
-			const items = parseFeedPage(fetched.text);
+			const items = parseNewsFeedPage(fetched.text);
 			// 翻到没有条目的页码（官方对超出范围的页码仍返回 200）就停下。
 			if (!items.length) break;
 			for (const item of items) {

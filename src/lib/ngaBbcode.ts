@@ -1,5 +1,8 @@
 // 带扩展名：自检（`scripts/ngaBbcode.check.ts`）要用 Node 直接跑这个模块，Node 的 ESM 解析不补扩展名。
-import { decodeEntities } from './articleHtml.ts';
+import { decodeEntities, escapeHtml } from './articleHtml.ts';
+
+/** 转义住在 `articleHtml.ts`：卡片渲染函数（`cardHtml.ts`）也要用它，别再各写一份。 */
+export { escapeHtml };
 
 /**
  * NGA 帖子正文的 BBCode 渲染。
@@ -16,11 +19,6 @@ const ATTACHMENT_BASE = 'https://img.nga.cn/attachments/';
 const NGA_ORIGIN = 'https://bbs.nga.cn';
 /** 图片来源白名单：绝对地址、站内绝对路径，或 `./mon_xxx/...` 形式的附件。 */
 const IMAGE_SRC_RE = /^(?:https?:\/\/|\/\/|\/|\.\/|mon_\d)/i;
-
-/** 把用户文本转义成可以放进 HTML 的样子。**不要**在它之后再拼未转义的属性值。 */
-export function escapeHtml(text: string): string {
-	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
 
 /** 附件在正文里是 `./mon_202609/07/xxx.jpg` 这样的相对路径。 */
 function imageUrl(raw: string): string {

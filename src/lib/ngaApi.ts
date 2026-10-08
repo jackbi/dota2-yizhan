@@ -3,8 +3,8 @@ import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCa
 import { mapLimit } from './concurrency';
 import { reportSource, sourceState } from './dataHealth';
 import { createPace } from './pace';
-import { ngaReadUrl, parseThreadHtmlPage, parseThreadJson } from './ngaThread';
-import type { ThreadDetail, ThreadFloor } from './ngaThread';
+import { ngaHotUrl, ngaReadUrl, parseHotThreads, parseThreadHtmlPage, parseThreadJson } from './ngaThread';
+import type { HotThread, ThreadDetail, ThreadFloor } from './ngaThread';
 
 /**
  * 帖子类型从 `ngaThread.ts` 再导出：页面与自检一直在 `ngaApi` 上取它们，
@@ -22,8 +22,6 @@ export type { ThreadDetail, ThreadFloor } from './ngaThread';
  */
 
 const API = 'https://bbs.nga.cn';
-/** DOTA2 版块，取自 app_api.php?__lib=home&__act=category。 */
-const DOTA2_FID = 321;
 const CACHE_DIR = path.join(process.cwd(), '.cache', 'community');
 const OFFLINE = process.env.TOURNAMENTS_OFFLINE === '1';
 /** APP 接口认这个 UA，返回的数据字段更完整。 */
@@ -63,24 +61,11 @@ const FETCH_CONCURRENCY = 4;
 /** NGA 未见限流，但没必要打太急。 */
 const MIN_INTERVAL_MS = 200;
 
-/** type 字段的位标记：锁定的帖子和合集入口不该出现在热帖榜里。 */
-const TYPE_LOCKED = 1 << 10;
-const TYPE_COLLECTION = 1 << 15;
-
-export interface HotThread {
-	tid: string;
-	title: string;
-	author: string;
-	/** 窗口内的回复数；NGA 的热榜就是按它倒序。 */
-	replies: number;
-	/** 发帖时间，Unix 秒 */
-	postedAt: number;
-	/** 最后回复时间，Unix 秒 */
-	lastReplyAt: number;
-	lastPoster: string;
-	/** 主楼首段摘要；主楼只有图片时为空 */
-	summary: string;
-}
+/*
+ * 热帖条目的类型、榜单解析与地址构造搬到了 `ngaThread.ts`（纯模块）：
+ * 资讯列表的「加载更多」是运行时按需取下一页的，那边不能引 `node:fs`。
+ */
+export type { HotThread } from './ngaThread';
 
 /** 热帖 + 它上了哪几个时间窗的榜。 */
 export interface CommunityThread extends HotThread {
@@ -128,34 +113,9 @@ export function ngaThreadUrl(tid: string): string {
 	return `${API}/read.php?tid=${tid}`;
 }
 
-function hotUrl(days: number): string {
-	return `${API}/app_api.php?__lib=subject&__act=hot&fid=${DOTA2_FID}&days=${days}&__output=11`;
-}
+/* 热帖榜地址与解析都在 `ngaThread.ts`（`ngaHotUrl` / `parseHotThreads`）。 */
 
 // ---------------------------------------------------------------- 热帖榜
-
-/** 热帖榜：data[0] 是帖子数组，data[1] 是附加信息。 */
-function toThreads(raw: unknown): HotThread[] | null {
-	const groups = (raw as { data?: unknown })?.data;
-	if (!Array.isArray(groups) || !Array.isArray(groups[0])) return null;
-	const threads = (groups[0] as Record<string, unknown>[])
-		.filter((row) => {
-			const type = Number(row.type) || 0;
-			return !(type & (TYPE_LOCKED | TYPE_COLLECTION));
-		})
-		.map((row) => ({
-			tid: String(row.tid ?? ''),
-			title: String(row.subject ?? '').trim(),
-			author: String(row.author ?? ''),
-			replies: Number(row.replies) || 0,
-			postedAt: Number(row.postdate) || 0,
-			lastReplyAt: Number(row.lastpost) || 0,
-			lastPoster: String(row.lastposter ?? ''),
-			summary: '',
-		}))
-		.filter((thread) => thread.tid && thread.title && thread.replies >= MIN_REPLIES);
-	return threads.length > 0 ? threads : null;
-}
 
 /** 一个时间窗的热帖榜本轮是联网抓到的，还是吃缓存/没抓到。 */
 interface LoadedHotList {
@@ -171,10 +131,10 @@ async function loadHotList(days: number): Promise<LoadedHotList> {
 	let value: HotThread[] | null = null;
 	if (!OFFLINE) {
 		for (let attempt = 0; attempt < 2 && value === null; attempt++) {
-			const text = await fetchText(hotUrl(days));
+			const text = await fetchText(ngaHotUrl(days));
 			if (text === null) continue;
 			try {
-				value = toThreads(JSON.parse(text));
+				value = parseHotThreads(JSON.parse(text), MIN_REPLIES);
 			} catch {
 				value = null;
 			}

@@ -1,64 +1,16 @@
 ---
 import type { NewsCardItem } from '../data/types';
+import { renderNewsCard } from '../lib/cardHtml';
 
 interface Props {
 	item: NewsCardItem;
 }
 
 const { item } = Astro.props;
-// 站内详情页在本窗口打开，指向站外的整卡在新窗口打开。
-const isExternal = item.href?.startsWith('http') ?? false;
-// 有链接的整卡可点，没有的渲染成不可点的卡片。
-const Tag = item.href ? 'a' : 'article';
 ---
 
-<Tag
-	href={item.href}
-	target={isExternal ? '_blank' : undefined}
-	rel={isExternal ? 'noopener noreferrer' : undefined}
-	class:list={[
-		'group flex gap-4 rounded-2xl border p-4 transition',
-		item.featured
-			? 'border-dota/40 bg-gradient-to-br from-dota/10 to-surface hover:border-dota'
-			: 'border-line bg-surface hover:border-dota/40 hover:bg-surface-2',
-	]}
->
-	{
-		item.img ? (
-			<img
-				src={item.img}
-				alt=""
-				loading="lazy"
-				referrerpolicy="no-referrer"
-				class="h-24 w-32 shrink-0 rounded-xl border border-line object-cover transition group-hover:border-dota/40 sm:h-28 sm:w-40"
-			/>
-		) : (
-			<span class="flex h-24 w-32 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 font-display text-lg text-faint sm:h-28 sm:w-40">
-				资讯
-			</span>
-		)
-	}
-
-	<div class="flex min-w-0 flex-1 flex-col">
-		<div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-			<span class:list={['rounded px-2 py-0.5 font-semibold', item.badge ? 'bg-gold/15 text-gold' : 'bg-dota/15 text-dota-light']}>
-				{item.badge ?? '官方信息'}
-			</span>
-			{item.tags.map((tag) => <span class="text-faint">{tag}</span>)}
-			<span class="ml-auto shrink-0 text-faint">{item.date}</span>
-		</div>
-		<h3 class="mt-2 line-clamp-2 font-display leading-snug transition group-hover:text-dota-light">{item.title}</h3>
-		{item.originalTitle ? <p class="mt-1 line-clamp-1 text-xs text-faint">{item.originalTitle}</p> : null}
-		{item.summary ? <p class="mt-1.5 line-clamp-2 text-sm leading-relaxed text-muted">{item.summary}</p> : null}
-		<div class="mt-auto flex items-center gap-2 pt-3 text-xs text-faint">
-			<span class="truncate">{item.meta}</span>
-			{
-				item.href ? (
-					<svg class="ml-auto h-4 w-4 shrink-0 transition group-hover:translate-x-0.5 group-hover:text-gold" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-						<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-					</svg>
-				) : null
-			}
-		</div>
-	</div>
-</Tag>
+{/*
+	标记只有一份，住在 `src/lib/cardHtml.ts`：列表页的「加载更多」是运行时按需取下一页的，
+	那边拼不出 Astro 组件，两边共用同一个渲染函数才不会分家。这个组件只是它的壳。
+*/}
+<Fragment set:html={renderNewsCard(item)} />

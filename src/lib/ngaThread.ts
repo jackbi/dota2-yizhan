@@ -14,6 +14,41 @@ import { collectNicknames } from './ngaBbcode.ts';
  */
 
 const API = 'https://bbs.nga.cn';
+/** DOTA2 版块，取自 app_api.php?__lib=home&__act=category。 */
+const DOTA2_FID = 321;
+
+/** 热帖榜的一个时间窗。 */
+export interface HotWindow {
+	days: number;
+	label: string;
+}
+
+/** 热帖榜里的一条（还没有合并时间窗）。 */
+export interface HotThread {
+	tid: string;
+	title: string;
+	author: string;
+	/** 窗口内的回复数；NGA 的热榜就是按它倒序。 */
+	replies: number;
+	/** 发帖时间，Unix 秒 */
+	postedAt: number;
+	/** 最后回复时间，Unix 秒 */
+	lastReplyAt: number;
+	lastPoster: string;
+	/** 主楼首段摘要；主楼只有图片时为空 */
+	summary: string;
+}
+
+/**
+ * 热帖榜的地址。
+ *
+ * **这个接口没有分页**：实测带上 `&page=2`、`&page=3` 返回的都是同一份（201 条），
+ * 也就是说整份榜单一次给全。站内要"接着往下看"时是在本地切片（见 `listMore.ts`），
+ * 不是翻上游的页——别照 `read.php` 的形态想当然写成 `&page=N`。
+ */
+export function ngaHotUrl(days: number, fid = DOTA2_FID): string {
+	return `${API}/app_api.php?__lib=subject&__act=hot&fid=${fid}&days=${days}&__output=11`;
+}
 
 /** 一层楼。站内详情页只展示正文，昵称见 `ThreadDetail.nicknames`。 */
 export interface ThreadFloor {
@@ -58,6 +93,38 @@ export interface ThreadDetail {
 export function ngaReadUrl(tid: string, page: number): string {
 	const suffix = page > 1 ? `&page=${page}` : '';
 	return `${API}/read.php?tid=${tid}&__output=11${suffix}`;
+}
+
+/** 锁定的帖子与合集入口不该出现在热帖榜里。 */
+const TYPE_LOCKED = 1 << 10;
+const TYPE_COLLECTION = 1 << 15;
+
+/**
+ * 热帖榜的响应 → 条目。`data[0]` 是帖子数组，`data[1]` 是附加信息。
+ *
+ * 少于 `minReplies` 条回复的不算热帖——页面上那一栏是「热帖」，把刚发的帖混进去
+ * 只会让它看起来像最新回复列表。
+ */
+export function parseHotThreads(raw: unknown, minReplies = 5): HotThread[] | null {
+	const groups = (raw as { data?: unknown })?.data;
+	if (!Array.isArray(groups) || !Array.isArray(groups[0])) return null;
+	const threads = (groups[0] as Record<string, unknown>[])
+		.filter((row) => {
+			const type = Number(row.type) || 0;
+			return !(type & (TYPE_LOCKED | TYPE_COLLECTION));
+		})
+		.map((row) => ({
+			tid: String(row.tid ?? ''),
+			title: String(row.subject ?? '').trim(),
+			author: String(row.author ?? ''),
+			replies: Number(row.replies) || 0,
+			postedAt: Number(row.postdate) || 0,
+			lastReplyAt: Number(row.lastpost) || 0,
+			lastPoster: String(row.lastposter ?? ''),
+			summary: '',
+		}))
+		.filter((thread) => thread.tid && thread.title && thread.replies >= minReplies);
+	return threads.length > 0 ? threads : null;
 }
 
 /** `__R` 有时是数组、有时是以 tid 为键的对象，两种都要能取到楼层列表。 */

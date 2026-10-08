@@ -37,6 +37,16 @@ export interface HupuThread {
 export const THREADS_PER_BOARD = 20;
 
 /**
+ * 版面页的地址：第 1 页是 `/dota2`，第 N 页是 `/dota2-<n>`（实测第 2 页与第 1 页不重叠）。
+ *
+ * 放在这里而不是 `hupuApi.ts`：列表的「加载更多」在运行时也要拼这个地址，
+ * 而 `hupuApi.ts` 挂着构建期的磁盘缓存（`node:fs`）。
+ */
+export function hupuBoardUrl(page = 1): string {
+	return page <= 1 ? 'https://bbs.hupu.com/dota2' : `https://bbs.hupu.com/dota2-${page}`;
+}
+
+/**
  * 列表页只给 `MM-DD HH:mm`，没有年份。
  *
  * 按**北京时间**（UTC+8）解成 Unix 秒：虎扑的时间是北京时间，而构建机的时区不一定，

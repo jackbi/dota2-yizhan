@@ -10,6 +10,17 @@
 
 const SITE_ORIGIN = 'https://www.dota2.com.cn';
 
+/**
+ * 把用户文本转义成可以放进 HTML 的样子。
+ *
+ * 放在这里而不是各自实现一份：把 Astro 组件改成「返回 HTML 字符串」的渲染函数之后
+ * （见 `cardHtml.ts`），转义就得自己负责了——组件那边是框架自动做的，字符串这边漏一处
+ * 就是一个注入点。**不要在它之后再拼未转义的属性值。**
+ */
+export function escapeHtml(text: string): string {
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /** 官方正文里的常见实体，`&amp;` 之类的通用实体由正则兜底。 */
 const NAMED_ENTITIES: Record<string, string> = {
 	amp: '&',

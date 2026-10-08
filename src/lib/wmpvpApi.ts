@@ -1,6 +1,14 @@
 import path from 'node:path';
-import type { NewsCardItem } from '../data/types';
 import { decodeEntities, sanitizeArticleHtml, summarizeArticle } from './articleHtml';
+import { parseWmpvpList, wmpvpListUrl } from './wmpvpList';
+import type { WmpvpNews } from './wmpvpList';
+
+/*
+ * 列表条目的类型与映射搬到了 `wmpvpList.ts`（纯模块）：资讯列表的「加载更多」是运行时
+ * 按需往回翻页的，那边不能引 `node:fs`。这里再导出一次，页面与自检的引用不用改。
+ */
+export { toWmpvpCard, wmpvpListUrl } from './wmpvpList';
+export type { WmpvpNews } from './wmpvpList';
 import { cacheFile as cachePath, isFresh, readCacheJson, readRawJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource } from './dataHealth';
@@ -24,8 +32,7 @@ import { type ImageChannel, type LocalImageSource, localizeImages } from './loca
  * 与官网新闻层同理。
  */
 
-const LIST_URL =
-	'https://appengine.wmpvp.com/steamcn/community/homepage/getHomeInformation?gameTypeStr=1&pageNum=1&pageSize=20';
+const LIST_URL = wmpvpListUrl(1);
 const DETAIL_URL = (id: string) => `https://appactivity.wmpvp.com/steamcn/app/news/getAppNewsById?gameType=1&newsId=${id}`;
 /** 原文地址，页面上给读者的出口。 */
 const ARTICLE_URL = (id: string) => `https://news.wmpvp.com/news.html?id=${id}&gameTypeStr=1`;
@@ -120,85 +127,14 @@ async function localizeItemImages(items: WmpvpNews[]): Promise<void> {
 	}
 }
 
-export interface WmpvpNews {
-	/** `newsId`，同时是站内详情页的路由参数。 */
-	id: string;
-	title: string;
-	/** 北京时间 `YYYY-MM-DD`：这条源是中文站，日期按东八区算（不能拿 UTC 直接切）。 */
-	date: string;
-	/** 发布时刻，ISO 串，页面显示绝对时间用。 */
-	published: string;
-	author: string;
-	summary: string;
-	cover: string;
-	/** 原文地址。 */
-	url: string;
-	/** 正文 HTML（已清洗，可直接注入页面）。拿不到就是空串，页面只显示标题。 */
-	content: string;
-}
-
-export function toWmpvpCard(item: WmpvpNews): NewsCardItem {
-	return {
-		id: item.id,
-		title: item.title,
-		summary: item.summary,
-		date: item.date,
-		img: item.cover || undefined,
-		tags: ['国服资讯'],
-		meta: item.author ? `来源：完美世界电竞 · ${item.author}` : '来源：完美世界电竞',
-		badge: '完美世界',
-		href: `/news/wmpvp/${item.id}/`,
-	};
-}
-
-interface RawNews {
-	newsId?: number | string;
-	title?: string;
-	publishTime?: number | string;
-	summary?: string;
-	thumbnail?: string;
-	author?: string;
-}
-
-async function getJson(url: string): Promise<any> {
-	const res = await fetch(url, {
-		headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
-		signal: AbortSignal.timeout(20_000),
-	});
-	if (!res.ok) throw new Error(`HTTP ${res.status}`);
-	return res.json();
-}
-
 /** 毫秒时间戳 → 北京时间的 `YYYY-MM-DD`。东八区没有夏令时，直接加 8 小时最省事。 */
 function beijingDay(ms: number): string {
 	return new Date(ms + 8 * 3600_000).toISOString().slice(0, 10);
 }
 
-function fromRaw(raw: RawNews): WmpvpNews | null {
-	const id = raw.newsId === undefined || raw.newsId === null ? '' : String(raw.newsId);
-	const title = (raw.title ?? '').trim();
-	if (!id || !title) return null;
-	const ms = Number(raw.publishTime) || 0;
-	return {
-		id,
-		title,
-		date: ms ? beijingDay(ms) : '',
-		published: ms ? new Date(ms).toISOString() : '',
-		author: (raw.author ?? '').trim(),
-		summary: (raw.summary ?? '').trim(),
-		cover: raw.thumbnail ?? '',
-		url: ARTICLE_URL(id),
-		content: '',
-	};
-}
-
 /** 直连列表。返回里夹着 banner 之类的非新闻条目，只留带 `news` 的。 */
 async function fetchDirectList(): Promise<WmpvpNews[]> {
-	const data = await getJson(LIST_URL);
-	const rows: any[] = Array.isArray(data?.result) ? data.result : [];
-	return rows
-		.map((row) => (row?.news ? fromRaw(row.news as RawNews) : null))
-		.filter((item): item is WmpvpNews => item !== null);
+	return parseWmpvpList(await getJson(LIST_URL));
 }
 
 /**

@@ -1,6 +1,15 @@
 import type { CommunityThread } from './ngaApi';
 import { fetchCommunityThreads } from './ngaApi';
 import { fetchHupuThreads } from './hupuApi';
+import { hupuPost, ngaPost } from './communityPost';
+import type { CommunityPost } from './communityPost';
+
+/**
+ * 映射本身在 `communityPost.ts`（纯模块）：列表的「加载更多」是运行时按需取下一页的，
+ * 那边不能引 `ngaApi` / `hupuApi`（带 `node:fs`）。这里再导出一次，组件与页面的引用不用改。
+ */
+export { SOURCE_LABEL } from './communityPost';
+export type { CommunityPost, CommunitySource } from './communityPost';
 
 /**
  * 社区版块的多来源聚合层。
@@ -18,30 +27,6 @@ import { fetchHupuThreads } from './hupuApi';
  * 现在页面上按来源分栏，各排各的，读者切换来源时看到的就是那个来源自己的样子。
  */
 
-export type CommunitySource = 'nga' | 'hupu';
-
-export const SOURCE_LABEL: Record<CommunitySource, string> = {
-	nga: 'NGA',
-	hupu: '虎扑',
-};
-
-export interface CommunityPost {
-	/** 站内唯一 key：来源 + 原生 id */
-	id: string;
-	source: CommunitySource;
-	title: string;
-	author: string;
-	/** 回复数：NGA 是热榜口径的，虎扑是帖子总回复数 */
-	replies: number;
-	/** 浏览数，只有虎扑列表给 */
-	views?: number;
-	/** 最后回复时间，Unix 秒 */
-	lastReplyAt: number;
-	summary: string;
-	/** 站内详情页地址：两个来源都镜像到 `/community/...`，原帖外链在详情页里给 */
-	href: string;
-}
-
 /** 两个来源拼成一条，各自保持自己列表的顺序。 */
 export async function fetchCommunityFeed(): Promise<CommunityPost[]> {
 	const [nga, hupu] = await Promise.all([
@@ -50,30 +35,7 @@ export async function fetchCommunityFeed(): Promise<CommunityPost[]> {
 	]);
 
 	return [
-		...nga.map(
-			(thread): CommunityPost => ({
-				id: `nga-${thread.tid}`,
-				source: 'nga',
-				title: thread.title,
-				author: thread.author,
-				replies: thread.replies,
-				lastReplyAt: thread.lastReplyAt,
-				summary: thread.summary,
-				href: `/community/nga/${thread.tid}/`,
-			}),
-		),
-		...hupu.map(
-			(thread): CommunityPost => ({
-				id: `hupu-${thread.pid}`,
-				source: 'hupu',
-				title: thread.title,
-				author: thread.author,
-				replies: thread.replies,
-				views: thread.views,
-				lastReplyAt: thread.lastReplyAt,
-				summary: thread.summary,
-				href: `/community/hupu/${thread.pid}/`,
-			}),
-		),
+		...nga.map((thread) => ngaPost(thread)),
+		...hupu.map((thread) => hupuPost(thread)),
 	];
 }

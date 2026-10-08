@@ -8,6 +8,7 @@ import { SOURCE_LABEL, fetchCommunityFeed } from '../lib/communityFeed';
 import { fetchOfficialNews, toNewsCard, type OfficialNews } from '../lib/newsApi';
 import { fetchRedditPosts, toRedditCard, type RedditFeedId, type RedditPost } from '../lib/redditApi';
 import { fetchWmpvpNews, toWmpvpCard, type WmpvpNews } from '../lib/wmpvpApi';
+import { MORE_SOURCES } from '../lib/listMore';
 
 /**
  * 资讯中心：官网新闻、两个 Reddit 版块与 NGA / 虎扑的社区热帖合成一页。
@@ -154,14 +155,14 @@ const NOTICES = [
 		<div id="info-list" class="grid grid-cols-1 gap-4 lg:grid-cols-2">
 			{
 				officialCards.map((card) => (
-					<div data-source="news">
+					<div data-source="news" data-key={card.id}>
 						<NewsCard item={card} />
 					</div>
 				))
 			}
 			{
 				wmpvpCards.map((card) => (
-					<div data-source="wmpvp">
+					<div data-source="wmpvp" data-key={card.id}>
 						<NewsCard item={card} />
 					</div>
 				))
@@ -169,7 +170,7 @@ const NOTICES = [
 			{
 				REDDIT_TABS.map((tab) =>
 					redditCards(tab.id).map((card) => (
-						<div data-source={tab.id}>
+						<div data-source={tab.id} data-key={card.id}>
 							<NewsCard item={card} />
 						</div>
 					)),
@@ -177,14 +178,14 @@ const NOTICES = [
 			}
 			{
 				threadCards('nga').map((post) => (
-					<div data-source="nga">
+					<div data-source="nga" data-key={post.id}>
 						<ThreadCard post={post} nowSec={now} />
 					</div>
 				))
 			}
 			{
 				threadCards('hupu').map((post) => (
-					<div data-source="hupu">
+					<div data-source="hupu" data-key={post.id}>
 						<ThreadCard post={post} nowSec={now} />
 					</div>
 				))
@@ -194,6 +195,21 @@ const NOTICES = [
 		<p id="info-empty" class="py-16 text-center text-sm text-faint" hidden>
 			该来源暂时还没有内容。
 		</p>
+
+		{/*
+			加载更多：一页一栏，按钮跟着当前标签页走（逻辑见 `src/scripts/newsMore.ts`）。
+			Reddit 那一栏没有分页——它的官方游标要 OAuth 凭据，现在没配、走的是只有一屏的 RSS。
+		*/}
+		<div class="mt-6 text-center text-sm text-faint" data-more data-sources={MORE_SOURCES.join(',')}>
+			<button
+				type="button"
+				class="rounded-md border border-line px-4 py-2 font-medium text-cream transition hover:border-dota hover:text-dota-light disabled:opacity-60"
+				data-more-button
+			>
+				加载更多
+			</button>
+			<p class="mt-3" data-more-note hidden></p>
+		</div>
 
 		<section class="mt-12 rounded-2xl border border-line bg-surface p-5 text-sm leading-relaxed text-muted">
 			<h2 class="font-display text-base text-cream">数据口径</h2>
@@ -238,13 +254,16 @@ const NOTICES = [
 </Layout>
 
 <script>
+	import '../scripts/newsMore';
+</script>
+
+<script>
 	(() => {
 		const tabs = document.getElementById('info-tabs');
 		const list = document.getElementById('info-list');
 		const empty = document.getElementById('info-empty');
 		if (!tabs || !list) return;
 
-		const cards = Array.from(list.querySelectorAll<HTMLElement>('[data-source]'));
 		/** 带锚进来时落到对应来源；`#community` 是上一版「社区热议」留下的锚，落到 NGA 这一条。 */
 		const HASH_SOURCE: Record<string, string> = {
 			'#news': 'news',
@@ -260,7 +279,11 @@ const NOTICES = [
 
 		const apply = () => {
 			let shown = 0;
-			for (const card of cards) {
+			/*
+			 * 每次都重新查一遍：列表是**活的**——「加载更多」会把新卡片追加到 `#info-list` 末尾，
+			 * 只查一次的话它们不进这份快照，切到别的栏时也不会被藏起来。
+			 */
+			for (const card of list.querySelectorAll<HTMLElement>('[data-source]')) {
 				const matched = card.dataset.source === source;
 				card.hidden = !matched;
 				if (matched) shown += 1;
