@@ -156,13 +156,17 @@ function feedOf(id: RedditFeedId): RedditFeed {
 }
 
 /**
- * 早期版本把译文平铺在 titleZh / summaryZh / bodyZh 上，读缓存时顺手迁移到 zh，
- * 否则改完字段名之后旧缓存里的译文会静默失效（而 Reddit 限流又不一定抓得回来）。
+ * 读缓存时顺手把老形状补新：早期版本把译文平铺在 titleZh / summaryZh / bodyZh 上，
+ * 改完字段名之后不迁移的话，旧缓存里的译文会静默失效（而 Reddit 限流又不一定抓得回来）。
+ *
+ * 外链地址也在这里补一次（见 `absoluteRedditUrl`）：缓存里躺着的是**当年解析出来的对象**，
+ * 解析侧的修正在旧条目上不会自己生效——不顺手补一遍，那批跨版转发的相对地址要等缓存过期才消失。
  */
 function normalizePost(raw: RedditPost & { titleZh?: string; summaryZh?: string; bodyZh?: string }): RedditPost {
 	const { titleZh, summaryZh, bodyZh, ...rest } = raw;
-	if (rest.zh || !(titleZh || summaryZh || bodyZh)) return rest;
-	return { ...rest, zh: { title: titleZh, summary: summaryZh, body: bodyZh } };
+	const post = { ...rest, externalUrl: absoluteRedditUrl(rest.externalUrl ?? '') };
+	if (post.zh || !(titleZh || summaryZh || bodyZh)) return post;
+	return { ...post, zh: { title: titleZh, summary: summaryZh, body: bodyZh } };
 }
 
 type CachedPost = RedditPost & { titleZh?: string; summaryZh?: string; bodyZh?: string };
@@ -280,6 +284,20 @@ export function summarizeReddit(bodyHtml: string, maxLength = 120): string {
 	return first.length > maxLength ? `${first.slice(0, maxLength)}…` : first;
 }
 
+/**
+ * 链接帖的目标地址必须补成**绝对**地址。
+ *
+ * Reddit 的跨版转发（crosspost）给出的目标是 `/r/DotaConcepts/comments/…/` 这样的**站内相对路径**。
+ * 照原样渲染出来，`href` 就变成我们自己域名下的一个地址——点下去是我们自己的 404 页，
+ * Search Console 的「未找到 (404)」里就有这一批（实测一轮构建 11 条）。两条取数路径都从
+ * `toPost` 走，所以在这里收口。
+ */
+function absoluteRedditUrl(raw: string): string {
+	const url = raw.trim();
+	if (!url) return '';
+	return url.startsWith('/') ? `https://www.reddit.com${url}` : url;
+}
+
 /** 两条取数路径解析出来的字段是一致的，统一在这里拼成帖子对象。 */
 function toPost(feed: RedditFeed, fields: {
 	id: string;
@@ -293,6 +311,7 @@ function toPost(feed: RedditFeed, fields: {
 	comments: number | null;
 }): RedditPost {
 	const body = fields.bodyHtml.trim();
+	const externalUrl = absoluteRedditUrl(fields.externalUrl);
 	return {
 		id: fields.id,
 		title: fields.title,
@@ -302,8 +321,8 @@ function toPost(feed: RedditFeed, fields: {
 		permalink: fields.permalink,
 		createdAt: fields.createdAt,
 		body,
-		externalUrl: fields.externalUrl,
-		image: IMAGE_URL_RE.test(fields.externalUrl) ? fields.externalUrl : '',
+		externalUrl,
+		image: IMAGE_URL_RE.test(externalUrl) ? externalUrl : '',
 		summary: summarizeReddit(body),
 		score: fields.score,
 		comments: fields.comments,
@@ -576,6 +595,6 @@ export function toRedditCard(post: RedditPost): NewsCardItem {
 		tags: ['Reddit'],
 		badge: 'Reddit 社区',
 		meta: post.score != null ? `r/${post.subreddit} · ${post.score} 赞 · ${post.comments} 评论` : `r/${post.subreddit} · 热度排序`,
-		href: `/news/reddit/${post.id}`,
+		href: `/news/reddit/${post.id}/`,
 	};
 }
