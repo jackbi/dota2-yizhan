@@ -60,7 +60,7 @@ const heroOf = (id: number) => heroNames.get(id) ?? { name: `英雄 #${id}`, img
 			</p>
 			<p class="mt-4">
 				<a
-					href="/items"
+					href="/items/"
 					class="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-cream transition hover:border-dota hover:text-dota-light"
 				>
 					查装备库
@@ -98,7 +98,7 @@ const heroOf = (id: number) => heroNames.get(id) ?? { name: `英雄 #${id}`, img
 								<ol class="divide-y divide-line">
 									{board.rows.map(([id, entry], index) => (
 										<li>
-											<a href={`/heroes/${id}`} class="flex items-center gap-3 py-2 transition hover:text-dota-light">
+											<a href={`/heroes/${id}/`} class="flex items-center gap-3 py-2 transition hover:text-dota-light">
 												<span class="w-4 shrink-0 text-center font-display text-xs text-faint">{index + 1}</span>
 												{heroOf(id).img ? (
 													<img
@@ -192,7 +192,7 @@ const heroOf = (id: number) => heroNames.get(id) ?? { name: `英雄 #${id}`, img
 				const rate = stat && stat.matches > 0 ? stat.wins / stat.matches : null;
 				return (
 					<a
-						href={`/heroes/${h.id}`}
+						href={`/heroes/${h.id}/`}
 						data-attribute={h.attr}
 						data-complexity={h.complexity}
 						data-name={`${h.name} ${h.nameEn}`.toLowerCase()}

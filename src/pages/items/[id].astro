@@ -94,7 +94,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 <Layout
 	title={`${name} · 装备资料 · DOTA2 驿站`}
 	description={description}
-	breadcrumbs={[{ name: '装备', href: '/items' }, { name }]}
+	breadcrumbs={[{ name: '装备', href: '/items/' }, { name }]}
 >
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
@@ -103,7 +103,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 
 	<section class="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
 		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
-			<a href="/items" class="transition hover:text-dota-light">装备资料</a>
+			<a href="/items/" class="transition hover:text-dota-light">装备资料</a>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
@@ -133,7 +133,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 						{isActive ? '主动' : '被动'}
 					</span>
 					{entry.sectionLabel ? (
-						<a href={`/items#sec-${entry.section}`} class="text-xs text-muted transition hover:text-dota-light">
+						<a href={`/items/#sec-${entry.section}`} class="text-xs text-muted transition hover:text-dota-light">
 							{entry.sectionLabel}
 							{entry.group ? ` · ${entry.group}` : ''}
 						</a>
@@ -217,7 +217,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 							reagent.item ? (
 								<li>
 									<a
-										href={`/items/${reagent.key}`}
+										href={`/items/${reagent.key}/`}
 										class="flex items-center gap-3 rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
 									>
 										<img
@@ -260,7 +260,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 					<div class="mt-4 flex flex-wrap gap-2">
 						{buildsInto.map((target) => (
 							<a
-								href={`/items/${target.key}`}
+								href={`/items/${target.key}/`}
 								class="flex items-center gap-2 rounded-lg border border-line bg-surface/40 px-2.5 py-1.5 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
 							>
 								<img
@@ -293,7 +293,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 						{patches.slice(0, 12).map((patch) => (
 							<li>
 								<a
-									href={`/patches/${patch.id}`}
+									href={`/patches/${patch.id}/`}
 									class="flex items-baseline gap-3 rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
 								>
 									<span class="shrink-0 font-display text-gold">{patch.version}</span>
@@ -305,7 +305,7 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 					</ul>
 					{patches.length > 12 ? (
 						<p class="mt-3 text-xs text-faint">
-							只列最近 12 个版本，全部改动见 <a href="/patches" class="text-dota-light hover:text-cream">版本信息</a>。
+							只列最近 12 个版本，全部改动见 <a href="/patches/" class="text-dota-light hover:text-cream">版本信息</a>。
 						</p>
 					) : null}
 				</section>
@@ -315,12 +315,12 @@ const CD_ICON = 'https://cdn.dota2.com.cn/apps/dota2/images/tooltips/cooldown.pn
 		{lore ? <p class="mt-10 border-t border-line pt-6 text-sm italic leading-relaxed text-faint">{lore}</p> : null}
 
 		<div class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
-			<a href={`/items/${prevKey}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+			<a href={`/items/${prevKey}/`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
 				<span aria-hidden="true">←</span>
 				<span class="max-w-40 truncate">{prevName}</span>
 			</a>
-			<a href="/items" class="text-sm text-muted transition hover:text-dota-light">装备资料库</a>
-			<a href={`/items/${nextKey}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+			<a href="/items/" class="text-sm text-muted transition hover:text-dota-light">装备资料库</a>
+			<a href={`/items/${nextKey}/`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
 				<span class="max-w-40 truncate">{nextName}</span>
 				<span aria-hidden="true">→</span>
 			</a>

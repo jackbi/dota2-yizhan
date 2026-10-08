@@ -29,7 +29,7 @@ const initial = team.name.trim().slice(0, 2).toUpperCase();
 ---
 
 <a
-	href={`/teams/${team.id}`}
+	href={`/teams/${team.id}/`}
 	data-name={team.name.toLowerCase()}
 	data-playing={next !== null ? '1' : '0'}
 	class="team-card group flex items-center gap-3 rounded-2xl border border-line bg-surface p-4 transition hover:-translate-y-0.5 hover:border-dota/50 hover:bg-surface-2"

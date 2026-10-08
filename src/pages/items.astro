@@ -26,7 +26,7 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 			<p class="mt-3 max-w-2xl text-muted">数据实时来自 DOTA2 官方接口。点击装备可查看价格、效果与合成配方。</p>
 			<p class="mt-4">
 				<a
-					href="/heroes"
+					href="/heroes/"
 					class="inline-flex items-center gap-1.5 rounded-lg border border-line px-4 py-2 text-sm text-cream transition hover:border-dota hover:text-dota-light"
 				>
 					查英雄资料
@@ -84,7 +84,7 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 						{sec.groups.flatMap((group) =>
 							group.items.map((it) => (
 								<a
-									href={`/items/${it.name}`}
+									href={`/items/${it.name}/`}
 									data-item={it.name}
 									data-name={`${it.nameLoc} ${it.name}`.toLowerCase()}
 									data-loc={it.nameLoc}
@@ -349,7 +349,7 @@ const itemTotal = itemSections?.reduce((total, sec) => total + sec.groups.reduce
 					</div>
 				</div>
 				${body ? `<div class="mt-3 border-t border-line/60 pt-1">${body}</div>` : ''}
-				<a href="/items/${encodeURIComponent(key)}" class="mt-3 flex items-center gap-1 border-t border-line/60 pt-2 text-xs text-dota-light transition hover:text-gold">看详情<span aria-hidden="true">→</span></a>`;
+				<a href="/items/${encodeURIComponent(key)}/" class="mt-3 flex items-center gap-1 border-t border-line/60 pt-2 text-xs text-dota-light transition hover:text-gold">看详情<span aria-hidden="true">→</span></a>`;
 
 			tip.classList.remove('opacity-0', 'pointer-events-none');
 			tip.style.visibility = 'visible';

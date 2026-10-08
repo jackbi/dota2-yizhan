@@ -59,7 +59,7 @@ export async function fetchCommunityFeed(): Promise<CommunityPost[]> {
 				replies: thread.replies,
 				lastReplyAt: thread.lastReplyAt,
 				summary: thread.summary,
-				href: `/community/nga/${thread.tid}`,
+				href: `/community/nga/${thread.tid}/`,
 			}),
 		),
 		...hupu.map(
@@ -72,7 +72,7 @@ export async function fetchCommunityFeed(): Promise<CommunityPost[]> {
 				views: thread.views,
 				lastReplyAt: thread.lastReplyAt,
 				summary: thread.summary,
-				href: `/community/hupu/${thread.pid}`,
+				href: `/community/hupu/${thread.pid}/`,
 			}),
 		),
 	];

@@ -62,13 +62,13 @@ if (notes && hasContent) {
 <Layout
 	title={`${update.version} 更新日志 · 版本信息 · DOTA2 驿站`}
 	description={`DOTA2 ${update.version} 官方更新日志（${update.date}）：${summary || '完整改动列表'}。`}
-	breadcrumbs={[{ name: '版本信息', href: '/patches' }, { name: update.version }]}
+	breadcrumbs={[{ name: '版本信息', href: '/patches/' }, { name: update.version }]}
 >
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
-		<a href="/patches" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+		<a href="/patches/" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
@@ -98,7 +98,7 @@ if (notes && hasContent) {
 						<span class="mr-1 text-xs text-faint">{update.major} 系列</span>
 						{siblings.map((sibling) => (
 							<a
-								href={`/patches/${sibling.id}`}
+								href={`/patches/${sibling.id}/`}
 								aria-current={sibling.id === update.id ? 'page' : undefined}
 								class={
 									sibling.id === update.id
@@ -151,7 +151,7 @@ if (notes && hasContent) {
 			{
 				newer ? (
 					<a
-						href={`/patches/${newer.id}`}
+						href={`/patches/${newer.id}/`}
 						class="group flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/50"
 					>
 						<span class="text-faint transition group-hover:text-gold">←</span>
@@ -167,7 +167,7 @@ if (notes && hasContent) {
 			{
 				older ? (
 					<a
-						href={`/patches/${older.id}`}
+						href={`/patches/${older.id}/`}
 						class="group flex min-w-0 flex-1 items-center justify-end gap-2 rounded-xl border border-line bg-surface px-4 py-3 text-right transition hover:border-dota/50"
 					>
 						<span class="min-w-0">

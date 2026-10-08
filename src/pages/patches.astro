@@ -55,7 +55,7 @@ const oldest = updates[updates.length - 1];
 							<div class="mt-3 flex flex-wrap gap-1.5">
 								{group.items.map((item) => (
 									<a
-										href={`/patches/${item.id}`}
+										href={`/patches/${item.id}/`}
 										title={item.siteUrl ? `${item.version} 的日志在官方专题站上` : undefined}
 										class={
 											item.id === newest?.id

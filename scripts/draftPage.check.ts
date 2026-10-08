@@ -175,7 +175,7 @@ assert.match(script, /shapeFor\(ai\.baseUrl\)/, '请求形状（思考开关、�
  * 这一页留一行状态和一个入口；如果谁又把 key 输入框搬回来，两处都能改配置，存储又会打架。
  */
 assert.ok(page.includes('id="draft-ai-state"'), 'BP 台要显示配置状态');
-assert.ok(page.includes('href="/settings"'), 'BP 台要能走到设置页');
+assert.ok(page.includes('href="/settings/"'), 'BP 台要能走到设置页');
 assert.ok(!page.includes('id="draft-key"'), 'key 输入框只在 /settings，别在 BP 台再放一个');
 
 /**

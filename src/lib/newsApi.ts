@@ -183,7 +183,7 @@ export function toNewsCard(item: OfficialNews, featured = false): NewsCardItem {
 		img: item.img || undefined,
 		tags: item.feeds.length > 0 ? item.feeds.map((feed) => FEED_LABEL[feed]) : ['综合新闻'],
 		meta: '来源：DOTA2 官网',
-		href: `/news/${item.id}`,
+		href: `/news/${item.id}/`,
 		featured,
 	};
 }

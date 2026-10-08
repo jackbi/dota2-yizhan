@@ -4,6 +4,15 @@ import { sessionConfigured } from '../lib/session';
 
 export const prerender = false;
 
+/*
+ * SSR 路由两种写法都会 200，而 canonical 是照 `Astro.url.pathname` 拼的，于是 `/login` 与
+ * `/login/` 各指自己，Google 只能自己挑一个主版本。与 `/party`、英雄攻略页、对局复盘页同一条
+ * 规则：**只留一种**，另一种 301 过去。这里留不带斜杠那版——`/me` 那条 302 与站内链接用的都是它。
+ */
+if (Astro.url.pathname.endsWith('/')) {
+	return Astro.redirect(`${Astro.url.pathname.replace(/\/+$/, '')}${Astro.url.search}`, 301);
+}
+
 const configured = sessionConfigured();
 
 /** 回调失败时带来的原因码，翻成能看懂的话。 */

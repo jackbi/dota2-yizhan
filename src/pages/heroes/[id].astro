@@ -57,14 +57,14 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 <Layout
 	title={`${name} · 英雄资料 · DOTA2 驿站`}
 	description={`${name}（${nameEn}）英雄详细数据、技能动画与天赋树，实时来自官方接口。`}
-	breadcrumbs={[{ name: '英雄', href: '/heroes' }, { name }]}
+	breadcrumbs={[{ name: '英雄', href: '/heroes/' }, { name }]}
 >
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>
 	<section class="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
 		<nav class="mb-6 flex items-center gap-2 text-sm text-muted" aria-label="面包屑">
-			<a href="/heroes" class="transition hover:text-dota-light">英雄资料</a>
+			<a href="/heroes/" class="transition hover:text-dota-light">英雄资料</a>
 			<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
@@ -183,7 +183,7 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 						{heroPatches.slice(0, 12).map((patch) => (
 							<li>
 								<a
-									href={`/patches/${patch.id}`}
+									href={`/patches/${patch.id}/`}
 									class="flex items-baseline gap-3 rounded-lg border border-line bg-surface/40 px-3 py-2 text-sm transition hover:border-dota/60 hover:bg-surface-2/60"
 								>
 									<span class="shrink-0 font-display text-gold">{patch.version}</span>
@@ -195,7 +195,7 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 					</ul>
 					{heroPatches.length > 12 ? (
 						<p class="mt-3 text-xs text-faint">
-							只列最近 12 个版本，全部改动见 <a href="/patches" class="text-dota-light hover:text-cream">版本信息</a>。
+							只列最近 12 个版本，全部改动见 <a href="/patches/" class="text-dota-light hover:text-cream">版本信息</a>。
 						</p>
 					) : null}
 				</section>
@@ -203,13 +203,13 @@ const POSITION_HINT: Record<number, string> = { 1: '优势路核心', 2: '中路
 		}
 
 		<div id="hero-nav" class="mt-10 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-6">
-			<a href={`/heroes/${prevId}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+			<a href={`/heroes/${prevId}/`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 					<path d="M19 12H5M11 6l-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 				</svg>
 				{prevName}
 			</a>
-			<a href={`/heroes/${nextId}`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
+			<a href={`/heroes/${nextId}/`} class="flex items-center gap-2 rounded-lg border border-line px-4 py-2 text-sm transition hover:border-dota hover:text-dota-light">
 				{nextName}
 				<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 					<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />

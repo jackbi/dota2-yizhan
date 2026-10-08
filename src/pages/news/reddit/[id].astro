@@ -30,13 +30,13 @@ const paragraphs = postBodyParagraphs(post);
 const translationPartial = paragraphs.length > 0 && isPostBodyTruncated(post);
 ---
 
-<Layout title={`${title} · Reddit · DOTA2 驿站`} description={postSummary(post)} breadcrumbs={[{ name: '资讯', href: '/news' }, { name: title }]}>
+<Layout title={`${title} · Reddit · DOTA2 驿站`} description={postSummary(post)} breadcrumbs={[{ name: '资讯', href: '/news/' }, { name: title }]}>
 	<Fragment slot="head">
 		<meta name="referrer" content="no-referrer" />
 	</Fragment>
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
 		{/* 按帖子来自哪个版块回到自己那一栏：锚点就是 `REDDIT_FEEDS.id`。 */}
-		<a href={`/news#${post.feed}`} class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+		<a href={`/news/#${post.feed}`} class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
 			返回资讯中心
 		</a>

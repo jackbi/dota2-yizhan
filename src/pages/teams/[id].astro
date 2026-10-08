@@ -132,10 +132,10 @@ function initial(name: string): string {
 <Layout
 	title={`${team.name} · 战队 · DOTA2 驿站`}
 	description={`${team.name} 的队员、赛程与赛果：当前数据窗口内 ${team.matches.length} 场对阵，${team.wins} 胜 ${team.losses} 负。`}
-	breadcrumbs={[{ name: '战队', href: '/teams' }, { name: team.name }]}
+	breadcrumbs={[{ name: '战队', href: '/teams/' }, { name: team.name }]}
 >
 	<section class="mx-auto max-w-4xl px-4 py-10 sm:px-6 lg:px-8">
-		<a href="/teams" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+		<a href="/teams/" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 				<path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
@@ -288,7 +288,7 @@ function initial(name: string): string {
 					<div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
 						{team.events.map((event) => (
 							<a
-								href={`/tournaments/${event.id}`}
+								href={`/tournaments/${event.id}/`}
 								class="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3 transition hover:border-dota/40 hover:bg-surface-2"
 							>
 								<span class="min-w-0">

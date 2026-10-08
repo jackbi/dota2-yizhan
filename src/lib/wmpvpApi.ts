@@ -147,7 +147,7 @@ export function toWmpvpCard(item: WmpvpNews): NewsCardItem {
 		tags: ['国服资讯'],
 		meta: item.author ? `来源：完美世界电竞 · ${item.author}` : '来源：完美世界电竞',
 		badge: '完美世界',
-		href: `/news/wmpvp/${item.id}`,
+		href: `/news/wmpvp/${item.id}/`,
 	};
 }
 

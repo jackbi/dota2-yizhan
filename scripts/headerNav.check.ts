@@ -24,11 +24,17 @@ const header = start >= 0 ? layout.slice(start, layout.indexOf('</header>')) : '
 assert.ok(header.length > 500, '没从 Layout.astro 里切出页头，解析多半坏了');
 
 const REPO_URL = 'https://github.com/jackbi/dota2-yizhan';
-const DONATE = 'href="/donate"';
+/*
+ * 页头、页脚里的站内链接与 `NAV` 一样，一律写**预渲染页的规范形态**（带尾斜杠）。
+ * 写成 `/donate` 时 Cloudflare 的静态资源规则会 307 到 `/donate/`：访客多一跳，
+ * 而对搜索引擎来说那个地址永远停在「网页会自动重定向」里（见 docs/seo.md）。
+ * 所以这里连断言一起改成带斜杠的形式，别再退回不带斜杠的写法。
+ */
+const DONATE = 'href="/donate/"';
 
 assert.ok(header.includes(REPO_URL), '开源仓库的入口要在页头');
 assert.ok(header.includes(DONATE), '赞赏的入口要在页头');
-assert.ok(header.includes('href="/settings"'), 'AI 设置的入口要在页头');
+assert.ok(header.includes('href="/settings/"'), 'AI 设置的入口要在页头');
 
 /*
  * 位置：都在登录入口的**左边**。这是这一页的用户明确要的排布，也是"右侧这一组"里唯一
@@ -38,9 +44,9 @@ const authAt = header.indexOf('<AuthEntry />');
 assert.ok(authAt > 0, '页头要有 Steam 登录入口');
 assert.ok(header.indexOf(REPO_URL) < authAt, '开源仓库要排在 Steam 登录左边');
 assert.ok(header.indexOf(DONATE) < authAt, '赞赏要排在 Steam 登录左边');
-assert.ok(header.indexOf('href="/settings"') < authAt, 'AI 设置要排在 Steam 登录左边');
+assert.ok(header.indexOf('href="/settings/"') < authAt, 'AI 设置要排在 Steam 登录左边');
 // 「在设置旁边」：赞赏要挨着 AI 设置，排在它左边。
-assert.ok(header.indexOf(DONATE) < header.indexOf('href="/settings"'), '赞赏要挨着 AI 设置（排在它左边）');
+assert.ok(header.indexOf(DONATE) < header.indexOf('href="/settings/"'), '赞赏要挨着 AI 设置（排在它左边）');
 
 // 外链不能把 referrer 带出去，也不能让打开的页面反向控制本站窗口。
 assert.match(
@@ -75,8 +81,8 @@ assert.ok(!/>\s*赞赏项目\s*</.test(header), '赞赏只留图标：文字会�
 assert.ok(!/>\s*AI 设置\s*</.test(header), 'AI 设置只留图标：文字会把导航挤换行');
 
 // 站在这一页上时它要能高亮，否则读者不知道自己在这一页。
-assert.match(header, /aria-current=\{isActive\('\/settings'\)/, 'AI 设置要以当前页高亮');
-assert.match(header, /aria-current=\{isActive\('\/donate'\)/, '赞赏要以当前页高亮');
+assert.match(header, /aria-current=\{isActive\('\/settings\/'\)/, 'AI 设置要以当前页高亮');
+assert.match(header, /aria-current=\{isActive\('\/donate\/'\)/, '赞赏要以当前页高亮');
 
 /*
  * 导航项到页面的映射：`/teams` 可能是 `src/pages/teams.astro`，也可能是

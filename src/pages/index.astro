@@ -71,14 +71,14 @@ const notFinished = bundle.events.filter((e) => e.status !== 'completed');
 const upcoming = (notFinished.length > 0 ? notFinished : bundle.events).slice(0, 3);
 
 const FEATURES = [
-	{ href: '/live', title: '分屏直播', desc: '房间列表 + 监控室分屏：挑好直播间拖进格子里就能多路同看。', icon: 'screen' },
-	{ href: '/ob', title: 'OB 大家庭', desc: 'OB 十人名单、真实姓名、外号、荣誉与直播间，附带各人名场面视频。', icon: 'users' },
-	{ href: '/news', title: '资讯中心', desc: '官网新闻与 Reddit 热帖、NGA 与虎扑社区热议，正文都抓回站内读。', icon: 'news' },
-	{ href: '/tournaments', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
-	{ href: '/draft', title: '阵容分析', desc: '看比赛时录 BP，按号位胜率给出下一手建议，并可让模型解释。', icon: 'sword' },
-	{ href: '/patches', title: '版本信息', desc: '从 7.08 到最新的官方更新日志完整存档，改动按英雄与物品分好类。', icon: 'patch' },
-	{ href: '/heroes', title: '英雄资料', desc: '按属性与难度筛英雄，版本强度榜、出场榜与详细数值技能。', icon: 'sword' },
-	{ href: '/items', title: '装备库', desc: '从基础件到中立物品，查价格、效果与合成配方。', icon: 'items' },
+	{ href: '/live/', title: '分屏直播', desc: '房间列表 + 监控室分屏：挑好直播间拖进格子里就能多路同看。', icon: 'screen' },
+	{ href: '/ob/', title: 'OB 大家庭', desc: 'OB 十人名单、真实姓名、外号、荣誉与直播间，附带各人名场面视频。', icon: 'users' },
+	{ href: '/news/', title: '资讯中心', desc: '官网新闻与 Reddit 热帖、NGA 与虎扑社区热议，正文都抓回站内读。', icon: 'news' },
+	{ href: '/tournaments/', title: '官方赛事', desc: 'TI、Major、ESL 等大赛赛程、奖金与直播状态一览。', icon: 'trophy' },
+	{ href: '/draft/', title: '阵容分析', desc: '看比赛时录 BP，按号位胜率给出下一手建议，并可让模型解释。', icon: 'sword' },
+	{ href: '/patches/', title: '版本信息', desc: '从 7.08 到最新的官方更新日志完整存档，改动按英雄与物品分好类。', icon: 'patch' },
+	{ href: '/heroes/', title: '英雄资料', desc: '按属性与难度筛英雄，版本强度榜、出场榜与详细数值技能。', icon: 'sword' },
+	{ href: '/items/', title: '装备库', desc: '从基础件到中立物品，查价格、效果与合成配方。', icon: 'items' },
 ] as const;
 ---
 
@@ -102,16 +102,16 @@ const FEATURES = [
 					让每一次打开，都能跟上刀塔世界的最新脉搏。
 				</p>
 				<div class="mt-8 flex flex-wrap gap-3">
-					<a href="/live" class="group inline-flex items-center gap-2 rounded-lg bg-dota px-5 py-3 font-medium text-white shadow-lg shadow-dota/30 transition hover:bg-dota-dark">
+					<a href="/live/" class="group inline-flex items-center gap-2 rounded-lg bg-dota px-5 py-3 font-medium text-white shadow-lg shadow-dota/30 transition hover:bg-dota-dark">
 						进入分屏直播
 						<svg class="transition group-hover:translate-x-0.5" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
 							<path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
 						</svg>
 					</a>
-					<a href="/ob" class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 font-medium text-cream transition hover:border-dota hover:text-dota-light">
+					<a href="/ob/" class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 font-medium text-cream transition hover:border-dota hover:text-dota-light">
 						看 OB 大家庭
 					</a>
-					<a href="/heroes" class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 font-medium text-cream transition hover:border-dota hover:text-dota-light">
+					<a href="/heroes/" class="inline-flex items-center gap-2 rounded-lg border border-line px-5 py-3 font-medium text-cream transition hover:border-dota hover:text-dota-light">
 						英雄资料
 					</a>
 				</div>
@@ -129,7 +129,7 @@ const FEATURES = [
 						></span>
 						{liveMembers.length > 0 ? '正在直播' : '开播状态'}
 					</h2>
-					<a href="/live" class="text-sm text-dota-light transition hover:text-gold">全部直播 →</a>
+					<a href="/live/" class="text-sm text-dota-light transition hover:text-gold">全部直播 →</a>
 				</div>
 				<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
 					{
@@ -144,7 +144,7 @@ const FEATURES = [
 					{liveMembers.length === 0 && (
 						<p class="col-span-full rounded-xl border border-line bg-ink/60 p-4 text-sm text-muted">
 							这个构建时刻没有抓到正在开播的房间。开播状态是构建期快照，可能只是恰好都没在播——
-							<a href="/ob" class="text-dota-light hover:text-gold">去 OB 大家庭</a> 可以看每个人的固定直播间。
+							<a href="/ob/" class="text-dota-light hover:text-gold">去 OB 大家庭</a> 可以看每个人的固定直播间。
 						</p>
 					)}
 				</div>
@@ -183,7 +183,7 @@ const FEATURES = [
 	{
 		featuredNews.length > 0 ? (
 			<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-				<SectionHeader eyebrow="资讯" title="最新资讯" href="/news" linkText="全部资讯" />
+				<SectionHeader eyebrow="资讯" title="最新资讯" href="/news/" linkText="全部资讯" />
 				<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
 					{featuredNews.map((n) => (
 						<NewsCard item={n} />
@@ -197,11 +197,11 @@ const FEATURES = [
 	{
 		hotThreads.length > 0 ? (
 			<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-				<SectionHeader eyebrow="社区" title="社区热议" href="/news#nga" linkText="全部热帖" />
+				<SectionHeader eyebrow="社区" title="社区热议" href="/news/#nga" linkText="全部热帖" />
 				<ol class="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
 					{hotThreads.map((thread, index) => (
 						<li>
-							<a href={`/community/nga/${thread.tid}`} class="group flex items-center gap-4 px-4 py-3 transition hover:bg-surface-2">
+							<a href={`/community/nga/${thread.tid}/`} class="group flex items-center gap-4 px-4 py-3 transition hover:bg-surface-2">
 								<span class="w-5 shrink-0 text-center font-display text-sm text-faint">{index + 1}</span>
 								<span class="min-w-0 flex-1 truncate text-sm text-cream transition group-hover:text-dota-light">{thread.title}</span>
 								<span class="hidden shrink-0 text-xs text-faint sm:inline">{thread.author}</span>
@@ -218,7 +218,7 @@ const FEATURES = [
 
 	<!-- Upcoming tournaments -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-		<SectionHeader eyebrow="赛事" title="近期官方赛事" href="/tournaments" linkText="全部赛事" />
+		<SectionHeader eyebrow="赛事" title="近期官方赛事" href="/tournaments/" linkText="全部赛事" />
 			<div class="grid grid-cols-1 gap-4 md:grid-cols-3">
 				{upcoming.map((t) => <TournamentCard event={t} now={now} />)}
 			</div>
@@ -226,11 +226,11 @@ const FEATURES = [
 
 	<!-- Latest patch -->
 	<section class="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
-		<SectionHeader eyebrow="版本" title="最新版本动态" href="/patches" linkText="全部版本" />
+		<SectionHeader eyebrow="版本" title="最新版本动态" href="/patches/" linkText="全部版本" />
 		{
 			latestPatch ? (
 				<a
-					href={`/patches/${latestPatch.id}`}
+					href={`/patches/${latestPatch.id}/`}
 					class="group flex items-center gap-5 overflow-hidden rounded-2xl border border-line bg-surface p-6 transition hover:border-dota/50 hover:bg-surface-2"
 				>
 					<span class="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl border border-line bg-surface-2 px-2 text-center font-display text-lg leading-tight text-gold">

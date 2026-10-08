@@ -3,13 +3,13 @@ import type { Platform } from './types';
 export const NAV = [
 	{ href: '/', label: '首页' },
 	{ href: '/party/', label: '开黑房间' },
-	{ href: '/news', label: '资讯' },
-	{ href: '/tournaments', label: '赛事' },
-	{ href: '/teams', label: '战队' },
-	{ href: '/draft', label: '阵容分析' },
-	{ href: '/patches', label: '版本' },
-	{ href: '/heroes', label: '英雄' },
-	{ href: '/items', label: '装备' },
+	{ href: '/news/', label: '资讯' },
+	{ href: '/tournaments/', label: '赛事' },
+	{ href: '/teams/', label: '战队' },
+	{ href: '/draft/', label: '阵容分析' },
+	{ href: '/patches/', label: '版本' },
+	{ href: '/heroes/', label: '英雄' },
+	{ href: '/items/', label: '装备' },
 ] as const;
 
 export const PLATFORM_META: Record<Platform, { label: string; color: string; short: string }> = {

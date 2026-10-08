@@ -295,7 +295,7 @@ function renderHero(hero: PatchHeroEntry, names: PatchNames, icons: PatchIconMap
 	 * 之前这里只看「名字表里有没有」，于是补进去的熊灵反而被链出去了。
 	 */
 	const nameHtml = ref && ref.key
-		? `<a class="text-dota-light transition hover:text-cream" href="/heroes/${hero.hero_id}">${escapeText(name)}</a>`
+		? `<a class="text-dota-light transition hover:text-cream" href="/heroes/${hero.hero_id}/">${escapeText(name)}</a>`
 		: escapeText(name);
 	const parts: string[] = [];
 	parts.push(renderLines(hero.hero_notes));
@@ -328,7 +328,7 @@ function renderItem(item: PatchItemEntry, names: PatchNames, icons: PatchIconMap
 	 * 查不到的（官方偶尔插的空条目）根本没走到这里。
 	 */
 	const nameHtml = ref.key
-		? `<a class="text-dota-light transition hover:text-cream" href="/items/${encodeURIComponent(ref.key)}">${escapeText(ref.name)}</a>`
+		? `<a class="text-dota-light transition hover:text-cream" href="/items/${encodeURIComponent(ref.key)}/">${escapeText(ref.name)}</a>`
 		: escapeText(ref.name);
 	return renderEntity(icon, nameHtml, renderLines(item.ability_notes), 'pn-entity');
 }

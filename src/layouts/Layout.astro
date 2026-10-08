@@ -8,7 +8,7 @@ interface Props {
 	title?: string;
 	description?: string;
 	/**
-	 * 面包屑：`[{ name: '英雄', href: '/heroes' }, { name: '敌法师' }]`。
+	 * 面包屑：`[{ name: '英雄', href: '/heroes/' }, { name: '敌法师' }]`。
 	 * **不用写首页**——这里会自动在最前面补一条，省得每个页面都抄一遍。
 	 * 最后一项不给 href（那就是当前页）。
 	 */
@@ -268,13 +268,13 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 						</svg>
 					</a>
 					<a
-						href="/donate"
+						href="/donate/"
 						title="赞赏项目（请我喝咖啡）"
 						aria-label="赞赏项目"
-						aria-current={isActive('/donate') ? 'page' : undefined}
+						aria-current={isActive('/donate/') ? 'page' : undefined}
 						class:list={[
 							'flex h-10 w-10 items-center justify-center rounded-md border transition',
-							isActive('/donate')
+							isActive('/donate/')
 								? 'border-dota/60 bg-dota/15 text-dota-light'
 								: 'border-line text-muted hover:border-dota hover:bg-surface-2 hover:text-cream',
 						]}
@@ -299,13 +299,13 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 						</svg>
 					</a>
 					<a
-						href="/settings"
+						href="/settings/"
 						title="给阵容分析配模型（key 只存在这台浏览器）"
 						aria-label="AI 设置"
-						aria-current={isActive('/settings') ? 'page' : undefined}
+						aria-current={isActive('/settings/') ? 'page' : undefined}
 						class:list={[
 							'flex h-10 w-10 items-center justify-center rounded-md border transition',
-							isActive('/settings')
+							isActive('/settings/')
 								? 'border-dota/60 bg-dota/15 text-dota-light'
 								: 'border-line text-muted hover:border-dota hover:bg-surface-2 hover:text-cream',
 						]}
@@ -385,7 +385,7 @@ const structuredJson = inlineJson({ '@context': 'https://schema.org', '@graph': 
 						AI 设置的正式入口在页头（右侧、登录左边）；页脚这份留着，是因为它是全站唯一
 						填 key 的地方，多一个入口总比让人以为"模型是站点替他们调的"强。
 					-->
-					<a href="/settings" class="text-muted transition hover:text-cream">AI 设置</a>
+					<a href="/settings/" class="text-muted transition hover:text-cream">AI 设置</a>
 				</div>
 			</div>
 			<div class="border-t border-line">

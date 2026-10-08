@@ -26,7 +26,18 @@ export const prerender = false;
 
 /** 只接受正整数：`/replay/abc` 之类直接回赛程列表，不去上游浪费一次查询。 */
 const matchId = Number(Astro.params.id);
-if (!Number.isSafeInteger(matchId) || matchId <= 0) return Astro.redirect('/tournaments');
+// 跳转目标也照 `Astro.url` 那套规范形态写：写成 `/tournaments` 会先 302 过去、再被
+// Cloudflare 307 到 `/tournaments/`，同一个目的地白跳两次。
+if (!Number.isSafeInteger(matchId) || matchId <= 0) return Astro.redirect('/tournaments/');
+
+/*
+ * 两种写法都 200 的话，canonical 会各指自己（它是照 `Astro.url.pathname` 拼的），
+ * Google 只能自己挑一个主版本。这与 `/party`、英雄攻略页是同一条规则：**只留一种**，
+ * 另一种 301 过去。这里留不带斜杠那版——比赛页与个人战绩页里的链接就是这个形式。
+ */
+if (Astro.url.pathname.endsWith('/')) {
+	return Astro.redirect(`${Astro.url.pathname.replace(/\/+$/, '')}${Astro.url.search}`, 301);
+}
 
 type ReviewLoad =
 	| { ok: true; review: MatchReview | null }
@@ -79,7 +90,7 @@ const title = `${radiantName} vs ${direName} · 对局复盘 · DOTA2 驿站`;
 <Layout
 	title={title}
 	description={`${radiantName} 对阵 ${direName} 的对局复盘：经济与经验差曲线、三路结果、建筑倒塌时间轴，以及英雄逐秒位置的地图回放。`}
-	breadcrumbs={[{ name: '赛事', href: '/tournaments' }, { name: `${radiantName} vs ${direName}` }]}
+	breadcrumbs={[{ name: '赛事', href: '/tournaments/' }, { name: `${radiantName} vs ${direName}` }]}
 >
 	<Fragment slot="head">
 		<meta name="robots" content="noindex" />
@@ -102,7 +113,7 @@ const title = `${radiantName} vs ${direName} · 对局复盘 · DOTA2 驿站`;
 		 */}
 		<a
 			id="replay-back"
-			href="/tournaments"
+			href="/tournaments/"
 			class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold"
 		>
 			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
