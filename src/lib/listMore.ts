@@ -3,6 +3,7 @@ import { hupuPost, ngaPost } from './communityPost.ts';
 import { hupuBoardUrl, selectBoardThreads, toThreads } from './hupuBoard.ts';
 import { feedItemToNewsCard, newsFeedPageUrl, parseNewsFeedPage } from './newsFeed.ts';
 import { ngaHotUrl, parseHotThreads } from './ngaThread.ts';
+import { CHAOHUA_HEADERS, chaohuaFeedUrl, chaohuaNextCursor, parseChaohuaFeed, toWeiboCard } from './weiboChaohua.ts';
 import { listItemToNewsCard, parseWmpvpList, wmpvpListUrl } from './wmpvpList.ts';
 import { cached, pace } from './ssrCache.ts';
 
@@ -23,22 +24,24 @@ import { cached, pace } from './ssrCache.ts';
  * | 完美世界 | `pageNum=N` | 运行时卡片不带配图（图床只认它自己的 Referer，见 `wmpvpList.ts`） |
  * | NGA | `__act=hot&days=7&page=N` | 热榜本身有页；按 7 天窗往下翻，重复的由 `key` 去重 |
  * | 虎扑 | `/dota2-N` | 版面页分页，取帖口径与构建期那份共用 `hupuBoard.ts` |
+ * | 微博超话 | `since_id` 游标 | **没有 page 参数**（实测 `page=2` 返回的还是第 1 页）；游标由上一页回传，见 `weiboPage` |
  * | Reddit | —— | **没有分页**：官方接口的游标要 OAuth 凭据（`REDDIT_CLIENT_ID/SECRET`），
  *   而现在没配，走的是 RSS，那份只有一屏。所以这一栏不摆按钮 |
  *
  * ## 三条约定（与 `communityFloors.ts` 一致）
  *
  * 1. **只响应点击**：接口带 `X-Robots-Tag: noindex`，页面上也没有 `<a href>` 指向它；
- * 2. **同一页 10 分钟内只打一次上游**，上限 `MAX_MORE_PAGE`，地址只有固定模板；
+ * 2. **同一页 10 分钟内只打一次上游**，地址只有固定模板；页码上限默认 `MAX_MORE_PAGE`，
+ *    微博那一栏是它自己更小的 `WEIBO_MAX_PAGE`（游标走一步就打一次上游）；
  * 3. **缓存里放解析结果、不放拼好的 HTML**：卡片上有「最后回复 今天 14:22」这种相对时间。
  *
  * 这个文件**不能碰 `node:*`**：它同时被页面（构建期）与 `/api/news/more`（Workers 运行时）引用。
  */
 
-export type MoreSource = 'news' | 'wmpvp' | 'nga' | 'hupu';
+export type MoreSource = 'news' | 'wmpvp' | 'nga' | 'hupu' | 'weibo';
 
 /** 页面上摆「加载更多」的栏，顺序与标签页一致。 */
-export const MORE_SOURCES: readonly MoreSource[] = ['news', 'wmpvp', 'nga', 'hupu'];
+export const MORE_SOURCES: readonly MoreSource[] = ['news', 'wmpvp', 'nga', 'hupu', 'weibo'];
 
 /** 最多往回翻多少页：给爬虫/好事者一个上限，正常读者也用不到。 */
 export const MAX_MORE_PAGE = 40;
@@ -171,6 +174,61 @@ async function hupuPage(page: number, nowSec: number): Promise<MorePage> {
 }
 
 /**
+ * 微博超话的「最新发帖」最多翻到第几页。
+ *
+ * 与别家不同：这一栏的页码**不是**上游的分页参数，而是本站自己走游标的步数（见下），
+ * 所以必须自己设上限。8 页 × 15 条 = 120 条，实测正好覆盖约 3 天——再往前就是几天前的
+ * 水贴与晒图，继续翻对读者没有价值，却要让上游多挨几十次请求。
+ */
+const WEIBO_MAX_PAGE = 8;
+
+/**
+ * 微博超话：「最新发帖」是**游标**分页，不是 `page=N`。
+ *
+ * 实测 `flowId=…_-_sort_time&page=2` 返回的还是第 1 页那一份（与 NGA 热榜同款假分页），
+ * 唯一的翻页方式是回传上一页响应里的 `since_id`。而本站的接口契约是「给一个页码」，
+ * 于是这一栏的"第 N 页"= **从第一页顺着游标走 N 步**。
+ *
+ * 每一步都进缓存（`more-weibo:<步数>:<游标>`），所以读者按顺序点下去时，每点一次只多打
+ * 一次上游——只有直接跳页（或缓存过期后重来）才需要补走前面几步。
+ *
+ * 卡片**不带配图**：微博图床只认它自己家的 Referer，运行时的 Workers 落不了地；首屏那批
+ * 才有构建期取回来的图（见 `weiboApi.ts`）。这一条与完美世界那一栏同款降级。
+ */
+async function weiboPage(page: number): Promise<MorePage> {
+	if (page > WEIBO_MAX_PAGE) return pageResult('weibo', page, []);
+
+	const headers = { ...CHAOHUA_HEADERS, 'User-Agent': BROWSER_USER_AGENT };
+	/** 走一步：取这一页的帖子与下一页的游标。步数进缓存，读者顺序点击时每步只打一次上游。 */
+	const step = (index: number, sinceId: string | null) =>
+		cached(`more-weibo:${index}:${sinceId ?? 'head'}`, MORE_TTL_MS, async () => {
+			await pace();
+			const response = await fetch(chaohuaFeedUrl(sinceId), {
+				headers,
+				signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+			});
+			if (!response.ok) return null;
+			const json = await response.json();
+			const parsed = parseChaohuaFeed(json);
+			if (parsed.length === 0) return null;
+			return { posts: parsed, next: chaohuaNextCursor(json) };
+		});
+
+	let current = await step(0, null);
+	if (!current) return pageResult('weibo', page, []);
+	for (let index = 1; index < page; index++) {
+		// 游标为空表示上游说到头了，按"到底"处理。
+		if (!current.next) return pageResult('weibo', page, []);
+		const next = await step(index, current.next);
+		if (!next) return pageResult('weibo', page, []);
+		current = next;
+	}
+
+	const items = current.posts.map((post) => ({ key: post.id, html: renderNewsCard(toWeiboCard(post)) }));
+	return pageResult('weibo', page, items);
+}
+
+/**
  * 取某一栏的下一页。
  *
  * 上面几条**只缓存解析结果**，卡片在这里按 `nowSec` 现渲染——缓存里存 HTML 的话，
@@ -180,5 +238,6 @@ export async function fetchMoreCards(source: MoreSource, page: number, nowSec: n
 	if (source === 'news') return newsPage(page, nowSec);
 	if (source === 'wmpvp') return wmpvpPage(page, nowSec);
 	if (source === 'nga') return ngaPage(page, nowSec);
+	if (source === 'weibo') return weiboPage(page);
 	return hupuPage(page, nowSec);
 }

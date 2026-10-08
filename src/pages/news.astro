@@ -7,13 +7,14 @@ import type { CommunityPost, CommunitySource } from '../lib/communityFeed';
 import { SOURCE_LABEL, fetchCommunityFeed } from '../lib/communityFeed';
 import { fetchOfficialNews, toNewsCard, type OfficialNews } from '../lib/newsApi';
 import { fetchRedditPosts, toRedditCard, type RedditFeedId, type RedditPost } from '../lib/redditApi';
+import { fetchWeiboPosts, toWeiboCard, type WeiboPost } from '../lib/weiboApi';
 import { fetchWmpvpNews, toWmpvpCard, type WmpvpNews } from '../lib/wmpvpApi';
 import { MORE_SOURCES } from '../lib/listMore';
 
 /**
- * 资讯中心：官网新闻、两个 Reddit 版块与 NGA / 虎扑的社区热帖合成一页。
+ * 资讯中心：官网新闻、完美世界、两个 Reddit 版块，以及 NGA / 虎扑 / 微博超话三个社区来源合成一页。
  *
- * 页签只按**来源**分四条，一条列表一个来源、一次只显示一条——别的一概不做：
+ * 页签只按**来源**分七条，一条列表一个来源、一次只显示一条——别的一概不做：
  *
  * - **不按官网栏目拆页签。** 官网一篇文章常常同时挂着「官方新闻 / 赛事新闻 / 公告」好几个栏目，
  *   按栏目拆出来的列表只比全量少十几条，读者却得先选再读。栏目标签印在卡片上，扫一眼就知道。
@@ -57,11 +58,23 @@ try {
 	wmpvpItems = [];
 }
 
+/**
+ * 微博那条取的是 DOTA2 超话的「最新发帖」（按时间），不是它家的热搜或推荐流。
+ * 超话是随手发的社区流，和官方新闻不是一回事，所以同样单独一栏、不混排。
+ */
+let weiboPosts: WeiboPost[] = [];
+try {
+	weiboPosts = await fetchWeiboPosts();
+} catch {
+	weiboPosts = [];
+}
+
 // 时间格式化统一用 Unix 秒。
 const now = Math.floor(Date.now() / 1000);
 
 const officialCards: NewsCardItem[] = articles.map((item, index) => toNewsCard(item, index === 0));
 const wmpvpCards: NewsCardItem[] = wmpvpItems.map((item) => toWmpvpCard(item));
+const weiboCards: NewsCardItem[] = weiboPosts.map((post) => toWeiboCard(post));
 const threadCards = (source: CommunitySource) => posts.filter((post) => post.source === source);
 
 /**
@@ -76,7 +89,7 @@ const redditByFeed = (id: RedditFeedId) => redditPosts.filter((post) => post.fee
 const redditCards = (id: RedditFeedId): NewsCardItem[] => redditByFeed(id).map((post) => toRedditCard(post));
 
 /**
- * 六条来源页签。数字是这一轮真正抓到的条数，不写死——抓不到就是 0，
+ * 七条来源页签。数字是这一轮真正抓到的条数，不写死——抓不到就是 0，
  * 由页面上的 `NOTICES` 说明是上游没给，还是本来就没有。
  */
 const SOURCES = [
@@ -89,6 +102,11 @@ const SOURCES = [
 	 * 名字与口径对不上正是上一版的问题之一——按回复数排完，这一栏全是几天前的老帖。
 	 */
 	{ id: 'hupu', label: `${SOURCE_LABEL.hupu}新帖`, count: posts.filter((post) => post.source === 'hupu').length },
+	/*
+	 * 微博这条跟着超话的「最新发帖」走（时间序），和虎扑那条一样不是热榜。
+	 * 卡片点开就是原帖——站内不做镜像，理由写在 `weiboChaohua.ts` 的 `toWeiboCard`。
+	 */
+	{ id: 'weibo', label: '微博超话', count: weiboCards.length },
 ];
 
 /** 默认落在「官网新闻」：这一页从前的入口就是官方新闻列表。 */
@@ -108,21 +126,24 @@ const NOTICES = [
 			: null,
 	),
 	posts.length === 0 ? '社区热帖暂不可用：构建期没有取到 NGA 与虎扑的榜单，也没有可用的本地缓存。' : null,
+	weiboCards.length === 0
+		? '微博超话暂不可用：构建期没有取到超话的最新发帖，也没有可用的本地缓存。'
+		: null,
 ].filter((line): line is string => line !== null);
 ---
 
 <Layout
 	title="资讯 · DOTA2 驿站"
-	description="DOTA2 官方新闻、完美世界电竞国服资讯、赛事动态、r/DotA2 与 r/compDota2 热帖、NGA 与虎扑社区热议，正文与帖子都镜像到站内直接阅读。"
+	description="DOTA2 官方新闻、完美世界电竞国服资讯、赛事动态、r/DotA2 与 r/compDota2 热帖，以及 NGA、虎扑与微博 DOTA2 超话的社区讨论，正文与帖子都镜像到站内直接阅读。"
 >
 	<section class="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
 		<div class="mb-8">
 			<p class="text-xs font-semibold uppercase tracking-[0.2em] text-dota-light">资讯中心</p>
 			<h1 class="mt-2 font-display text-3xl sm:text-4xl">资讯</h1>
 			<p class="mt-3 max-w-2xl text-muted">
-				六个来源各一条列表：官网新闻、完美世界电竞的国服资讯、r/DotA2 热帖、r/compDota2 的赛事讨论，
-				以及 NGA 与虎扑的社区讨论。新闻正文与热帖主楼都抓回站内，点开直接读；要接着看讨论，
-				帖子详情页里留了原帖入口。
+				七个来源各一条列表：官网新闻、完美世界电竞的国服资讯、r/DotA2 热帖、r/compDota2 的赛事讨论，
+				以及 NGA、虎扑与微博 DOTA2 超话的社区讨论。新闻正文与热帖主楼都抓回站内，点开直接读；
+				要接着看讨论，帖子详情页里留了原帖入口。
 			</p>
 		</div>
 
@@ -190,6 +211,13 @@ const NOTICES = [
 					</div>
 				))
 			}
+			{
+				weiboCards.map((card) => (
+					<div data-source="weibo" data-key={card.id}>
+						<NewsCard item={card} />
+					</div>
+				))
+			}
 		</div>
 
 		<p id="info-empty" class="py-16 text-center text-sm text-faint" hidden>
@@ -238,17 +266,29 @@ const NOTICES = [
 				正文镜像到站内，原文入口留在详情页里。
 			</li>
 				<li>
-					<span class="text-cream">微博与贴吧为什么不在。</span>
-					两家都不是解析问题：微博的内容接口全部要登录态（移动端接口直接 302 到
-					「Sina Visitor System」，热搜接口 403），贴吧直连 403、走读取代理拿到的是
-					「百度安全验证」。取不到数据就不做，不拿别的站的内容顶替。
+					<span class="text-cream">微博这条取的是 DOTA2 超话的「最新发帖」</span>，
+					也就是超话页面「最新」版块里的时间序子页签，不是它的热搜或推荐流。超话是随手发的
+					社区流（约 40 条/天、七成带图），晒图与水贴占多数，所以它单独一栏、按时间排，
+					不混进官方新闻。卡片点开去原帖——站内不镜像它，理由见下面的配图说明。
+				</li>
+				<li>
+					<span class="text-cream">微博的配图只有首屏那批有。</span>
+					微博图床判 Referer：不带 Referer 是 403，带站外的 Referer 也是 403，
+					只有它自己家的才给图。所以首屏的图在构建期取回站内，而「加载更多」翻出来的卡片
+					只能在 Workers 上运行、落不了地，就没有图（与完美世界那一栏同款降级）。
+				</li>
+				<li>
+					<span class="text-cream">贴吧为什么不在。</span>
+					不是解析问题，是取不到数据：直连 403、走读取代理拿到的是「百度安全验证」。
+					取不到就不做，也不拿别的站的内容顶替。
 				</li>
 			</ul>
 		</section>
 
 		<p class="mt-10 text-center text-xs text-faint">
 			官方新闻版权归 DOTA2 官方网站所有；完美世界电竞资讯版权归完美世界与原作者所有；
-			社区热帖版权归 NGA、虎扑与原作者所有。站内只镜像正文，完整内容请以原文为准。
+			社区热帖与超话帖版权归 NGA、虎扑、微博与原作者所有。站内只镜像新闻与帖子正文，
+			超话那条只展示摘要与配图，完整内容请以原文为准。
 		</p>
 	</section>
 </Layout>
@@ -273,6 +313,7 @@ const NOTICES = [
 			'#nga': 'nga',
 			'#community': 'nga',
 			'#hupu': 'hupu',
+			'#weibo': 'weibo',
 		};
 
 		let source = tabs.querySelector<HTMLButtonElement>('button[aria-pressed="true"]')?.dataset.source ?? 'news';

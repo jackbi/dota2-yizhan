@@ -5,6 +5,7 @@ import { hupuBoardUrl } from '../src/lib/hupuBoard.ts';
 import { MORE_SOURCES, MAX_MORE_PAGE } from '../src/lib/listMore.ts';
 import { newsFeedPageUrl, parseNewsFeedPage } from '../src/lib/newsFeed.ts';
 import { ngaHotUrl, parseHotThreads } from '../src/lib/ngaThread.ts';
+import { chaohuaFeedUrl, chaohuaNextCursor, cleanWeiboText, parseChaohuaFeed, parseCreatedAt, toWeiboCard } from '../src/lib/weiboChaohua.ts';
 import { listItemToNewsCard, parseWmpvpList, wmpvpListUrl } from '../src/lib/wmpvpList.ts';
 
 /**
@@ -14,8 +15,9 @@ import { listItemToNewsCard, parseWmpvpList, wmpvpListUrl } from '../src/lib/wmp
  * 重复的、卡片没转义、页码其实被上游忽略，都不会报错。所以钉五件事：
  *
  * 1. **分页形态**：官网是 `indexN.htm`、完美世界是 `pageNum`、虎扑是 `/dota2-N`，
- *    而 **NGA 的热榜接口压根没有分页**（`&page=N` 返回同一份），所以那一栏是本地切片——这条
- *    最容易想当然写错，钉死。
+ *    而 **NGA 的热榜接口压根没有分页**（`&page=N` 返回同一份），所以那一栏是本地切片；
+ *    微博超话反过来——**它没有 page 参数**，只能靠 `since_id` 游标走。两条都最容易
+ *    想当然写错（"带上 page 就能翻页"），钉死。
  * 2. **解析**：四个来源各自的字段口径（NGA 要滤掉锁定帖与合集、少于 5 条回复的不算热帖）。
  * 3. **渲染只有一份**：卡片标记住在 `cardHtml.ts`，`.astro` 组件只是它的壳——用户文本必须转义。
  * 4. **接口的边界**：不可索引、页码有上限、source 白名单、Reddit 明说没有分页。
@@ -42,7 +44,18 @@ const ok = (label: string): void => {
 		!/page=/.test(ngaHotUrl(7)),
 		'NGA 的热榜地址**不能**带 page 参数：实测带上也返回同一份，那是假的翻页',
 	);
-	ok('四个来源的分页形态（NGA 那栏没有上游分页）');
+	assert.equal(
+		chaohuaFeedUrl(),
+		'https://weibo.com/ajax_proxy/chaohua/page?flowId=1008080a7614bd4a7b1331677f9bc690323e64_-_sort_time',
+		'微博超话取的是「最新发帖」那个 flowId',
+	);
+	assert.ok(!/page=/.test(chaohuaFeedUrl()), '微博这一栏也不能拼 page 参数');
+	assert.match(
+		chaohuaFeedUrl('{"max_id":1}'),
+		/&since_id=%7B%22max_id%22%3A1%7D$/,
+		'翻页只认 since_id 游标，且要编码后回传',
+	);
+	ok('五个来源的分页形态（NGA 没有上游分页、微博只认 since_id 游标）');
 }
 
 // ---------------------------------------------------------------- 解析
@@ -107,6 +120,83 @@ const ok = (label: string): void => {
 	ok('NGA 热榜：滤锁定与合集、按回复数门槛');
 }
 
+{
+	// 形状照抄接口的真实返回：items 里混着 cell / card，只有 category=feed 的是帖子。
+	const json = {
+		items: [
+			{ category: 'cell', type: 'span' },
+			{ category: 'card', data: { card_type: 121, itemid: 'page_feed_child_tab' } },
+			{
+				category: 'feed',
+				data: {
+					idstr: '5351770596577510',
+					mblogid: 'RlIMXrB6S',
+					created_at: 'Thu Oct 08 15:36:44 +0800 2026',
+					text:
+						'拼豆邮票 &amp; 表情<img alt="[泪]" src="https://face.t.sinajs.cn/x.png"/>' +
+						'<a href="https://s.weibo.com/weibo?q=%23dota2%23">#dota2#</a>\u200b',
+					reposts_count: 4,
+					comments_count: 3,
+					attitudes_count: 12000,
+					pic_ids: ['p1'],
+					pic_infos: {
+						p1: {
+							bmiddle: { url: 'https://wx2.sinaimg.cn/wap360/p1.jpg' },
+							large: { url: 'https://wx2.sinaimg.cn/large/p1.jpg' },
+						},
+					},
+					user: { idstr: '2726969131', screen_name: 'akimo秋葉' },
+				},
+			},
+			// 缺 mblogid：拼不出原帖地址，卡片点开就是个死链，宁可不要。
+			{ category: 'feed', data: { idstr: '9', user: { idstr: '1' } } },
+		],
+		moreInfo: { params: { since_id: '{"max_id":5351690595205570}', page: 2 } },
+	};
+	const posts = parseChaohuaFeed(json);
+	assert.equal(posts.length, 1, '只认 feed 条目，缺 mblogid 的要丢掉');
+	const post = posts[0];
+	assert.equal(post.id, '5351770596577510');
+	assert.equal(post.url, 'https://weibo.com/2726969131/RlIMXrB6S', '原帖地址由 uid + mblogid 拼');
+	assert.equal(post.text, '拼豆邮票 & 表情[泪]#dota2#', '表情留 alt 文字、标签只留文字、实体要还原');
+	assert.equal(
+		post.createdAt,
+		Date.UTC(2026, 9, 8, 7, 36, 44) / 1000,
+		'微博给的是 +0800 的字面时间，解析时不能跟着构建机时区漂',
+	);
+	assert.equal(post.image, 'https://wx2.sinaimg.cn/wap360/p1.jpg', '卡片图取 bmiddle 那档');
+	assert.equal(chaohuaNextCursor(json), '{"max_id":5351690595205570}', '游标原样回传');
+	assert.equal(chaohuaNextCursor({ items: [] }), null, '没有 moreInfo 就是没有下一页');
+	assert.equal(parseCreatedAt('不是时间'), 0, '解不出的时间给 0，别让 NaN 进到页面上');
+
+	const card = toWeiboCard({ ...post, localImage: '/weibo-pics/5351770596577510-1234abcd.jpg' });
+	assert.equal(card.href, post.url, '这一栏直指原帖（站内不镜像）');
+	assert.equal(card.img, '/weibo-pics/5351770596577510-1234abcd.jpg');
+	assert.equal(card.badge, '微博');
+	assert.equal(card.date, '2026-10-08', '日期按 UTC+8 落成 YYYY-MM-DD');
+	assert.match(card.title, /拼豆邮票/, '正文进标题');
+	assert.match(card.meta, /转发 4/, '互动数进卡片底部');
+
+	// 纯转发自己没有正文，不能渲染成一块空白。
+	const repost = parseChaohuaFeed({
+		items: [
+			{
+				category: 'feed',
+				data: {
+					idstr: '5',
+					mblogid: 'Abc123',
+					created_at: 'Thu Oct 08 15:36:44 +0800 2026',
+					text: '',
+					user: { idstr: '1', screen_name: '转发的人' },
+					retweeted_status: { text: '被转发的原文' },
+				},
+			},
+		],
+	});
+	assert.equal(repost[0].text, '转发：被转发的原文', '没有正文的转发要拿原文顶上');
+	ok('微博超话：feed 解析、时间口径、原帖地址与卡片');
+}
+
 // ---------------------------------------------------------------- 卡片标记
 
 {
@@ -151,12 +241,15 @@ const ok = (label: string): void => {
 	assert.match(api, /MORE_SOURCES\.includes/, 'source 走白名单');
 	assert.match(api, /source === 'reddit'/, 'Reddit 要明确说"没有分页"，而不是静默失败');
 	assert.ok(!/href=/.test(api), '接口里不该出现链接');
-	assert.ok(MAX_MORE_PAGE >= 10 && MORE_SOURCES.length === 4, '四条来源、上限别小到翻不了几页');
+	assert.ok(MAX_MORE_PAGE >= 10 && MORE_SOURCES.length === 5, '五条来源、上限别小到翻不了几页');
+	assert.ok(MORE_SOURCES.includes('weibo'), '微博那一栏要能翻页');
 
 	const page = readFileSync(new URL('../src/pages/news.astro', import.meta.url), 'utf8');
 	assert.match(page, /data-more data-sources=\{MORE_SOURCES\.join\(','\)\}/, '按钮块要声明哪些栏能翻');
 	assert.match(page, /data-key=\{card\.id\}/, '首屏卡片要带 key：浏览器靠它去重');
 	assert.match(page, /data-key=\{post\.id\}/, '社区帖卡也要带 key');
+	assert.match(page, /data-source="weibo"/, '微博那一栏首屏卡片也要挂 data-source，标签页才认');
+	assert.match(page, /'#weibo': 'weibo'/, '带锚进页面要能落到微博那一栏');
 	assert.match(page, /import '\.\.\/scripts\/newsMore'/, '页面要引入加载逻辑');
 	// 列表是活的：切栏时只按开场查一次快照的话，后追加的卡片不会被藏起来。
 	assert.match(

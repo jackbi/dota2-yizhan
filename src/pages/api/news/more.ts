@@ -15,6 +15,9 @@ export const prerender = false;
  *
  * 注意 **Reddit 那一栏不在这里**：它的官方游标要 OAuth 凭据，而现在没配、走的是 RSS，
  * 那份只有一屏可翻。请求 `source=reddit` 会得到一条说人话的 400。
+ *
+ * 微博那一栏也留着：它的上游只认 `since_id` 游标、没有页码参数，本站的"第 N 页"是从
+ * 第一页顺着游标走 N 步（见 `listMore.ts` 的 `weiboPage`），且有比 `MAX_MORE_PAGE` 更小的上限。
  */
 
 function respond(body: unknown, status: number, maxAge = 0): Response {

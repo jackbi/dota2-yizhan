@@ -54,6 +54,7 @@ const IMAGE_CHANNELS = [
 	{ dir: 'patch-heroes', label: '更新日志英雄图标', empty: '没有取到任何英雄图标，更新日志只显示名字' },
 	{ dir: 'patch-items', label: '更新日志物品图标', empty: '没有取到任何物品图标，更新日志只显示名字' },
 	{ dir: 'wmpvp-images', label: '完美世界配图', empty: '没有取到国服资讯配图，详情页会退回外链（那是 403）' },
+	{ dir: 'weibo-pics', label: '微博超话配图', empty: '没有取到超话配图，那一栏的卡片不带图' },
 ];
 /** 缓存里放太久没被用到的图直接删掉——房间号换人、房间下榜都会留下孤儿文件。 */
 const IMAGE_KEEP_DAYS = 30;

@@ -1,13 +1,13 @@
 # 静态资源的浏览器缓存。
 #
 # 为什么要有这份文件：**只有** `/_astro/*` 是 Cloudflare 适配器默认给长缓存的那一条，
-# 其余我们自己发布的文件（字体、六个图片频道）拿到的都是默认的
+# 其余我们自己发布的文件（字体、七个图片频道）拿到的都是默认的
 # `max-age=0, must-revalidate`——浏览器每次切页面都要为它们逐个发一次条件请求。
 # 在这条到 Cloudflare 的链路上单程 0.5~1 秒，一轮页面下来就是"点一个链接要等一会儿"。
 #
 # 敢写 immutable 的前提是**文件名内容寻址**：
 # - 字体是 `scripts/fonts.mjs` 按子集切好、以内容 sha1 命名的（`…-9a7331f6.woff2`）；
-# - 六个图片频道是 `src/lib/localImages.ts` 按「键-地址哈希」命名的（`douyu-10059152-97f2a35b.jpg`）。
+# - 七个图片频道是 `src/lib/localImages.ts` 按「键-地址哈希」命名的（`douyu-10059152-97f2a35b.jpg`）。
 # 内容一变文件名就变，所以旧文件的缓存永远不会指到新内容上。
 #
 # **别删 `/_astro/*` 那条**：适配器检测到我们自己提供了 `_headers` 就不再注入它，
@@ -39,4 +39,7 @@
   Cache-Control: public, max-age=31536000, immutable
 
 /wmpvp-images/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/weibo-pics/*
   Cache-Control: public, max-age=31536000, immutable
