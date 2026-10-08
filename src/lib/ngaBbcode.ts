@@ -17,7 +17,8 @@ const NGA_ORIGIN = 'https://bbs.nga.cn';
 /** 图片来源白名单：绝对地址、站内绝对路径，或 `./mon_xxx/...` 形式的附件。 */
 const IMAGE_SRC_RE = /^(?:https?:\/\/|\/\/|\/|\.\/|mon_\d)/i;
 
-function escapeHtml(text: string): string {
+/** 把用户文本转义成可以放进 HTML 的样子。**不要**在它之后再拼未转义的属性值。 */
+export function escapeHtml(text: string): string {
 	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 

@@ -1,10 +1,17 @@
 import path from 'node:path';
-import { sanitizeArticleHtml, summarizeArticle } from './articleHtml';
 import { cacheFile as cachePath, readCacheJson, writeCacheFile } from './buildCache';
 import { mapLimit } from './concurrency';
 import { reportSource, sourceState } from './dataHealth';
 import { type HupuThread, selectBoardThreads, toThreads } from './hupuBoard';
+import { hupuThreadPageUrl, parseHupuThread } from './hupuThread';
+import type { HupuReply, HupuThreadDetail } from './hupuThread';
 import { createPace } from './pace';
+
+/**
+ * 帖子类型从 `hupuThread.ts` 再导出：页面与自检一直在 `hupuApi` 上取它们，
+ * 而运行时那条路（`/api/community/floors`）只能引纯模块，两边共用同一份定义。
+ */
+export type { HupuReply, HupuThreadDetail } from './hupuThread';
 
 /**
  * 虎扑 DOTA2 区（`bbs.hupu.com/dota2`）的社区帖层：列表 + 详情。
@@ -44,44 +51,6 @@ const USER_AGENT =
 	'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 export type { HupuThread };
-
-/** 一层回复。虎扑不返回楼层号，所以站内只按时间顺序展示，不编号。 */
-export interface HupuReply {
-	pid: string;
-	author: string;
-	/** 亮数（虎扑的「赞」） */
-	lights: number;
-	/** 这条下面的二级回复数 */
-	replyNum: number;
-	/** 是不是楼主自己回的 */
-	isStarter: boolean;
-	createdAt: number;
-	/** 已经清洗过的正文 HTML */
-	content: string;
-}
-
-export interface HupuThreadDetail {
-	summary: string;
-	/** 主楼正文 HTML（已清洗） */
-	content: string;
-	/** 亮数 */
-	lights: number;
-	/** 推荐数 */
-	recommend: number;
-	/** 浏览数 */
-	read: number;
-	/** 总回复数，详情页的数字比列表页权威 */
-	replies: number;
-	/** 发帖时间，Unix 秒 */
-	createdAt: number;
-	repliedAt: number;
-	/** 亮评，按键（亮数）降序 */
-	hotReplies: HupuReply[];
-	/** 详情页第一页回复，按时间正序 */
-	floors: HupuReply[];
-	location: string;
-	topic: string;
-}
 
 /** 帖子在虎扑的地址，用于署名跳转。 */
 export function hupuThreadUrl(pid: string): string {
@@ -159,128 +128,10 @@ async function loadBoard(): Promise<LoadedBoard> {
 	return { threads: value, network: value.length > 0 };
 }
 
-// ---------------------------------------------------------------- 详情解析
-
-type Json = Record<string, unknown>;
-
-const asObject = (value: unknown): Json | null =>
-	value && typeof value === 'object' && !Array.isArray(value) ? (value as Json) : null;
-const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
-const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
-const asCount = (value: unknown, fallback = 0): number =>
-	typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-/** 虎扑的时间是毫秒 */
-const msToSec = (value: unknown): number => Math.floor(asCount(value) / 1000);
-
-/** 帖子页的关键数据都在这段 JSON 里；取不到就退回渲染后的 HTML（只剩正文）。 */
-const NEXT_DATA_RE = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/;
-/** 兜底路径：主楼正文容器（注意 class 名带哈希后缀，只能匹配前缀）。 */
-const MAIN_POST_RE = /<div class="thread-content-detail">/;
-
-/**
- * 清洗虎扑正文。
- *
- * 正文是用户内容，清洗一律走 `articleHtml.ts` 的白名单（那边有整套用例），
- * 这里只提供两件虎扑特有的事：相对地址按 **bbs.hupu.com** 补（不能沿用官方新闻那套
- * dota2.com.cn 的域名），以及把 `data-imgid` 这类虎扑自己的私有属性交给白名单自动丢掉。
+/*
+ * 解析（`__NEXT_DATA__` → 主楼、亮评、这一页回复）搬到了 `hupuThread.ts`：
+ * 那边是纯函数，构建期与运行时（详情页的「加载更多」）共用同一份口径。
  */
-function sanitizeHupuHtml(html: string): string {
-	return sanitizeArticleHtml(html, { baseOrigin: ORIGIN });
-}
-
-function toReply(raw: unknown): HupuReply | null {
-	const row = asObject(raw);
-	if (!row) return null;
-	const content = sanitizeHupuHtml(asString(row.content));
-	if (!content) return null;
-	return {
-		pid: asString(row.pid),
-		author: asString(asObject(row.author)?.puname) || '虎扑用户',
-		lights: asCount(row.count),
-		replyNum: asCount(row.replyNum),
-		isStarter: row.isStarter === true,
-		createdAt: msToSec(row.createdAt),
-		content,
-	};
-}
-
-function parseDetail(html: string): HupuThreadDetail | null {
-	const raw = NEXT_DATA_RE.exec(html)?.[1];
-	if (!raw) return parseDetailFallback(html);
-	let root: Json | null = null;
-	try {
-		root = asObject(JSON.parse(raw));
-	} catch {
-		return parseDetailFallback(html);
-	}
-	const detail = asObject(asObject(asObject(root?.props)?.pageProps)?.detail);
-	const thread = asObject(detail?.thread);
-	if (!thread) return parseDetailFallback(html);
-
-	const content = sanitizeHupuHtml(asString(thread.content));
-	/** 亮评在接口里不是按键排序的（实测 1047 / 468 / 523…），这里自己排。 */
-	const hotReplies = asArray(detail?.lights)
-		.map(toReply)
-		.filter((reply): reply is HupuReply => reply !== null)
-		.sort((a, b) => b.lights - a.lights || a.createdAt - b.createdAt);
-	const floors = asArray(asObject(detail?.replies)?.list)
-		.map(toReply)
-		.filter((reply): reply is HupuReply => reply !== null);
-
-	return {
-		summary: summarizeArticle(content),
-		content,
-		lights: asCount(thread.lights),
-		recommend: asCount(thread.recommend),
-		read: asCount(thread.read),
-		replies: asCount(thread.replies),
-		createdAt: msToSec(thread.createdAt),
-		repliedAt: msToSec(thread.repliedAt),
-		hotReplies,
-		floors,
-		location: asString(thread.location),
-		topic: asString(asObject(thread.topic)?.name),
-	};
-}
-
-/** 结构变了（或接口没了）时的兜底：从渲染后的 DOM 里只救回主楼正文。 */
-function parseDetailFallback(html: string): HupuThreadDetail | null {
-	const content = sanitizeHupuHtml(extractMainPost(html));
-	if (!content) return null;
-	return {
-		summary: summarizeArticle(content),
-		content,
-		lights: 0,
-		recommend: 0,
-		read: 0,
-		replies: 0,
-		createdAt: 0,
-		repliedAt: 0,
-		hotReplies: [],
-		floors: [],
-		location: '',
-		topic: '',
-	};
-}
-
-/** 按 div 嵌套深度配对闭合标签，取出主楼正文 HTML。 */
-function extractMainPost(html: string): string {
-	const start = html.search(MAIN_POST_RE);
-	if (start < 0) return '';
-	const bodyStart = html.indexOf('>', start) + 1;
-	const tagRe = /<\/?div\b[^>]*>/gi;
-	tagRe.lastIndex = bodyStart;
-	let depth = 1;
-	let match: RegExpExecArray | null;
-	while ((match = tagRe.exec(html))) {
-		if (match[0][1] === '/') {
-			if (--depth === 0) return html.slice(bodyStart, match.index);
-		} else {
-			depth++;
-		}
-	}
-	return html.slice(bodyStart);
-}
 
 /** 一份详情，外加**它是怎么来的**。列表那一行只报列表的来源，详情只记次数。 */
 interface LoadedDetail {
@@ -307,14 +158,15 @@ function loadDetailRaw(pid: string): Promise<LoadedDetail> {
 async function loadDetail(pid: string): Promise<LoadedDetail> {
 	// 键里的版本号跟解析格式绑定：清洗规则一变就得换，否则旧结果会一直吃到过期。
 	// v3：正文清洗从黑名单换成白名单（`articleHtml.ts`），v2 缓存里可能存着漏网的 `onerror`。
-	const key = `hupu-thread-v3-${pid}`;
+	// v4：详情里多了 `page` / `perPage` / `totalPages`（详情页的「加载更多」靠它们算下一跳）。
+	const key = `hupu-thread-v4-${pid}`;
 	const cached = await readCache<HupuThreadDetail>(key);
 	if (cached && cached.ageMs < DETAIL_TTL_SECONDS * 1000) return { detail: cached.value, network: false };
 	if (OFFLINE) return { detail: cached?.value ?? null, network: false };
 
-	const html = await fetchHtml(hupuThreadUrl(pid));
+	const html = await fetchHtml(hupuThreadPageUrl(pid, 1));
 	if (html === null) return { detail: cached?.value ?? null, network: false };
-	const detail = parseDetail(html);
+	const detail = parseHupuThread(html);
 	if (detail === null) return { detail: cached?.value ?? null, network: false };
 
 	await writeCache(key, detail);
