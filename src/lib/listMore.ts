@@ -3,7 +3,14 @@ import { hupuPost, ngaPost } from './communityPost.ts';
 import { hupuBoardUrl, selectBoardThreads, toThreads } from './hupuBoard.ts';
 import { feedItemToNewsCard, newsFeedPageUrl, parseNewsFeedPage } from './newsFeed.ts';
 import { ngaHotUrl, parseHotThreads } from './ngaThread.ts';
-import { CHAOHUA_HEADERS, chaohuaFeedUrl, chaohuaNextCursor, parseChaohuaFeed, toWeiboCard } from './weiboChaohua.ts';
+import {
+	CHAOHUA_HEADERS,
+	WEIBO_WINDOW_PAGES,
+	chaohuaFeedUrl,
+	chaohuaNextCursor,
+	parseChaohuaFeed,
+	toWeiboCard,
+} from './weiboChaohua.ts';
 import { listItemToNewsCard, parseWmpvpList, wmpvpListUrl } from './wmpvpList.ts';
 import { cached, pace } from './ssrCache.ts';
 
@@ -32,7 +39,7 @@ import { cached, pace } from './ssrCache.ts';
  *
  * 1. **只响应点击**：接口带 `X-Robots-Tag: noindex`，页面上也没有 `<a href>` 指向它；
  * 2. **同一页 10 分钟内只打一次上游**，地址只有固定模板；页码上限默认 `MAX_MORE_PAGE`，
- *    微博那一栏是它自己更小的 `WEIBO_MAX_PAGE`（游标走一步就打一次上游）；
+ *    微博那一栏是构建期镜像的那个窗口 `WEIBO_WINDOW_PAGES`（游标走一步就打一次上游）；
  * 3. **缓存里放解析结果、不放拼好的 HTML**：卡片上有「最后回复 今天 14:22」这种相对时间。
  *
  * 这个文件**不能碰 `node:*`**：它同时被页面（构建期）与 `/api/news/more`（Workers 运行时）引用。
@@ -174,15 +181,6 @@ async function hupuPage(page: number, nowSec: number): Promise<MorePage> {
 }
 
 /**
- * 微博超话的「最新发帖」最多翻到第几页。
- *
- * 与别家不同：这一栏的页码**不是**上游的分页参数，而是本站自己走游标的步数（见下），
- * 所以必须自己设上限。8 页 × 15 条 = 120 条，实测正好覆盖约 3 天——再往前就是几天前的
- * 水贴与晒图，继续翻对读者没有价值，却要让上游多挨几十次请求。
- */
-const WEIBO_MAX_PAGE = 8;
-
-/**
  * 微博超话：「最新发帖」是**游标**分页，不是 `page=N`。
  *
  * 实测 `flowId=…_-_sort_time&page=2` 返回的还是第 1 页那一份（与 NGA 热榜同款假分页），
@@ -192,11 +190,14 @@ const WEIBO_MAX_PAGE = 8;
  * 每一步都进缓存（`more-weibo:<步数>:<游标>`），所以读者按顺序点下去时，每点一次只多打
  * 一次上游——只有直接跳页（或缓存过期后重来）才需要补走前面几步。
  *
+ * 上限就是构建期镜像的那个窗口（`WEIBO_WINDOW_PAGES`）：详情页是预渲染的，翻出窗口之外的
+ * 卡片就是死链，两边必须同一个数，所以这里直接引 `weiboChaohua.ts` 里的那一份。
+ *
  * 卡片**不带配图**：微博图床只认它自己家的 Referer，运行时的 Workers 落不了地；首屏那批
  * 才有构建期取回来的图（见 `weiboApi.ts`）。这一条与完美世界那一栏同款降级。
  */
 async function weiboPage(page: number): Promise<MorePage> {
-	if (page > WEIBO_MAX_PAGE) return pageResult('weibo', page, []);
+	if (page > WEIBO_WINDOW_PAGES) return pageResult('weibo', page, []);
 
 	const headers = { ...CHAOHUA_HEADERS, 'User-Agent': BROWSER_USER_AGENT };
 	/** 走一步：取这一页的帖子与下一页的游标。步数进缓存，读者顺序点击时每步只打一次上游。 */

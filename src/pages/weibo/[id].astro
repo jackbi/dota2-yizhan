@@ -1,0 +1,155 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import type { WeiboPost } from '../../lib/weiboChaohua';
+import { beijingDateTime, splitWeiboText, textParagraphs } from '../../lib/weiboChaohua';
+import { formatCount } from '../../lib/format';
+import { fetchWeiboPosts } from '../../lib/weiboApi';
+
+/**
+ * 超话帖的站内镜像页。
+ *
+ * 与官网新闻、完美世界、Reddit 那几页一样：正文与配图摆在自己站里，**原帖入口留在页面上**。
+ * 微博那条接口把整窗（`WEIBO_WINDOW_PAGES` 页）都抓了回来，所以这里逐条生成静态页，
+ * 与列表「加载更多」能翻到的范围一模一样——不会出现"翻出来点进去 404"。
+ *
+ * 不走 SSR 是有意的：`/ajax/statuses/show` 单帖接口对访客是 302（要访客 cookie），
+ * 而预渲染的页面不依赖请求时的上游状态——上游抖一下，页面也不会跟着变成 500 或空壳。
+ */
+interface Props {
+	post: WeiboPost;
+	older: WeiboPost | null;
+	newer: WeiboPost | null;
+}
+
+export async function getStaticPaths() {
+	const posts = await fetchWeiboPosts();
+	// 列表是「最新发帖」序（新在前），所以下标 +1 是更早、-1 是更新。
+	return posts.map((post, index) => ({
+		params: { id: post.id },
+		props: { post, older: posts[index + 1] ?? null, newer: posts[index - 1] ?? null },
+	}));
+}
+
+const { post, older, newer } = Astro.props;
+const { title } = splitWeiboText(post.text);
+const paragraphs = textParagraphs(post.text);
+const pictures = post.pictures
+	.map((picture, index) => ({ ...picture, local: post.localPictures?.[index] ?? null }))
+	.filter((picture): picture is typeof picture & { local: string } => !!picture.local);
+const description = post.text.replace(/\s+/g, ' ').slice(0, 120);
+---
+
+<Layout
+	title={`${title || '超话帖'} · 微博超话 · DOTA2 驿站`}
+	description={description}
+	breadcrumbs={[{ name: '资讯', href: '/news/' }, { name: title || '微博超话' }]}
+>
+	<section class="mx-auto max-w-3xl px-4 py-10 sm:px-6 lg:px-8">
+		{/* 锚点就是资讯页那一栏的 id，读者点「返回」落回超话列表而不是页面顶部。 */}
+		<a href="/news/#weibo" class="inline-flex items-center gap-1.5 text-sm text-muted transition hover:text-gold">
+			<svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M19 12H5M11 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+			返回资讯中心
+		</a>
+
+		<header class="mt-5 border-b border-line pb-6">
+			<div class="flex flex-wrap items-center gap-2 text-xs">
+				<span class="rounded-md bg-gold/15 px-2 py-1 font-semibold text-gold">微博 · DOTA2 超话</span>
+				<span class="text-faint">{beijingDateTime(post.createdAt)}</span>
+			</div>
+			<h1 class="mt-3 font-display text-2xl leading-tight text-cream sm:text-3xl">{title || '（转发微博）'}</h1>
+			<div class="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted">
+				<span>@{post.author}</span>
+				<span aria-hidden="true">·</span><span>{formatCount(post.reposts)} 转发</span>
+				<span aria-hidden="true">·</span><span>{formatCount(post.comments)} 评论</span>
+				<span aria-hidden="true">·</span><span>{formatCount(post.likes)} 赞</span>
+				<span aria-hidden="true">·</span>
+				<a href={post.url} target="_blank" rel="noopener noreferrer" class="text-dota-light transition hover:text-gold">
+					前往原帖 ↗
+				</a>
+			</div>
+		</header>
+
+		<article class="mt-6 space-y-3 text-cream/90">
+			{paragraphs.map((line) => <p class="leading-relaxed">{line}</p>)}
+		</article>
+
+		{
+			post.truncated ? (
+				<p class="mt-4 rounded-2xl border border-line bg-surface p-4 text-sm text-muted">
+					这条是长帖，微博对访客只给前 150 余字，站内这次没能取到全文——完整内容去
+					<a href={post.url} target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">原帖</a>
+					看。页面里的配图是完整的。
+				</p>
+			) : null
+		}
+
+		{
+			pictures.length > 0 ? (
+				<div class="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
+					{pictures.map((picture) => (
+						<a
+							href={post.url}
+							target="_blank"
+							rel="noopener noreferrer"
+							class="group block overflow-hidden rounded-2xl border border-line bg-surface"
+						>
+							<img
+								src={picture.local}
+								alt=""
+								loading="lazy"
+								class="h-full w-full object-cover transition group-hover:opacity-90"
+							/>
+						</a>
+					))}
+				</div>
+			) : null
+		}
+
+		{
+			post.pictures.length > pictures.length ? (
+				<p class="mt-3 text-xs text-faint">
+					还有 {post.pictures.length - pictures.length} 张图这次没抓到，去原帖看。
+				</p>
+			) : null
+		}
+
+		{
+			older || newer ? (
+				<nav class="mt-10 grid gap-3 sm:grid-cols-2" aria-label="相邻超话帖">
+					{older ? (
+						<a
+							href={`/weibo/${older.id}/`}
+							class="group rounded-2xl border border-line bg-surface p-4 transition hover:border-dota/50 hover:bg-surface-2"
+						>
+							<span class="text-xs text-faint">← 更早</span>
+							<span class="mt-1 line-clamp-2 block font-medium text-cream group-hover:text-dota-light">
+								{splitWeiboText(older.text).title}
+							</span>
+						</a>
+					) : (
+						<span />
+					)}
+					{newer ? (
+						<a
+							href={`/weibo/${newer.id}/`}
+							class="group rounded-2xl border border-line bg-surface p-4 text-right transition hover:border-dota/50 hover:bg-surface-2"
+						>
+							<span class="text-xs text-faint">更新 →</span>
+							<span class="mt-1 line-clamp-2 block font-medium text-cream group-hover:text-dota-light">
+								{splitWeiboText(newer.text).title}
+							</span>
+						</a>
+					) : (
+						<span />
+					)}
+				</nav>
+			) : null
+		}
+
+		<p class="mt-10 text-center text-xs text-faint">
+			内容来自微博 DOTA2 超话，版权归原作者所有。站内只做镜像，完整内容与讨论请以
+			<a href={post.url} target="_blank" rel="noopener noreferrer" class="text-dota-light hover:text-gold">原帖</a>
+			为准。
+		</p>
+	</section>
+</Layout>

@@ -9,6 +9,7 @@ import { fetchOfficialNews, toNewsCard, type OfficialNews } from '../lib/newsApi
 import { fetchRedditPosts, toRedditCard, type RedditFeedId, type RedditPost } from '../lib/redditApi';
 import { fetchWeiboPosts, toWeiboCard, type WeiboPost } from '../lib/weiboApi';
 import { fetchWmpvpNews, toWmpvpCard, type WmpvpNews } from '../lib/wmpvpApi';
+import { WEIBO_FIRST_SCREEN } from '../lib/weiboChaohua';
 import { MORE_SOURCES } from '../lib/listMore';
 
 /**
@@ -74,7 +75,11 @@ const now = Math.floor(Date.now() / 1000);
 
 const officialCards: NewsCardItem[] = articles.map((item, index) => toNewsCard(item, index === 0));
 const wmpvpCards: NewsCardItem[] = wmpvpItems.map((item) => toWmpvpCard(item));
-const weiboCards: NewsCardItem[] = weiboPosts.map((post) => toWeiboCard(post));
+/*
+ * 超话那一栏只摆首屏那些：构建期其实把整窗（8 页）都抓回来了，为的是给每条生成站内详情页，
+ * 但列表一次给 120 张卡只会把首屏拖长——剩下的仍然走「加载更多」，一页 15 条。
+ */
+const weiboCards: NewsCardItem[] = weiboPosts.slice(0, WEIBO_FIRST_SCREEN).map((post) => toWeiboCard(post));
 const threadCards = (source: CommunitySource) => posts.filter((post) => post.source === source);
 
 /**
@@ -269,13 +274,14 @@ const NOTICES = [
 					<span class="text-cream">微博这条取的是 DOTA2 超话的「最新发帖」</span>，
 					也就是超话页面「最新」版块里的时间序子页签，不是它的热搜或推荐流。超话是随手发的
 					社区流（约 40 条/天、七成带图），晒图与水贴占多数，所以它单独一栏、按时间排，
-					不混进官方新闻。卡片点开去原帖——站内不镜像它，理由见下面的配图说明。
+					不混进官方新闻。帖子同样镜像到站内（`/weibo/…/`），原帖入口留在详情页里。
 				</li>
 				<li>
-					<span class="text-cream">微博的配图只有首屏那批有。</span>
+					<span class="text-cream">微博的配图只有首屏那批和详情页有。</span>
 					微博图床判 Referer：不带 Referer 是 403，带站外的 Referer 也是 403，
-					只有它自己家的才给图。所以首屏的图在构建期取回站内，而「加载更多」翻出来的卡片
-					只能在 Workers 上运行、落不了地，就没有图（与完美世界那一栏同款降级）。
+					只有它自己家的才给图。所以图都是构建期取回站内的；而「加载更多」翻出来的卡片
+					跑在 Workers 上、落不了地，就只有首屏那批带图（与完美世界那一栏同款降级）——
+					但点进去的详情页里图是齐的。
 				</li>
 				<li>
 					<span class="text-cream">贴吧为什么不在。</span>
@@ -287,8 +293,7 @@ const NOTICES = [
 
 		<p class="mt-10 text-center text-xs text-faint">
 			官方新闻版权归 DOTA2 官方网站所有；完美世界电竞资讯版权归完美世界与原作者所有；
-			社区热帖与超话帖版权归 NGA、虎扑、微博与原作者所有。站内只镜像新闻与帖子正文，
-			超话那条只展示摘要与配图，完整内容请以原文为准。
+			社区热帖与超话帖版权归 NGA、虎扑、微博与原作者所有。站内只镜像正文，完整内容请以原文为准。
 		</p>
 	</section>
 </Layout>

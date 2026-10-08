@@ -5,7 +5,18 @@ import { hupuBoardUrl } from '../src/lib/hupuBoard.ts';
 import { MORE_SOURCES, MAX_MORE_PAGE } from '../src/lib/listMore.ts';
 import { newsFeedPageUrl, parseNewsFeedPage } from '../src/lib/newsFeed.ts';
 import { ngaHotUrl, parseHotThreads } from '../src/lib/ngaThread.ts';
-import { chaohuaFeedUrl, chaohuaNextCursor, cleanWeiboText, parseChaohuaFeed, parseCreatedAt, toWeiboCard } from '../src/lib/weiboChaohua.ts';
+import {
+	WEIBO_FIRST_SCREEN,
+	WEIBO_WINDOW_PAGES,
+	chaohuaFeedUrl,
+	chaohuaNextCursor,
+	cleanWeiboText,
+	parseChaohuaFeed,
+	parseCreatedAt,
+	textParagraphs,
+	toWeiboCard,
+	wap720,
+} from '../src/lib/weiboChaohua.ts';
 import { listItemToNewsCard, parseWmpvpList, wmpvpListUrl } from '../src/lib/wmpvpList.ts';
 
 /**
@@ -165,17 +176,49 @@ const ok = (label: string): void => {
 		'微博给的是 +0800 的字面时间，解析时不能跟着构建机时区漂',
 	);
 	assert.equal(post.image, 'https://wx2.sinaimg.cn/wap360/p1.jpg', '卡片图取 bmiddle 那档');
+	assert.equal(post.pictures.length, 1, '详情页的图按 pic_ids 顺序收');
+	assert.equal(
+		post.pictures[0].url,
+		'https://wx2.sinaimg.cn/wap720/p1.jpg',
+		'详情图取 720 那档：360 太小（截图看不清）、960 是 2.5 倍体积，而接口只给得到 360 与 960',
+	);
+	assert.equal(
+		post.pictures[0].fallback,
+		'https://wx2.sinaimg.cn/large/p1.jpg',
+		'720 取不到时用接口直接给的大图兜底',
+	);
+	assert.equal(wap720('https://wx1.sinaimg.cn/other/x.jpg'), 'https://wx1.sinaimg.cn/other/x.jpg', '推不出 720 就原样返回');
+	assert.equal(post.truncated, false, '普通帖不算截断');
 	assert.equal(chaohuaNextCursor(json), '{"max_id":5351690595205570}', '游标原样回传');
 	assert.equal(chaohuaNextCursor({ items: [] }), null, '没有 moreInfo 就是没有下一页');
 	assert.equal(parseCreatedAt('不是时间'), 0, '解不出的时间给 0，别让 NaN 进到页面上');
+	assert.deepEqual(textParagraphs('第一段\n\n第二段  '), ['第一段', '第二段'], '详情页按换行分段');
 
 	const card = toWeiboCard({ ...post, localImage: '/weibo-pics/5351770596577510-1234abcd.jpg' });
-	assert.equal(card.href, post.url, '这一栏直指原帖（站内不镜像）');
+	assert.equal(card.href, '/weibo/5351770596577510/', '卡片指站内镜像页（与官网新闻、完美世界、Reddit 一致）');
 	assert.equal(card.img, '/weibo-pics/5351770596577510-1234abcd.jpg');
 	assert.equal(card.badge, '微博');
 	assert.equal(card.date, '2026-10-08', '日期按 UTC+8 落成 YYYY-MM-DD');
 	assert.match(card.title, /拼豆邮票/, '正文进标题');
 	assert.match(card.meta, /转发 4/, '互动数进卡片底部');
+
+	// 长帖：上游只给前 150 余字，取数层另外去补全文（补不到时页面要说清楚）。
+	const long = parseChaohuaFeed({
+		items: [
+			{
+				category: 'feed',
+				data: {
+					idstr: '7',
+					mblogid: 'Long01',
+					created_at: 'Thu Oct 08 15:36:44 +0800 2026',
+					text: '长帖开头',
+					isLongText: true,
+					user: { idstr: '1', screen_name: '写长文的人' },
+				},
+			},
+		],
+	});
+	assert.equal(long[0].truncated, true, 'isLongText 要标成截断，页面据此提示去原帖');
 
 	// 纯转发自己没有正文，不能渲染成一块空白。
 	const repost = parseChaohuaFeed({
@@ -250,6 +293,7 @@ const ok = (label: string): void => {
 	assert.match(page, /data-key=\{post\.id\}/, '社区帖卡也要带 key');
 	assert.match(page, /data-source="weibo"/, '微博那一栏首屏卡片也要挂 data-source，标签页才认');
 	assert.match(page, /'#weibo': 'weibo'/, '带锚进页面要能落到微博那一栏');
+	assert.match(page, /weiboPosts\.slice\(0, WEIBO_FIRST_SCREEN\)/, '首屏只摆前 15 条，其余交给「加载更多」');
 	assert.match(page, /import '\.\.\/scripts\/newsMore'/, '页面要引入加载逻辑');
 	// 列表是活的：切栏时只按开场查一次快照的话，后追加的卡片不会被藏起来。
 	assert.match(
@@ -261,6 +305,21 @@ const ok = (label: string): void => {
 	const script = readFileSync(new URL('../src/scripts/newsMore.ts', import.meta.url), 'utf8');
 	assert.match(script, /data-key="\$\{item\.key\}"/, '追加时要带上 key，供下一次去重');
 	assert.match(script, /data-source="\$\{source\}"/, '追加的外层要写 data-source，标签页才认');
+
+	/*
+	 * 镜像页与列表必须同一个窗口：详情页是预渲染的，翻出窗口之外的卡片就是死链。
+	 * 两个数各写一份迟早会漂，所以钉住"列表的上限就是构建期的窗口"。
+	 */
+	assert.equal(WEIBO_WINDOW_PAGES, 8, '镜像窗口是 8 页 120 条（约 3 天）');
+	assert.ok(WEIBO_FIRST_SCREEN < WEIBO_WINDOW_PAGES * 15, '首屏要短于整个窗口，否则「加载更多」没意义');
+	const more = readFileSync(new URL('../src/lib/listMore.ts', import.meta.url), 'utf8');
+	assert.match(more, /page > WEIBO_WINDOW_PAGES/, '加载更多的页数上限直接引镜像窗口，不另写一个数');
+
+	const detail = readFileSync(new URL('../src/pages/weibo/[id].astro', import.meta.url), 'utf8');
+	assert.match(detail, /href="\/news\/#weibo"/, '详情页要能回到超话那一栏');
+	assert.match(detail, /href=\{post\.url\}/, '详情页要留原帖入口');
+	assert.match(detail, /post\.localPictures/, '详情页用的是构建期落地的图，不是热链（微博图床对站外一律 403）');
+	assert.match(detail, /getStaticPaths/, '详情页是预渲染的：逐条生成，翻出来的卡片不会 404');
 	ok('接口与页面：noindex、上限、Reddit 说明、key 与「列表是活的」');
 }
 

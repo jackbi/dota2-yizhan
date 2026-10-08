@@ -39,6 +39,17 @@ const FEED_FLOW = `${WEIBO_TOPIC_ID}_-_sort_time`;
 const API = 'https://weibo.com/ajax_proxy/chaohua/page';
 
 /**
+ * 构建期抓几页当「窗口」：既决定首屏之后能翻多远，也决定站内给哪些帖子生成详情页。
+ *
+ * 8 页 × 15 条 = 120 条，实测正好覆盖约 3 天（超话约 40 条/天）。再往前是几天前的水贴，
+ * 继续翻对读者没有价值，却要让上游多挨几十次请求、多落几十兆图。
+ */
+export const WEIBO_WINDOW_PAGES = 8;
+
+/** 资讯页首屏摆多少条（其余靠「加载更多」）。 */
+export const WEIBO_FIRST_SCREEN = 15;
+
+/**
  * 这个接口要的头。
  *
  * `x-requested-with` 与 `client-version` 是它自己页面发的值；**没有 cookie 也能过**（实测
@@ -77,22 +88,44 @@ export interface WeiboPost {
 	author: string;
 	/** 清洗过的正文（表情留成 `[泪]` 这种文本，话题标签只留文字）。 */
 	text: string;
+	/**
+	 * 正文是不是被上游截断了。
+	 *
+	 * 接口对长帖只给前 150～170 字（`isLongText: true` + 一个「全文」的 `continue_tag`），
+	 * 全文得另外走 `ajax/statuses/longtext`——那条要访客 cookie，取数层会尽力补上；
+	 * 补不到时正文就停在这里，镜像页据此说明"全文在原帖"。
+	 */
+	truncated: boolean;
 	/** 发帖时间，Unix 秒（微博给的是 UTC+8，见 `parseCreatedAt`）。 */
 	createdAt: number;
 	reposts: number;
 	comments: number;
 	likes: number;
-	/** 卡片上的配图（`bmiddle`，约 360px 宽）；没有配图就是空串。 */
+	/** 卡片上的缩略图（`bmiddle`，约 360px 宽）；没有配图就是空串。 */
 	image: string;
+	/** 详情页要显示的图，按帖子里的顺序。 */
+	pictures: WeiboPicture[];
 	/** 原帖地址，页面上点卡片就是去这里。 */
 	url: string;
 	/**
-	 * 构建期取回站内的配图路径（`/weibo-pics/…`）。
+	 * 构建期取回站内的缩略图路径（`/weibo-pics/…`）。
 	 *
 	 * 只有构建期那一屏有：微博图床只认它自己家的 Referer（站外引用一律 403），
 	 * 运行时翻出来的那批没法在 Workers 上落地，于是不带图——与完美世界那一栏同款降级。
 	 */
 	localImage?: string;
+	/** 构建期取回站内的详情图，与 `pictures` 一一对应（取不到的会缺项，见 `weiboApi`）。 */
+	localPictures?: string[];
+}
+
+/** 一张配图在站内需要的两个地址。 */
+export interface WeiboPicture {
+	/** 图片 id，做去重键与文件名 slug 用。 */
+	id: string;
+	/** 详情页显示的档位（720px 长边）。 */
+	url: string;
+	/** `url` 取不到时的退路（960px，接口直接给的 `large`）。 */
+	fallback: string;
 }
 
 /** `Thu Oct 08 15:36:44 +0800 2026` 这种格式 `new Date()` 解析不了（年份在最后），自己拆。 */
@@ -140,17 +173,41 @@ function asCount(value: unknown): number {
 	return Number.isFinite(num) && num > 0 ? num : 0;
 }
 
-/** 卡片用的小图：优先 `bmiddle`（约 360px），退到缩略图再退到大图。 */
-function firstPicture(data: Record<string, unknown>): string {
-	const ids = Array.isArray(data.pic_ids) ? data.pic_ids : [];
-	const first = String(ids[0] ?? '');
-	const infos = data.pic_infos as Record<string, Record<string, { url?: unknown }>> | undefined;
-	const sizes = first ? infos?.[first] : undefined;
-	for (const key of ['bmiddle', 'wap360', 'thumbnail', 'large', 'largest']) {
+type PicInfo = Record<string, { url?: unknown }>;
+
+function sizeUrl(sizes: PicInfo | undefined, ...keys: string[]): string {
+	for (const key of keys) {
 		const url = sizes?.[key]?.url;
 		if (typeof url === 'string' && url) return url;
 	}
 	return '';
+}
+
+/**
+ * 把 `bmiddle` 那档（`/wap360/`）换成 720px 那档。
+ *
+ * **接口只给五档**：thumbnail(180) / bmiddle(360) / large(960) / original(1080) / largest(2000+)。
+ * 中间那档 720 是地址形态里推出来的——实测同一张图 360 档 18 KB、720 档 106 KB、960 档 265 KB，
+ * 而镜像 120 帖要落 190 多张图：取 960 是 50 MB 上下，取 720 只要 20 MB，画质对截图仍然够看。
+ * 推不出来（地址形态变了）就退回 `bmiddle` 自己，宁可小一号也别不出图。
+ */
+export function wap720(url: string): string {
+	return url.includes('/wap360/') ? url.replace('/wap360/', '/wap720/') : url;
+}
+
+/** 一条帖子的图：卡片只要第一张的小图，详情页要每一张的两个地址。 */
+function picturesOf(data: Record<string, unknown>): { thumb: string; list: WeiboPicture[] } {
+	const ids = (Array.isArray(data.pic_ids) ? data.pic_ids : []).map((id) => String(id ?? ''));
+	const infos = data.pic_infos as Record<string, PicInfo> | undefined;
+	const list: WeiboPicture[] = [];
+	for (const id of ids) {
+		if (!id) continue;
+		const sizes = infos?.[id];
+		const small = sizeUrl(sizes, 'bmiddle', 'thumbnail', 'large');
+		if (!small) continue;
+		list.push({ id, url: wap720(small), fallback: sizeUrl(sizes, 'large', 'original') || small });
+	}
+	return { thumb: list[0] ? sizeUrl(infos?.[list[0].id], 'bmiddle', 'thumbnail', 'large') : '', list };
 }
 
 /**
@@ -183,15 +240,18 @@ export function parseChaohuaFeed(json: unknown): WeiboPost[] {
 			text = originText ? `转发：${originText}` : '（转发微博）';
 		}
 
+		const pictures = picturesOf(data);
 		posts.push({
 			id,
 			author: String(user.screen_name ?? ''),
 			text,
+			truncated: data.isLongText === true,
 			createdAt: parseCreatedAt(String(data.created_at ?? '')),
 			reposts: asCount(data.reposts_count),
 			comments: asCount(data.comments_count),
 			likes: asCount(data.attitudes_count),
-			image: firstPicture(data),
+			image: pictures.thumb,
+			pictures: pictures.list,
 			url: `https://weibo.com/${authorId}/${mblogid}`,
 		});
 	}
@@ -215,17 +275,30 @@ export function splitWeiboText(text: string): { title: string; summary: string }
 	return { title: `${compact.slice(0, CARD_TITLE_MAX)}…`, summary: compact.slice(CARD_TITLE_MAX).trim() };
 }
 
+/** 正文 → 详情页的段落：微博用换行分段，空行丢掉。 */
+export function textParagraphs(text: string): string[] {
+	return text
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0);
+}
+
 /** Unix 秒 → `YYYY-MM-DD`（按微博自己的 UTC+8 算）。 */
 export function beijingDate(seconds: number): string {
 	return new Date(seconds * 1000 + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
+/** Unix 秒 → `YYYY-MM-DD HH:mm`（同样按 UTC+8）。 */
+export function beijingDateTime(seconds: number): string {
+	return new Date(seconds * 1000 + 8 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+}
+
 /**
  * 帖子 → 资讯卡。
  *
- * 卡片**直接指向原帖**，站内不做镜像：超话帖子的正文本来就短（实测多为 1–3 行），
- * 卡片的标题加摘要已经覆盖；而做镜像就要多出一批页面，其中「加载更多」翻出来的那些是
- * 运行时才知道的、没有静态页——那正是 SEO 报告里「未找到 (404)」的来源之一，不给自己挖。
+ * 卡片指向**站内镜像页**（`/weibo/<mid>/`），与官网新闻、完美世界、Reddit 那几栏一致：
+ * 正文、配图都摆在自己站里，原帖入口留在详情页。镜像只在构建期那一窗（8 页 120 条）内生成，
+ * 而列表的「加载更多」也正好只翻到同一窗，两边不会对不上。
  */
 export function toWeiboCard(post: WeiboPost): NewsCardItem {
 	const { title, summary } = splitWeiboText(post.text);
@@ -240,6 +313,6 @@ export function toWeiboCard(post: WeiboPost): NewsCardItem {
 		meta:
 			`@${post.author} · 转发 ${formatCount(post.reposts)}` +
 			` 评论 ${formatCount(post.comments)} 赞 ${formatCount(post.likes)}`,
-		href: post.url,
+		href: `/weibo/${post.id}/`,
 	};
 }
