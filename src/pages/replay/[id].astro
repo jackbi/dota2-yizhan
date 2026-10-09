@@ -1,5 +1,6 @@
 ---
 import MatchPlayback from '../../components/player/MatchPlayback.astro';
+import MatchAnalysis from '../../components/player/MatchAnalysis.astro';
 import MatchReviewPanel from '../../components/player/MatchReview.astro';
 import MatchTable from '../../components/player/MatchTable.astro';
 import Layout from '../../layouts/Layout.astro';
@@ -197,6 +198,8 @@ const title = `${radiantName} vs ${direName} · 对局复盘 · DOTA2 驿站`;
 						{/* 明细表放最前：读者最先想知道的就是「谁打得怎么样」，再往下才是「为什么」。 */}
 						<MatchTable players={review.players} heroes={heroMap} items={itemMap} radiantWin={review.radiantWin} />
 						<MatchReviewPanel review={review} heroes={heroMap} />
+						{/* AI 分析在复盘面板之后、地图之前：数据现成、不点不请求，想深究的读者才往下走。 */}
+						<MatchAnalysis review={review} heroes={heroMap} items={itemMap} />
 						<MatchPlayback
 							matchId={review.matchId}
 							durationSeconds={review.durationSeconds}

@@ -1,0 +1,67 @@
+---
+import { inlineJson } from '../../lib/inlineJson';
+import type { HeroRef, ItemRef } from '../../lib/gameRefs';
+import { buildAnalysisInput } from '../../lib/matchAnalysis';
+import type { MatchReview } from '../../lib/matchReview';
+import Panel from './Panel.astro';
+
+/**
+ * AI 赛后分析：把这一局的账单交给用户自己的模型，讲清「胜方赢在哪、负方输在哪、负方怎么才能赢」。
+ *
+ * 三条取舍：
+ *
+ * - 摘要在服务端算好、内联进页面（`buildAnalysisInput` → `inlineJson`），浏览器只负责调模型。
+ *   数字全部来自 `MatchReview`，这一层不新增任何一个统计；模型只负责措辞，不会自己编胜率。
+ * - 不点不请求。这一页是公开的、无界 URL 空间（任何比赛 id 都能渲染），自动请求等于替每个
+ *   到访者花一次他自己的钱。所以默认只有一段说明，点了「生成分析」才发。
+ * - 请求由浏览器直连用户填的地址，key 只存在本机（见 `lib/aiConfig.ts`），服务端不经手——
+ *   与 `/draft` 的 AI 是同一条边界，没配模型时这里什么都不发。
+ */
+interface Props {
+	review: MatchReview;
+	heroes: Map<number, HeroRef>;
+	items: Map<number, ItemRef>;
+}
+
+const { review, heroes, items } = Astro.props;
+const data = buildAnalysisInput(review, heroes, items);
+const payload = inlineJson(data);
+---
+
+{/* 锚点：站内别处（个人对局页、赛事对局页）的「AI 赛后分析」入口指向 #ai。 */}
+<div id="ai" class="scroll-mt-24">
+	<Panel title="AI 赛后分析" hint="用你自己的模型复盘这一局">
+		<p class="text-sm leading-relaxed text-muted">
+			让模型把这一局从头到尾讲一遍：胜方靠什么赢、负方输在哪、负方要怎么打才有机会赢，覆盖对线、
+			节奏与转折、团战与输出、推进与建筑、视野。
+		</p>
+
+		<div class="mt-3 flex flex-wrap items-center gap-3">
+			<button
+				id="match-ai-run"
+				type="button"
+				class="rounded-lg border border-dota/60 bg-dota/15 px-4 py-2 text-sm text-dota-light transition hover:bg-dota/25 disabled:cursor-not-allowed disabled:opacity-60"
+			>
+				生成分析
+			</button>
+			<p id="match-ai-state" class="text-xs text-faint"></p>
+		</div>
+
+		<div id="match-ai-result" class="mt-4 space-y-3"></div>
+
+		<p class="mt-4 border-t border-line pt-3 text-xs leading-relaxed text-faint">
+			数字（经济与经验差、胜率模型、伤害、建筑、眼位）都来自上面那份复盘数据，由本站算好再交给模型；
+			模型只负责措辞，不会自己给一个胜率。请求由你的浏览器直接发给<a href="/settings/" class="text-muted transition hover:text-gold">设置</a>里填的那个地址，
+			本站不经手、不落库。没配模型时这一块不会发起任何请求。
+		</p>
+
+		<noscript>
+			<p class="mt-3 text-xs text-faint">AI 赛后分析需要 JavaScript：请求要从浏览器直接发给你自己配置的模型地址。</p>
+		</noscript>
+	</Panel>
+</div>
+
+<script type="application/json" id="match-ai-data" set:html={payload} is:inline />
+<script>
+	import '../../scripts/matchAnalysis';
+</script>
