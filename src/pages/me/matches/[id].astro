@@ -145,6 +145,10 @@ const summary: { label: string; value: string; tone?: 'win' | 'loss' | 'muted' }
 						<a href={`/replay/${match.matchId}`} class="text-xs text-muted transition hover:text-gold">
 							复盘与地图回放
 						</a>
+						{/* AI 分析挂在复盘页（#ai）：数据与缓存都在那边，这里只给入口。 */}
+						<a href={`/replay/${match.matchId}#ai`} class="text-xs text-muted transition hover:text-gold">
+							AI 赛后分析
+						</a>
 						<a
 							href={`https://stratz.com/matches/${match.matchId}`}
 							target="_blank"

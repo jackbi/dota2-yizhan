@@ -260,6 +260,10 @@ const backLabel = eventExists ? '返回赛事' : '返回赛事列表';
 										<a href={`/replay/${game.matchId}`} class="text-muted transition hover:text-gold">
 											复盘与回放
 										</a>
+										{/* AI 分析挂在复盘页（#ai）：赛事页是静态的，不在这里再拉一份复盘数据。 */}
+										<a href={`/replay/${game.matchId}#ai`} class="text-muted transition hover:text-gold">
+											AI 赛后分析
+										</a>
 										<a
 											href={game.source === 'stratz' ? `https://stratz.com/matches/${game.matchId}` : `https://www.opendota.com/matches/${game.matchId}`}
 											target="_blank"
