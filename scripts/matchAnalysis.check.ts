@@ -43,6 +43,8 @@ function player(over: Partial<ReviewPlayer> & { heroId: number; isRadiant: boole
 		heroDamage: 20000,
 		towerDamage: 4000,
 		heroHealing: 0,
+		position: 'POSITION_1',
+		lane: 'SAFE_LANE',
 		imp: 1.5,
 		items: [1, null, null, null, null, null],
 		backpack: [null, null, null],
@@ -86,7 +88,7 @@ const review: MatchReview = {
 	],
 	players: [
 		player({ heroId: 1, isRadiant: true, networth: 21300 }),
-		player({ heroId: 2, isRadiant: false, networth: 12000, imp: null }),
+		player({ heroId: 2, isRadiant: false, networth: 12000, imp: null, position: 'POSITION_2', lane: 'MID_LANE' }),
 	],
 	wards,
 	didRequestDownload: true,
@@ -99,6 +101,8 @@ assert.equal(input.radiantName, 'Team XG');
 assert.equal(input.winner, '天辉');
 assert.equal(input.lanes[0]?.outcome, '天辉碾压', '三路结果要翻成中文');
 assert.equal(input.lanes[1]?.outcome, '均势');
+assert.equal(input.players[0]?.position, '1 号位', '号位要翻成中文');
+assert.equal(input.players[1]?.lane, '中路', '分路要翻成中文');
 
 // 建筑要按 npcId 分回塔与兵营：基地塔（这里是王座 50）既不算塔也不算兵营。
 const radiant = input.buildings.find((side) => side.side === '天辉')!;
@@ -120,6 +124,26 @@ assert.equal(curve.peak.minute, 12, '天辉最大领先在最后一分钟');
 assert.equal(curve.trough.minute, 9, '天辉最落后在第 9 分钟');
 assert.equal(curve.swing?.minute, 10, '单分钟最大变化是第 10 分钟那一跳');
 assert.ok((curve.swing?.delta ?? 0) > 0, '正数表示天辉这一分钟拉开');
+
+// 每 10 分钟的净变化：0–10 分钟天辉从 +2,000 走到 +6,000，10–12 分钟又拉开 12,000。
+assert.deepEqual(
+	curve.segments.map((segment) => [segment.from, segment.to]),
+	[[0, 10], [10, 12]],
+	'按 10 分钟切段，最后一段按真实结束分钟收尾',
+);
+assert.equal(curve.segments[0]?.networthDelta, 4000, '段内净变化是首尾两点之差');
+assert.equal(curve.segments[0]?.experienceDelta, 3000);
+assert.equal(curve.segments[1]?.networthDelta, 12000);
+
+// 建筑倒塌要带上那一刻的曲线读数——这是「什么时候倒的」与「倒的时候谁领先」之间的桥。
+assert.equal(input.falls[0]?.lead?.networthLead, 6000, '推塔那一刻的经济差要取第 10 分钟那个点');
+assert.equal(input.falls[1]?.lead?.networthLead, 18000, '超过曲线长度就取最后一个点，不要凭空外推');
+
+// 队与队的合计：逐人表看不出「谁在扛输出」。
+const radiantTotals = input.totals.find((total) => total.side === '天辉')!;
+assert.equal(radiantTotals.kills, 5);
+assert.equal(radiantTotals.networth, 21300);
+assert.equal(radiantTotals.avgLevel, 20);
 
 // 装备要换成名字，空格丢掉。
 assert.deepEqual(input.players[0]?.items, ['狂战斧']);
@@ -147,14 +171,26 @@ assert.match(system!.content, /胜方靠什么赢/, '要分别回答胜因、败
 assert.match(system!.content, /负方要怎么打才有机会赢/);
 assert.match(system!.content, /JSON/, '输出必须是 JSON');
 assert.match(system!.content, /视野/, '视野是要求覆盖的角度之一');
+// 这一条是这次改版的重点：只把表格念一遍等于什么也没说。
+assert.match(system!.content, /不要复述数据/, '要禁止复述表格，逼出因果');
+assert.match(system!.content, /看不出具体是哪一波/, '数据不足以归因时要允许它直说，别用常识补一个原因');
+assert.match(system!.content, /可执行的动作/, '翻盘建议要是能落地的动作，不是「加强视野」那种空话');
+assert.match(system!.content, /turningPoint/, '输出结构里要有转折点这一节');
 
 assert.match(user!.content, /Team XG/, '要带上两队队名，人称才不会翻');
 assert.match(user!.content, /Team Spirit/);
 assert.match(user!.content, /天辉获胜/, '结果要写清谁赢');
 assert.match(user!.content, /21,300/, '经济要带千分位，量级才读得出来');
 assert.match(user!.content, /狂战斧/, '装备要给名字，模型不认识 id');
+assert.match(user!.content, /1 号位/, '选手行要带号位，模型才知道谁该做视野、谁该带线');
+assert.match(user!.content, /中路/, '选手行要带分路');
 assert.match(user!.content, /第|分钟/, '曲线要带分钟数');
 assert.match(user!.content, /插眼/, '有眼位数据时要给出这一段');
+assert.match(user!.content, /每 10 分钟的净变化/, '要按段给出净变化，模型不会自己去算差分');
+assert.match(user!.content, /10–12 分钟：经济 \+12,000/, '段的收尾要用真实结束分钟');
+assert.match(user!.content, /当时天辉经济 \+6,000/, '推塔那一行要带上当时的曲线读数');
+assert.match(user!.content, /两队合计/, '要有队与队的合计，逐人表看不出谁在扛输出');
+assert.match(user!.content, /只有「结果与读数」，没有逐次击杀/, '要交代事件流缺失，别让它假装知道过程');
 assert.ok(!/undefined|NaN/.test(user!.content), '提示词里不许出现 undefined/NaN');
 
 // 没有曲线 / 眼位时，那两块整段不出现，且要有说清限制的句子——不给模型留空位。
@@ -162,18 +198,22 @@ const bareMessages = buildAnalysisMessages(bare);
 const bareUser = bareMessages[1]!.content;
 assert.doesNotMatch(bareUser, /插眼/, '没有眼位数据时不许出现视野那一块');
 assert.doesNotMatch(bareUser, /天辉最大领先/, '没有曲线时不许出现峰谷那两行');
+assert.doesNotMatch(bareUser, /每 10 分钟的净变化/, '没有曲线时也不该有分段净变化');
 assert.match(bareUser, /没有逐分钟曲线|没有眼位数据/, '缺哪一块要明说，别让模型自己补');
 assert.ok(ANALYSIS_MAX_TOKENS >= 1400, '整局分析要写三大段，上限不能比阵容复盘还小');
 
 // ---------------------------------------------------------------- 回复解析
 
 const good = parseAnalysisReply(
-	'{"headline":"XG 靠前中期","winnerWhy":["三路对线占优"],"loserWhy":["视野被压"],"pathToWin":["拖到后期"],"dimensions":[{"dimension":"对线","text":"上路碾压"}]}',
+	'{"headline":"XG 靠前中期","turningPoint":"第 18 分钟一塔掉了之后经济转正","winnerWhy":["三路对线占优"],"loserWhy":["视野被压"],"pathToWin":["拖到后期"],"dimensions":[{"dimension":"对线","text":"上路碾压"}]}',
 );
 assert.equal(good?.headline, 'XG 靠前中期');
+assert.equal(good?.turningPoint, '第 18 分钟一塔掉了之后经济转正');
 assert.equal(good?.winnerWhy.length, 1);
 assert.equal(good?.dimensions[0]?.dimension, '对线');
 
+// 老模型不给转折点也要能读出来（缺字段是空串，不是 undefined）。
+assert.equal(parseAnalysisReply('{"headline":"x","winnerWhy":["a"]}')?.turningPoint, '');
 // 带代码块围栏要能读出来；只有一段正文也要保留。
 assert.equal(parseAnalysisReply('```json\n{"headline":"x","winnerWhy":["a"]}\n```')?.winnerWhy[0], 'a');
 // 坏 JSON、不是 JSON、全空，都当这次没结果。

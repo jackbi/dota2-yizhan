@@ -4,16 +4,19 @@
  */
 import type { PromptMessage } from './aiChat.ts';
 import { formatElapsed } from './format.ts';
-import type { AnalysisMoment, MatchAnalysisInput } from './matchAnalysis.ts';
+import type { AnalysisLead, AnalysisMoment, MatchAnalysisInput } from './matchAnalysis.ts';
 
 /**
  * 赛后分析的提示词与回复解析。**这一层不联网**，只管把 `matchAnalysis` 收好的那份摘要
  * 摆成模型好用的样子，再把它的话收成结构化结果。发请求由浏览器那一层做（`aiChat.requestChat`）。
  *
- * 三条硬约束，与 `draftPrompt` 同源，都是为了"别让模型自己编数据"：
+ * 四条硬约束，前三条与 `draftPrompt` 同源（别让模型自己编数据），第四条是这份独有的：
  * 1. 数字只能来自给定的字段，不许回忆版本强弱；
  * 2. 这一局**没有胜率预测**——只有数据里出现过胜率模型的值才能引用；
- * 3. 输出必须是一个 JSON 对象，解析不过就当这次没结果，界面退回纯数据面板。
+ * 3. 输出必须是一个 JSON 对象，解析不过就当这次没结果，界面退回纯数据面板；
+ * 4. **不许复述数据**。上面那份复盘面板已经把数字都摆出来了，模型再把「15 分钟经济 +1,620」
+ *    念一遍是零信息量。所以提示词强制每条先给机制、数字只当证据，并要求指认一次转折；
+ *    数据不足以归因时必须明说，不许用"一般来说"补一个原因。
  */
 
 export function buildAnalysisSystemPrompt(): string {
@@ -25,12 +28,21 @@ export function buildAnalysisSystemPrompt(): string {
 		'   你不知道这些之外的任何统计，不要去回忆版本强弱，绝对不要编造数字。',
 		'2. 这一局没有胜率预测：只有数据里出现过胜率模型的值才可以引用，并要说明它是哪一分钟的。',
 		'3. 胜负已经定了，不要写成谁"会"赢。要分别回答三件事：胜方靠什么赢、负方输在哪、负方要怎么打才有机会赢。',
-		'4. 覆盖这几个角度，每个角度一到两句：对线期、节奏与转折、团战与输出、推进与建筑、视野（有数据时才写）。',
-		'5. 判不出高低就说持平，数据不够就直说数据不足，不要为了有观点而硬分强弱。',
-		'6. 用简体中文，不要客套话，不要标题符号，不要 Markdown。',
+		'4. **不要复述数据。** 用户已经看到了经济曲线、建筑时间轴和十个人的账单。你的每一条都要回答「为什么」：',
+		'   数字只能当证据挂在机制后面，不许单独成句。写「18 分钟经济转正，是因为中路一波团赢了又顺势拆塔」，',
+		'   不写「18 分钟经济 +3,604」。只把表格念一遍等于什么也没说。',
+		'5. 先给转折点：找出本局最关键的一次转折，说清发生在第几分钟、曲线在那一刻怎么变、最可能的原因是什么。',
+		'   能用的机制只有这些：对线结果、经济与经验差的分岔、建筑倒塌的时间与顺序、核心/辅助的死亡数、',
+		'   视野与反眼、输出与治疗的分布、号位与分路。**数据不足以判断原因时，直说「看不出具体是哪一波」**，',
+		'   不要用"一般来说""通常"补一个原因。',
+		'6. 负方怎么才能赢：给**可执行的动作**，每条绑定本局的具体弱点——该控哪片视野、什么时候该开雾或打盾、',
+		'   该拖到什么时间点、该保谁、该断谁的刷钱。不要写「加强视野」「减少失误」这种放到哪一局都成立的话。',
+		'7. 覆盖这几个角度，每个角度一到两句：对线期、节奏与转折、团战与输出、推进与建筑、视野（有数据时才写）。',
+		'8. 判不出高低就说持平，数据不够就直说数据不足，不要为了有观点而硬分强弱。',
+		'9. 用简体中文，不要客套话，不要标题符号，不要 Markdown。',
 		'',
 		'只输出一个 JSON 对象，不要代码块标记，不要多余解释，格式如下：',
-		'{"headline":"一两句话的整体结论","winnerWhy":["…"],"loserWhy":["…"],"pathToWin":["…"],"dimensions":[{"dimension":"对线","text":"…"}]}',
+		'{"headline":"一两句话的整体结论","turningPoint":"本局最关键的一次转折：第几分钟、怎么变的、最可能的原因","winnerWhy":["…"],"loserWhy":["…"],"pathToWin":["…"],"dimensions":[{"dimension":"对线","text":"…"}]}',
 		'winnerWhy / loserWhy / pathToWin 各 2 到 4 条，dimensions 给 4 到 6 条。',
 	].join('\n');
 }
@@ -57,6 +69,11 @@ function moment(point: AnalysisMoment): string {
 	return `${point.minute} 分钟 经济 ${signed(point.networthLead)} / 经验 ${signed(point.experienceLead)} / 胜率 ${pct(point.winRate)}`;
 }
 
+/** 某一刻的读数（建筑倒塌时挂在那一行上）。 */
+function leadText(lead: AnalysisLead): string {
+	return `当时天辉经济 ${signed(lead.networthLead)} / 经验 ${signed(lead.experienceLead)} / 胜率 ${pct(lead.winRate)}`;
+}
+
 // ---------------------------------------------------------------- 用户提示词
 
 function renderTeam(rows: MatchAnalysisInput['players']): string {
@@ -64,7 +81,8 @@ function renderTeam(rows: MatchAnalysisInput['players']): string {
 		.map((row) => {
 			const imp = row.imp === null ? '' : ` / IMP ${row.imp.toFixed(1)}`;
 			const items = row.items.length > 0 ? `\n  装备：${row.items.join('、')}` : '';
-			return `- ${row.hero}（${row.name}）：${row.kills}/${row.deaths}/${row.assists}，经济 ${num(row.networth)}（GPM ${row.gpm} / XPM ${row.xpm}），等级 ${row.level}，正补 ${row.lastHits} / 反补 ${row.denies}，对英雄伤害 ${num(row.heroDamage)} / 对建筑伤害 ${num(row.towerDamage)} / 治疗 ${num(row.heroHealing)}${imp}${items}`;
+			// 号位与分路是复盘的关键背景：谁该做视野、谁该带线、谁对线被压在哪儿，都要靠它定位。
+			return `- ${row.position} · ${row.lane} · ${row.hero}（${row.name}）：${row.kills}/${row.deaths}/${row.assists}，经济 ${num(row.networth)}（GPM ${row.gpm} / XPM ${row.xpm}），等级 ${row.level}，正补 ${row.lastHits} / 反补 ${row.denies}，对英雄伤害 ${num(row.heroDamage)} / 对建筑伤害 ${num(row.towerDamage)} / 治疗 ${num(row.heroHealing)}${imp}${items}`;
 		})
 		.join('\n');
 }
@@ -98,22 +116,47 @@ export function buildAnalysisUserPrompt(input: MatchAnalysisInput): string {
 	if (input.falls.length > 0) {
 		lines.push(
 			'',
-			'建筑倒塌时间轴（`被拆方` 是倒了的那一边）：',
-			...input.falls.map((fall) => `- ${formatElapsed(fall.time)} 被拆方 ${fall.by} · ${fall.label} · 补刀 ${fall.attacker}`),
+			'建筑倒塌时间轴（`被拆方` 是倒了的那一边；后面那半句是那一刻的曲线读数）：',
+			...input.falls.map(
+				(fall) =>
+					`- ${formatElapsed(fall.time)} 被拆方 ${fall.by} · ${fall.label} · 补刀 ${fall.attacker}${fall.lead ? ` · ${leadText(fall.lead)}` : ''}`,
+			),
 		);
 	}
 
 	if (input.curve) {
-		const { timeline, peak, trough, swing } = input.curve;
+		const { timeline, peak, trough, swing, segments } = input.curve;
 		lines.push('', '经济与经验（天辉视角：正数 = 天辉领先）：', ...timeline.map((point) => `- ${moment(point)}`));
 		lines.push(
 			`- 天辉最大领先：${moment(peak)}`,
 			`- 天辉最大落后：${moment(trough)}`,
 			swing ? `- 单分钟最大变化：${swing.minute} 分钟 经济 ${signed(swing.delta)}（正数 = 天辉这一分钟拉开，负数 = 被追回）` : '',
 		);
+		if (segments.length > 0) {
+			lines.push(
+				'',
+				'每 10 分钟的净变化（天辉视角；哪一段被拉爆，看的就是这一段）：',
+				...segments.map(
+					(segment) => `- ${segment.from}–${segment.to} 分钟：经济 ${signed(segment.networthDelta)} / 经验 ${signed(segment.experienceDelta)}`,
+				),
+			);
+		}
 	}
 
-	lines.push('', '十名选手（天辉在前、同队按经济从高到低）：', '天辉：', renderTeam(radiantRows), '夜魇：', renderTeam(direRows));
+	lines.push(
+		'',
+		'两队合计（横向对照用）：',
+		...input.totals.map(
+			(total) =>
+				`- ${total.side}（${names[total.side]}）：击杀 ${total.kills} / 死亡 ${total.deaths} / 助攻 ${total.assists}，总经济 ${num(total.networth)}，对英雄伤害 ${num(total.heroDamage)}，对建筑伤害 ${num(total.towerDamage)}，治疗 ${num(total.heroHealing)}，平均等级 ${total.avgLevel.toFixed(1)}`,
+		),
+		'',
+		'十名选手（天辉在前、同队按经济从高到低；行首是号位与分路）：',
+		'天辉：',
+		renderTeam(radiantRows),
+		'夜魇：',
+		renderTeam(direRows),
+	);
 
 	if (input.wards) {
 		lines.push(
@@ -127,6 +170,7 @@ export function buildAnalysisUserPrompt(input: MatchAnalysisInput): string {
 	}
 
 	lines.push('', '口径与限制：', '- 数据来自 STRATZ 已解析的公开对局，胜负与全部数字都以它为准，不要另行推断。');
+	lines.push('- 上面只有「结果与读数」，没有逐次击杀、团战与道具购买的时间点；要归因请用曲线拐点、建筑时间轴与人员数据，归不了就明说。');
 	if (!input.curve) lines.push('- 这一局没有逐分钟曲线，节奏与转折只能从建筑时间轴和选手数据判断，不要编造时间点。');
 	if (!input.wards) lines.push('- 这一局没有眼位数据（未下载录像），视野这一角直接跳过，不要编。');
 
@@ -150,6 +194,8 @@ export const ANALYSIS_MAX_TOKENS = 2000;
 
 export interface ParsedAnalysis {
 	headline: string;
+	/** 本局最关键的一次转折：第几分钟、怎么变的、最可能的原因。数据不足时模型会说明。 */
+	turningPoint: string;
 	winnerWhy: string[];
 	loserWhy: string[];
 	pathToWin: string[];
@@ -193,6 +239,7 @@ export function parseAnalysisReply(raw: string): ParsedAnalysis | null {
 
 	const body = parsed as Record<string, unknown>;
 	const headline = typeof body.headline === 'string' ? body.headline.trim().slice(0, 400) : '';
+	const turningPoint = typeof body.turningPoint === 'string' ? body.turningPoint.trim().slice(0, 600) : '';
 	const winnerWhy = textList(body.winnerWhy, 6);
 	const loserWhy = textList(body.loserWhy, 6);
 	const pathToWin = textList(body.pathToWin, 6);
@@ -211,5 +258,5 @@ export function parseAnalysisReply(raw: string): ParsedAnalysis | null {
 
 	// 一整段都没读到，就当这次没结果——不要显示一个只有标题的空壳。
 	if (!headline && winnerWhy.length === 0 && loserWhy.length === 0 && pathToWin.length === 0 && dimensions.length === 0) return null;
-	return { headline, winnerWhy, loserWhy, pathToWin, dimensions };
+	return { headline, turningPoint, winnerWhy, loserWhy, pathToWin, dimensions };
 }

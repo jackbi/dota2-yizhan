@@ -2,10 +2,10 @@
  * 相对导入带 `.ts` 后缀：这一层要能被 `scripts/*.check.ts` 用
  * `node --experimental-strip-types` 直接加载，Node 不做后缀补全。
  */
-import { laneOutcomeLabel } from './dotaLabels.ts';
+import { laneLabel, laneOutcomeLabel, positionLabel } from './dotaLabels.ts';
 import { BARRACKS_PER_SIDE, MAP_BUILDINGS, TOWERS_PER_SIDE } from './dotaMap.ts';
 import type { HeroRef, ItemRef } from './gameRefs.ts';
-import type { MatchReview, ReviewPlayer } from './matchReview.ts';
+import type { MatchReview, ReviewMinute, ReviewPlayer } from './matchReview.ts';
 
 /**
  * 赛后分析要给模型的那份摘要。
@@ -24,6 +24,10 @@ export interface AnalysisPlayerRow {
 	name: string;
 	hero: string;
 	side: '天辉' | '夜魇';
+	/** 「1 号位」这类中文标签；上游缺值时是「未知」。 */
+	position: string;
+	/** 「优势路 / 中路 / 劣势路」；上游缺值时是「未知」。 */
+	lane: string;
 	kills: number;
 	deaths: number;
 	assists: number;
@@ -42,13 +46,43 @@ export interface AnalysisPlayerRow {
 	items: string[];
 }
 
-/** 曲线上的一点。永远是天辉视角：正数 = 天辉领先。 */
-export interface AnalysisMoment {
-	minute: number;
+/** 某一刻的三条曲线读数。用来把「建筑什么时候倒」与「经济差什么时候翻」对上。 */
+export interface AnalysisLead {
 	networthLead: number;
 	experienceLead: number;
-	/** STRATZ 胜率模型（天辉视角，0–1）；上游缺一格时为 null。 */
 	winRate: number | null;
+}
+
+/** 曲线上的一点。永远是天辉视角：正数 = 天辉领先。 */
+export interface AnalysisMoment extends AnalysisLead {
+	minute: number;
+}
+
+/**
+ * 每 10 分钟的净变化，天辉视角。
+ *
+ * 「15 分钟后为什么领先」这个问题，答案就藏在这一段里：某一段窗口的经济/经验净涨了多少，
+ * 说明那一波团战或那段时间谁在赚。逐点曲线能给，但模型几乎不会自己去算差分。
+ */
+export interface AnalysisSegment {
+	from: number;
+	to: number;
+	networthDelta: number;
+	experienceDelta: number;
+}
+
+/** 一边的合计，用来做队与队的横向对照（逐人表看不出「谁在扛输出」）。 */
+export interface AnalysisTotals {
+	side: '天辉' | '夜魇';
+	kills: number;
+	deaths: number;
+	assists: number;
+	networth: number;
+	heroDamage: number;
+	towerDamage: number;
+	heroHealing: number;
+	/** 队伍平均等级，一位小数。 */
+	avgLevel: number;
 }
 
 export interface AnalysisCurve {
@@ -60,6 +94,8 @@ export interface AnalysisCurve {
 	trough: AnalysisMoment;
 	/** 单分钟内经济差变化最大的一分钟，用来指认「哪一分钟崩的 / 翻的」。 */
 	swing: { minute: number; delta: number } | null;
+	/** 每 10 分钟的净变化，用来指认「哪一段被拉爆」。 */
+	segments: AnalysisSegment[];
 }
 
 /** 一边的眼位统计，字段与 `wardStats.WardSideSummary` 一一对应。 */
@@ -93,10 +129,17 @@ export interface MatchAnalysisInput {
 		towersFallen: number;
 		barracksFallen: number;
 	}[];
-	/** 建筑倒塌时间轴（按时间排好），`by` 是被拆的那一方。 */
-	falls: { time: number; label: string; by: '天辉' | '夜魇'; attacker: string }[];
+	/**
+	 * 建筑倒塌时间轴（按时间排好），`by` 是被拆的那一方。
+	 *
+	 * `lead` 是**那一刻**的经济与经验差（没有曲线时为 null）。把这两个数对齐是这份摘要里
+	 * 最有用的一格：它让「18:42 拆中路一塔」变成「拆塔时天辉已经反超 X」，而不只是一个时间点。
+	 */
+	falls: { time: number; label: string; by: '天辉' | '夜魇'; attacker: string; lead: AnalysisLead | null }[];
 	/** 十名选手，天辉在前、同队按经济从高到低（与 `MatchReview.players` 同序）。 */
 	players: AnalysisPlayerRow[];
+	/** 两边的合计。 */
+	totals: AnalysisTotals[];
 	/** 没有逐分钟曲线时为 null（未解析的对局）。 */
 	curve: AnalysisCurve | null;
 	/** 没有眼位数据时为 null（未下载录像的对局）。 */
@@ -131,6 +174,8 @@ function toRow(player: ReviewPlayer, heroes: Map<number, HeroRef>, items: Map<nu
 		name: player.name,
 		hero: heroName(heroes, player.heroId),
 		side: player.isRadiant ? '天辉' : '夜魇',
+		position: positionLabel(player.position),
+		lane: laneLabel(player.lane),
 		kills: player.kills,
 		deaths: player.deaths,
 		assists: player.assists,
@@ -148,8 +193,67 @@ function toRow(player: ReviewPlayer, heroes: Map<number, HeroRef>, items: Map<nu
 	};
 }
 
+/** 某一分钟的三条曲线读数；分钟超出曲线长度时取最后一个点。没有曲线返回 null。 */
+function leadAt(minutes: ReviewMinute[], minute: number): AnalysisLead | null {
+	if (minutes.length === 0) return null;
+	let best = minutes[0]!;
+	for (const point of minutes) {
+		if (point.minute <= minute) best = point;
+		else break;
+	}
+	return { networthLead: best.networthLead, experienceLead: best.experienceLead, winRate: best.winRate };
+}
+
 /**
- * 逐分钟曲线 → 给模型的那份：每 5 分钟一点 + 峰谷 + 最大单分钟变化。
+ * 每 10 分钟的净变化。
+ *
+ * 逐点曲线模型是会读的，但它几乎不会自己去算差分——而「哪一段被拉爆」正是复盘里最该说清的
+ * 一句。所以这里替它算好：每段取该段最后一个点与上一段最后一个点之差，段标签用真实的分钟数
+ * （对局未必是 10 的整数倍，最后一段可能是 3 分钟）。
+ */
+function toSegments(minutes: ReviewMinute[]): AnalysisSegment[] {
+	if (minutes.length === 0) return [];
+	const last = minutes[minutes.length - 1]!;
+	if (last.minute <= 0) return [];
+
+	const segments: AnalysisSegment[] = [];
+	let previous = leadAt(minutes, 0)!;
+	let previousMinute = 0;
+	for (let end = 10; ; end += 10) {
+		const to = Math.min(end, last.minute);
+		const point = leadAt(minutes, to)!;
+		segments.push({
+			from: previousMinute,
+			to,
+			networthDelta: point.networthLead - previous.networthLead,
+			experienceDelta: point.experienceLead - previous.experienceLead,
+		});
+		previous = point;
+		previousMinute = to;
+		if (end >= last.minute) break;
+	}
+	return segments;
+}
+
+/** 一边的合计。平均等级保留一位小数，别的都是整数。 */
+function toTotals(rows: AnalysisPlayerRow[], side: '天辉' | '夜魇'): AnalysisTotals {
+	const sum = (pick: (row: AnalysisPlayerRow) => number): number => rows.reduce((total, row) => total + pick(row), 0);
+	const level = rows.length > 0 ? sum((row) => row.level) / rows.length : 0;
+	return {
+		side,
+		kills: sum((row) => row.kills),
+		deaths: sum((row) => row.deaths),
+		assists: sum((row) => row.assists),
+		networth: sum((row) => row.networth),
+		heroDamage: sum((row) => row.heroDamage),
+		towerDamage: sum((row) => row.towerDamage),
+		heroHealing: sum((row) => row.heroHealing),
+		avgLevel: Math.round(level * 10) / 10,
+	};
+}
+
+/**
+ * 逐分钟曲线 → 给模型的那份：每 5 分钟一点 + 峰谷 + 最大单分钟变化 + 每 10 分钟净变化。
  *
  * 「峰 / 谷」取的是**天辉视角**，写进提示词时会带上队名，模型才不会把视角搞反。
  * `swing` 是相邻两分钟经济差的差值的最大值——正的一跳多半是一波团灭加推塔，负的一跳多半是被翻，
@@ -180,7 +284,7 @@ function toCurve(review: MatchReview): AnalysisCurve | null {
 		}
 	}
 
-	return { timeline, peak, trough, swing };
+	return { timeline, peak, trough, swing, segments: toSegments(minutes) };
 }
 
 /**
@@ -195,6 +299,7 @@ export function buildAnalysisInput(
 ): MatchAnalysisInput {
 	const towersFallen = review.falls.filter((fall) => BUILDING_KIND.get(fall.npcId) === 'tower');
 	const barracksFallen = review.falls.filter((fall) => BUILDING_KIND.get(fall.npcId) === 'barracks');
+	const players = review.players.map((player) => toRow(player, heroes, items));
 
 	return {
 		matchId: review.matchId,
@@ -233,8 +338,14 @@ export function buildAnalysisInput(
 			label: fall.label,
 			by: fall.side === 0 ? '天辉' : '夜魇',
 			attacker: fall.attackerHeroId === null ? '未记录' : heroName(heroes, fall.attackerHeroId),
+			// 把倒塌时刻与曲线对齐：这一格让「什么时候倒的」变成「倒的时候谁领先多少」。
+			lead: leadAt(review.minutes, Math.floor(fall.time / 60)),
 		})),
-		players: review.players.map((player) => toRow(player, heroes, items)),
+		players,
+		totals: [
+			toTotals(players.filter((row) => row.side === '天辉'), '天辉'),
+			toTotals(players.filter((row) => row.side === '夜魇'), '夜魇'),
+		],
 		curve: toCurve(review),
 		wards: review.wards
 			? [

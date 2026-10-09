@@ -22,8 +22,14 @@ import { chatErrorMessage, requestChat } from '../lib/aiChat.ts';
  * 这一层只做三件事：读数据、发请求、把结构化结果画出来。
  */
 
-/** 结果缓存。键是「地址 + 模型」，换一个就是另一份结果，不能沿用。 */
-const CACHE_KEY = 'd2s-match-ai-v1';
+/**
+ * 结果缓存。键是「地址 + 模型」，换一个就是另一份结果，不能沿用。
+ *
+ * 键里带版本号：给结构化结果加字段（v2 是`转折点`那一节）时必须换键——缓存里存的是**解析后
+ * 的对象**，老条目不会自己长出新字段，页面只会安静地少一块。这条规矩在仓库里记过一次
+ * （见 docs/data-sources.md 的「加头像没升版本」）。
+ */
+const CACHE_KEY = 'd2s-match-ai-v2';
 /** 最多留几场的分析。常用浏览器会翻很多场，不留上限会一直长。 */
 const CACHE_LIMIT = 20;
 
@@ -111,6 +117,9 @@ if (data && run && state && result) {
 	function render(analysis: ParsedAnalysis): void {
 		result.innerHTML = [
 			analysis.headline ? `<p class="text-sm leading-relaxed text-cream">${esc(analysis.headline)}</p>` : '',
+			analysis.turningPoint
+				? `<div class="rounded-lg border border-line bg-surface-2/40 px-3 py-2"><p class="text-[11px] text-faint">转折点</p><p class="mt-1 text-xs leading-relaxed text-cream">${esc(analysis.turningPoint)}</p></div>`
+				: '',
 			renderList(winnerTitle, analysis.winnerWhy),
 			renderList(loserTitle, analysis.loserWhy),
 			renderList('负方要赢，得这么做', analysis.pathToWin),
