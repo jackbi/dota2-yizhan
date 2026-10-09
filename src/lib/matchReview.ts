@@ -61,6 +61,13 @@ export interface ReviewPlayer {
 	position: string | null;
 	/** `SAFE_LANE` / `MID_LANE` / `OFF_LANE` 等；上游缺值时是 null。 */
 	lane: string | null;
+	/**
+	 * 购买时间轴（秒），按时间排好。
+	 *
+	 * 与「最后六格装备」是两件事：这里带着**什么时候买的**，所以能看出成型件的先后——
+	 * 「BKB 26 分钟才有」和「BKB 一次都没出」在复盘里完全是两种打法。
+	 */
+	purchases: { itemId: number; time: number }[];
 	/** 个人表现分（可正可负）；上游缺值时是 null。 */
 	imp: number | null;
 	/**
@@ -187,6 +194,7 @@ interface RawReviewPlayer {
 	heroHealing?: number | null;
 	position?: string | null;
 	lane?: string | null;
+	stats?: { itemPurchases?: { itemId?: number | null; time?: number | null }[] | null } | null;
 	imp?: number | null;
 	item0Id?: number | null;
 	item1Id?: number | null;
@@ -254,6 +262,7 @@ const REVIEW_DOCUMENT = `query MatchReview($id: Long!) {
       heroHealing
       position
       lane
+      stats { itemPurchases { itemId time } }
       imp
       item0Id
       item1Id
@@ -369,6 +378,13 @@ function toReview(raw: RawReviewMatch): MatchReview | null {
 			heroHealing: player.heroHealing ?? 0,
 			position: player.position ?? null,
 			lane: player.lane ?? null,
+			purchases: (player.stats?.itemPurchases ?? [])
+				.filter(
+					(entry): entry is { itemId: number; time: number } =>
+						typeof entry.itemId === 'number' && entry.itemId > 0 && typeof entry.time === 'number',
+				)
+				.map((entry) => ({ itemId: entry.itemId, time: entry.time }))
+				.sort((a, b) => a.time - b.time),
 			imp: typeof player.imp === 'number' ? player.imp : null,
 			// 空物品格上游直接不给字段；0 与负数也按空处理（STRATZ 用它们表示"没有"）。
 			items: [player.item0Id, player.item1Id, player.item2Id, player.item3Id, player.item4Id, player.item5Id].map(positiveOrNull),
@@ -495,10 +511,11 @@ interface RawPositionEvents {
  */
 export async function loadMatchReview(matchId: number): Promise<MatchReview | null> {
 	// 键里带版本号：给解析后的对象加字段（v2 是 `wards` 与 `playerSlot`，v3 是对抗明细的
-	// 伤害/背包/中立物品，v4 是选手的号位与分路）时必须换键。仓库里记过「加头像没升版本」那次的教训
+	// 伤害/背包/中立物品，v4 是选手的号位与分路，v5 是购买时间轴）时必须换键。
+	// 仓库里记过「加头像没升版本」那次的教训
 	// （见 docs/data-sources.md）——内存缓存里那些旧形状的条目会缺字段，页面只会安静地少一块，
 	// 不报错。别指望缓存自己长出新字段。
-	return cached(`review:v4:match:${matchId}`, REVIEW_TTL_MS, async () => {
+	return cached(`review:v5:match:${matchId}`, REVIEW_TTL_MS, async () => {
 		const data = await gql<{ match: RawReviewMatch | null }>(REVIEW_DOCUMENT, { id: matchId });
 		return data.match ? toReview(data.match) : null;
 	});

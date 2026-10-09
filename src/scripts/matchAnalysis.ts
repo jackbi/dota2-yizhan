@@ -5,6 +5,8 @@
 import type { MatchAnalysisInput } from '../lib/matchAnalysis.ts';
 import { ANALYSIS_MAX_TOKENS, buildAnalysisMessages, parseAnalysisReply } from '../lib/matchAnalysisPrompt.ts';
 import type { ParsedAnalysis } from '../lib/matchAnalysisPrompt.ts';
+import type { MatchPlayback } from '../lib/matchReview.ts';
+import { summarizePlayback, type PlaybackSummary } from '../lib/playbackSummary.ts';
 import type { AiConfig } from '../lib/aiConfig.ts';
 import { AI_STORE_KEY, aiStateLabel, isConfigured, loadAiConfig, sameAiTarget } from '../lib/aiConfig.ts';
 import { chatErrorMessage, requestChat } from '../lib/aiChat.ts';
@@ -25,11 +27,14 @@ import { chatErrorMessage, requestChat } from '../lib/aiChat.ts';
 /**
  * 结果缓存。键是「地址 + 模型」，换一个就是另一份结果，不能沿用。
  *
- * 键里带版本号：给结构化结果加字段（v2 是`转折点`那一节）时必须换键——缓存里存的是**解析后
+ * 键里带版本号：给结构化结果加字段（v2 是「转折点」那一节）时必须换键——缓存里存的是**解析后
  * 的对象**，老条目不会自己长出新字段，页面只会安静地少一块。这条规矩在仓库里记过一次
  * （见 docs/data-sources.md 的「加头像没升版本」）。
+ *
+ * v3 是因为**提示词与输入换了**（加了打法与出装时间轴）：键没变的话，读者回来看到的还是上一版
+ * 那段「把表格念一遍」的文字，会以为改动没生效。结构没变、内容变了，同样要作废。
  */
-const CACHE_KEY = 'd2s-match-ai-v2';
+const CACHE_KEY = 'd2s-match-ai-v3';
 /** 最多留几场的分析。常用浏览器会翻很多场，不留上限会一直长。 */
 const CACHE_LIMIT = 20;
 
@@ -96,6 +101,28 @@ function renderList(title: string, items: string[]): string {
 	return `<div><p class="text-[11px] text-faint">${esc(title)}</p><ul class="mt-1 space-y-1">${items
 		.map((item) => `<li class="text-xs leading-relaxed text-muted">${esc(item)}</li>`)
 		.join('')}</ul></div>`;
+}
+
+/**
+ * 取这局的回放轨迹，聚成「打法」摘要。**点的时候才拉**，因为：
+ * - 那份数据 400KB 上下（十个人逐秒位置），只看记分板的人不该为它付流量；
+ * - 它只覆盖「下载过录像的近期对局」，很多对局本来就没有；
+ * - 接口是现成的（`/api/replay/<id>`，浏览器缓存一小时）——读者若已经点过「载入英雄轨迹」，
+ *   这一次几乎是白拿。
+ *
+ * 拿不到就返回 null：复盘那部分照常分析，只是少「打法」这一段。
+ */
+async function loadPlayback(matchId: number): Promise<PlaybackSummary | null> {
+	try {
+		const response = await fetch(`/api/replay/${matchId}`, { headers: { accept: 'application/json' } });
+		if (!response.ok) return null;
+		const body = (await response.json().catch(() => null)) as { ok?: boolean; playback?: MatchPlayback } | null;
+		if (!body?.ok || !body.playback) return null;
+		return summarizePlayback(body.playback);
+	} catch {
+		// 网络、接口 500、JSON 坏了：都按「这局没有轨迹」处理，不打断分析。
+		return null;
+	}
 }
 
 const data = readData();
@@ -169,7 +196,14 @@ if (data && run && state && result) {
 		// 请求最长能跑 30 秒，这中间配置可能被别的标签页改了：回来先对一眼，换了就丢掉这份。
 		const target = ai;
 		try {
-			const reply = await requestChat(target, buildAnalysisMessages(data), { maxTokens: ANALYSIS_MAX_TOKENS });
+			// 先把轨迹拉回来聚成「打法」：没有录像的对局这一步很快返回 null，分析照常出。
+			statusText = '正在取回放轨迹（只有下载过录像的对局才有）…';
+			paint();
+			const playback = await loadPlayback(data.matchId);
+			if (!sameAiTarget(target, ai)) return;
+			statusText = '模型分析中…';
+			paint();
+			const reply = await requestChat(target, buildAnalysisMessages(data, playback), { maxTokens: ANALYSIS_MAX_TOKENS });
 			if (!sameAiTarget(target, ai)) return;
 			if (!reply.ok) {
 				statusText = chatErrorMessage(reply);

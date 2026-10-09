@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import type { HeroRef, ItemRef } from '../src/lib/gameRefs.ts';
 import { buildAnalysisInput, type MatchAnalysisInput } from '../src/lib/matchAnalysis.ts';
 import { ANALYSIS_MAX_TOKENS, buildAnalysisMessages, parseAnalysisReply } from '../src/lib/matchAnalysisPrompt.ts';
-import type { MatchReview, ReviewPlayer } from '../src/lib/matchReview.ts';
+import type { MatchPlayback, MatchReview, ReviewPlayer } from '../src/lib/matchReview.ts';
+import { regionOf, summarizePlayback } from '../src/lib/playbackSummary.ts';
 import type { WardSummary } from '../src/lib/wardStats.ts';
 
 /**
@@ -23,7 +24,11 @@ const heroes = new Map<number, HeroRef>([
 	[1, { id: 1, name: '敌法师', img: '', attr: 'AGI' }],
 	[2, { id: 2, name: '帕克', img: '', attr: 'INT' }],
 ]);
-const items = new Map<number, ItemRef>([[1, { id: 1, name: '狂战斧', img: '', cost: 0 }]]);
+const items = new Map<number, ItemRef>([
+	[1, { id: 1, name: '狂战斧', img: '', cost: 4000 }],
+	[2, { id: 2, name: '治疗药膏', img: '', cost: 100 }],
+	[3, { id: 3, name: '黑皇杖', img: '', cost: 3975 }],
+]);
 
 const heroName = (heroId: number): string => heroes.get(heroId)?.name ?? `英雄 #${heroId}`;
 
@@ -45,6 +50,7 @@ function player(over: Partial<ReviewPlayer> & { heroId: number; isRadiant: boole
 		heroHealing: 0,
 		position: 'POSITION_1',
 		lane: 'SAFE_LANE',
+		purchases: [],
 		imp: 1.5,
 		items: [1, null, null, null, null, null],
 		backpack: [null, null, null],
@@ -87,7 +93,18 @@ const review: MatchReview = {
 		{ time: 1200, npcId: 50, label: '天辉王座', side: 0, attackerHeroId: null },
 	],
 	players: [
-		player({ heroId: 1, isRadiant: true, networth: 21300 }),
+		player({
+			heroId: 1,
+			isRadiant: true,
+			networth: 21300,
+			// 药膏不算成型件；狂战斧买过两次只留第一次。
+			purchases: [
+				{ itemId: 2, time: 0 },
+				{ itemId: 1, time: 400 },
+				{ itemId: 3, time: 1200 },
+				{ itemId: 1, time: 1800 },
+			],
+		}),
 		player({ heroId: 2, isRadiant: false, networth: 12000, imp: null, position: 'POSITION_2', lane: 'MID_LANE' }),
 	],
 	wards,
@@ -149,6 +166,17 @@ assert.equal(radiantTotals.avgLevel, 20);
 assert.deepEqual(input.players[0]?.items, ['狂战斧']);
 assert.equal(input.players[1]?.imp, null, 'IMP 缺值保持 null，不要填 0');
 
+// 成型件：按单价过滤（药膏进不来），同一个 id 只留第一次购买（卖掉又买回来不该出现两次）。
+assert.deepEqual(
+	input.players[0]?.keyItems,
+	[
+		{ name: '狂战斧', time: 400 },
+		{ name: '黑皇杖', time: 1200 },
+	],
+	'成型件要按单价过滤、按时间排序、同一个 id 去重',
+);
+assert.deepEqual(input.players[1]?.keyItems, [], '没买过成型件就是空数组');
+
 // 这一份要能内联进 <script>：不能出现 undefined / NaN，parse 回来要一模一样。
 const json = JSON.stringify(input);
 assert.ok(!/undefined|NaN/.test(json), `摘要里不许出现 undefined/NaN：${json.slice(0, 120)}`);
@@ -161,6 +189,60 @@ assert.equal(bare.wards, null);
 assert.equal(bare.falls.length, 0);
 
 // ---------------------------------------------------------------- 提示词
+
+// ---------------------------------------------------------------- 打法（回放轨迹）
+
+/**
+ * 合成一份「有人抱团、也有人打起来」的回放：天辉 4 人 300–330 秒在夜魇下路，
+ * 420–450 秒双方各 3 人在中路河道撞上。区域名要点位对照 `dotaMap` 的真实几何。
+ */
+const playback: MatchPlayback = {
+	matchId: 9012488967,
+	durationSeconds: 600,
+	players: [
+		...[1, 2, 3, 4].map((heroId) => ({ heroId, isRadiant: true, points: [300, 176, 120, 330, 176, 120] })),
+		{ heroId: 5, isRadiant: false, points: [300, 124, 78, 330, 124, 78] },
+		...[6, 7, 8].map((heroId) => ({ heroId, isRadiant: true, points: [420, 127, 127, 450, 127, 127] })),
+		...[9, 10, 11].map((heroId) => ({ heroId, isRadiant: false, points: [420, 128, 126, 450, 128, 126] })),
+	],
+	wards: [
+		{ t: 100, x: 176, y: 120, kind: 'OBSERVER', side: 0, end: null },
+		{ t: 110, x: 178, y: 130, kind: 'SENTRY', side: 0, end: null },
+		{ t: 200, x: 127, y: 127, kind: 'OBSERVER', side: 1, end: null },
+		// 槽位对不上的眼：不算进任何一方（与 wardStats 同一条口径）。
+		{ t: 210, x: 90, y: 90, kind: 'OBSERVER', side: null, end: null },
+	],
+	roshan: [100, 102, 146, 120, 103, 147, 200, 150, 106],
+	falls: [],
+};
+
+// 区域名要能直接读给人听：河道优先判，其余按最近的路线 + 半区。
+assert.equal(regionOf(127, 127), '中路河道', '河道线是 x + y = 250，中路穿过它');
+assert.equal(regionOf(176, 120), '夜魇下路');
+assert.equal(regionOf(124, 78), '天辉下路');
+assert.equal(regionOf(62, 62), '天辉野区', '离三条路都远就是野区');
+
+const play = summarizePlayback(playback)!;
+assert.equal(play.events.length, 2, '抱团与交战各并成一段，别把 15 秒一格拆成十几条');
+assert.equal(play.events[0]?.kind, 'assemble');
+assert.equal(play.events[0]?.side, '天辉');
+assert.equal(play.events[0]?.region, '夜魇下路');
+assert.equal(play.events[0]?.heroes, 4);
+assert.equal(play.events[1]?.kind, 'fight');
+assert.equal(play.events[1]?.region, '中路河道');
+assert.equal(play.events[1]?.heroes, 3, '交战两侧各自的人数都要报出来');
+assert.equal(play.events[1]?.foeHeroes, 3);
+assert.ok((play.events[0]?.from ?? 0) < (play.events[1]?.from ?? 0), '事件要按时间排好');
+
+// 肉山只报「他在这个坑」的时间段，不报击杀；认不出阵营的眼位跳过。
+assert.equal(play.roshan[0]?.pit, '近端坑');
+assert.equal(play.roshan[0]?.from, 100);
+assert.equal(play.roshan[0]?.to, 120);
+assert.equal(play.wards.reduce((total, row) => total + row.count, 0), 3, 'side 为 null 的眼位不计入');
+assert.equal(play.wards.find((row) => row.side === '天辉')?.region, '夜魇下路', '进攻视野要能看出来');
+
+// 没有位置数据 → null，调用方按「这局没有轨迹」处理。
+assert.equal(summarizePlayback({ ...playback, players: [] }), null);
 
 const messages = buildAnalysisMessages(input);
 assert.equal(messages.length, 2, '一条 system、一条 user');
@@ -190,8 +272,21 @@ assert.match(user!.content, /每 10 分钟的净变化/, '要按段给出净变�
 assert.match(user!.content, /10–12 分钟：经济 \+12,000/, '段的收尾要用真实结束分钟');
 assert.match(user!.content, /当时天辉经济 \+6,000/, '推塔那一行要带上当时的曲线读数');
 assert.match(user!.content, /两队合计/, '要有队与队的合计，逐人表看不出谁在扛输出');
-assert.match(user!.content, /只有「结果与读数」，没有逐次击杀/, '要交代事件流缺失，别让它假装知道过程');
+assert.match(user!.content, /关键道具：狂战斧 6:40、黑皇杖 20:00/, '成型件要带购买时间，出装顺序说明打法窗口');
+assert.match(user!.content, /没有逐次击杀与施法的时间点/, '要交代事件流缺失，别让它假装知道过程');
+assert.doesNotMatch(user!.content, /打法（来自逐秒位置/, '没有轨迹数据时不该出现打法那一段');
+assert.match(user!.content, /没有回放轨迹数据/, '没有轨迹时要说明，并提醒别编位置与时间点');
 assert.ok(!/undefined|NaN/.test(user!.content), '提示词里不许出现 undefined/NaN');
+
+// 有轨迹时：打法那一段要真的带上去，并且把「推不出谁先手」写进限制里。
+const playUser = buildAnalysisMessages(input, play)[1]!.content;
+assert.match(playUser, /打法（来自逐秒位置/, '有轨迹时要给出打法那一段');
+assert.match(playUser, /天辉 4 人聚在「夜魇下路」/);
+assert.match(playUser, /双方在「中路河道」撞上（天辉 3 人 \/ 夜魇 3 人）/);
+assert.match(playUser, /肉山位置采样/);
+assert.match(playUser, /插眼落点/);
+assert.match(playUser, /没有击杀与施法事件/, '要把方法论边界写清：位置推不出谁先手');
+assert.ok(!/undefined|NaN/.test(playUser), '带轨迹时也不许出现 undefined/NaN');
 
 // 没有曲线 / 眼位时，那两块整段不出现，且要有说清限制的句子——不给模型留空位。
 const bareMessages = buildAnalysisMessages(bare);
@@ -233,6 +328,10 @@ assert.match(replayPage, /<MatchAnalysis review=\{[^}]+\} heroes=\{[^}]+\} items
 assert.match(panel, /id="ai"/, '面板要带 #ai 锚点，别处的入口才能跳过来');
 assert.match(panel, /inlineJson\(data\)/, '摘要要内联进页面，别让浏览器再取一份');
 assert.match(panel, /href="\/settings\/"/, '没配模型时要能给出去设置页的路');
+// 「怎么打的」要真的接上：轨迹聚成打法摘要，再带进提示词，接口复用现成那条。
+assert.match(script, /summarizePlayback/, '要真的把轨迹聚成打法摘要');
+assert.match(script, /\/api\/replay\/\$\{matchId\}/, '轨迹要复用现成的回放接口，别另开一条');
+assert.match(script, /buildAnalysisMessages\(data, playback\)/, '聚好的打法要带进提示词');
 
 const panelIds = new Set([...panel.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]));
 const queriedIds = new Set([...script.matchAll(/element<[^>]*>\('([^']+)'\)/g)].map((match) => match[1]));

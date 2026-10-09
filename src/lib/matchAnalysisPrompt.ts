@@ -5,6 +5,7 @@
 import type { PromptMessage } from './aiChat.ts';
 import { formatElapsed } from './format.ts';
 import type { AnalysisLead, AnalysisMoment, MatchAnalysisInput } from './matchAnalysis.ts';
+import type { PlaybackSummary } from './playbackSummary.ts';
 
 /**
  * 赛后分析的提示词与回复解析。**这一层不联网**，只管把 `matchAnalysis` 收好的那份摘要
@@ -33,7 +34,8 @@ export function buildAnalysisSystemPrompt(): string {
 		'   不写「18 分钟经济 +3,604」。只把表格念一遍等于什么也没说。',
 		'5. 先给转折点：找出本局最关键的一次转折，说清发生在第几分钟、曲线在那一刻怎么变、最可能的原因是什么。',
 		'   能用的机制只有这些：对线结果、经济与经验差的分岔、建筑倒塌的时间与顺序、核心/辅助的死亡数、',
-		'   视野与反眼、输出与治疗的分布、号位与分路。**数据不足以判断原因时，直说「看不出具体是哪一波」**，',
+		'   视野与反眼、输出与治疗的分布、号位与分路、关键装备的成型时间，以及回放轨迹里能看出的集结与推进',
+		'   （有轨迹数据时才有）。**数据不足以判断原因时，直说「看不出具体是哪一波」**，',
 		'   不要用"一般来说""通常"补一个原因。',
 		'6. 负方怎么才能赢：给**可执行的动作**，每条绑定本局的具体弱点——该控哪片视野、什么时候该开雾或打盾、',
 		'   该拖到什么时间点、该保谁、该断谁的刷钱。不要写「加强视野」「减少失误」这种放到哪一局都成立的话。',
@@ -81,10 +83,47 @@ function renderTeam(rows: MatchAnalysisInput['players']): string {
 		.map((row) => {
 			const imp = row.imp === null ? '' : ` / IMP ${row.imp.toFixed(1)}`;
 			const items = row.items.length > 0 ? `\n  装备：${row.items.join('、')}` : '';
+			// 成型件的**时间**单独一行：出装顺序说明打法窗口（先 BKB 还是先跳刀、几十分钟才敢接团）。
+			const keyItems = row.keyItems.length > 0 ? `\n  关键道具：${row.keyItems.map((item) => `${item.name} ${formatElapsed(item.time)}`).join('、')}` : '';
 			// 号位与分路是复盘的关键背景：谁该做视野、谁该带线、谁对线被压在哪儿，都要靠它定位。
-			return `- ${row.position} · ${row.lane} · ${row.hero}（${row.name}）：${row.kills}/${row.deaths}/${row.assists}，经济 ${num(row.networth)}（GPM ${row.gpm} / XPM ${row.xpm}），等级 ${row.level}，正补 ${row.lastHits} / 反补 ${row.denies}，对英雄伤害 ${num(row.heroDamage)} / 对建筑伤害 ${num(row.towerDamage)} / 治疗 ${num(row.heroHealing)}${imp}${items}`;
+			return `- ${row.position} · ${row.lane} · ${row.hero}（${row.name}）：${row.kills}/${row.deaths}/${row.assists}，经济 ${num(row.networth)}（GPM ${row.gpm} / XPM ${row.xpm}），等级 ${row.level}，正补 ${row.lastHits} / 反补 ${row.denies}，对英雄伤害 ${num(row.heroDamage)} / 对建筑伤害 ${num(row.towerDamage)} / 治疗 ${num(row.heroHealing)}${imp}${items}${keyItems}`;
 		})
 		.join('\n');
+}
+
+/** 打法那一段：把回放里聚合出来的事件摆成几行，时间用 `mm:ss`。 */
+function renderPlayback(playback: PlaybackSummary): string {
+	const lines: string[] = [
+		`打法（来自逐秒位置的回放数据，每 ${playback.stepSeconds} 秒采样一次，共 ${num(playback.heroSamples)} 个位置点）：`,
+	];
+	if (playback.events.length === 0) {
+		lines.push('- 这一段里没有出现明显的集结或交战（十个人始终比较分散）。');
+	} else {
+		lines.push(
+			...playback.events.map((event) => {
+				const range = `${formatElapsed(event.from)}–${formatElapsed(event.to)}`;
+				if (event.kind === 'fight') return `- ${range} 双方在「${event.region}」撞上（天辉 ${event.heroes} 人 / 夜魇 ${event.foeHeroes} 人）`;
+				return `- ${range} ${event.side} ${event.heroes} 人聚在「${event.region}」（对面这一带只有 ${event.foeHeroes} 人）`;
+			}),
+		);
+	}
+	if (playback.roshan.length > 0) {
+		lines.push(
+			`肉山位置采样（**不是击杀时间**，只能当「他这段时间还在这个坑」看）：${playback.roshan
+				.map((window) => `${window.pit} ${formatElapsed(window.from)}–${formatElapsed(window.to)}`)
+				.join('；')}`,
+		);
+	}
+	if (playback.wards.length > 0) {
+		lines.push(
+			'插眼落点（按区域；进攻视野还是自家野区，看这一行）：',
+			...['天辉', '夜魇'].map((side) => {
+				const rows = playback.wards.filter((ward) => ward.side === side);
+				return `- ${side}：${rows.length > 0 ? rows.map((row) => `${row.region} ${row.count} 只`).join('、') : '无记录'}`;
+			}),
+		);
+	}
+	return lines.join('\n');
 }
 
 /**
@@ -93,7 +132,7 @@ function renderTeam(rows: MatchAnalysisInput['players']): string {
  * 每一块只在有数据时出现（眼位、曲线都是「有录像才有」），**不给模型留空位**——
  * 空着的字段它会拿"据说这局打了 60 分钟"这类印象来填。
  */
-export function buildAnalysisUserPrompt(input: MatchAnalysisInput): string {
+export function buildAnalysisUserPrompt(input: MatchAnalysisInput, playback?: PlaybackSummary | null): string {
 	const winner = input.winner ? `${input.winner}获胜（${input.winner === '天辉' ? input.radiantName : input.direName}）` : '上游还没给结果';
 	const radiantRows = input.players.filter((row) => row.side === '天辉');
 	const direRows = input.players.filter((row) => row.side === '夜魇');
@@ -169,18 +208,28 @@ export function buildAnalysisUserPrompt(input: MatchAnalysisInput): string {
 		);
 	}
 
+	// 打法那一段放在人数的后面：它回答的正是「这些人是怎么打起来的」，接在地图与账单之后最顺。
+	if (playback) lines.push('', renderPlayback(playback));
+
 	lines.push('', '口径与限制：', '- 数据来自 STRATZ 已解析的公开对局，胜负与全部数字都以它为准，不要另行推断。');
-	lines.push('- 上面只有「结果与读数」，没有逐次击杀、团战与道具购买的时间点；要归因请用曲线拐点、建筑时间轴与人员数据，归不了就明说。');
+	lines.push('- 物品只给了「成型件的购买时间」，没有逐次击杀与施法的时间点；要归因请用曲线拐点、建筑时间轴、出装时间与人员数据，归不了就明说。');
+	if (playback) {
+		lines.push(
+			'- 轨迹能看出「谁在哪一段时间聚到了哪一带」，但**没有击杀与施法事件**：谁先手、谁被秒、交了什么技能，这份数据都答不了，不要编。',
+		);
+	} else {
+		lines.push('- 这一局没有回放轨迹数据（STRATZ 只对下载过录像的近期对局提供），打法只能从建筑时间轴与人员数据反推，不要编出具体的位置与时间点。');
+	}
 	if (!input.curve) lines.push('- 这一局没有逐分钟曲线，节奏与转折只能从建筑时间轴和选手数据判断，不要编造时间点。');
 	if (!input.wards) lines.push('- 这一局没有眼位数据（未下载录像），视野这一角直接跳过，不要编。');
 
 	return lines.filter((line) => line !== '').join('\n');
 }
 
-export function buildAnalysisMessages(input: MatchAnalysisInput): PromptMessage[] {
+export function buildAnalysisMessages(input: MatchAnalysisInput, playback?: PlaybackSummary | null): PromptMessage[] {
 	return [
 		{ role: 'system', content: buildAnalysisSystemPrompt() },
-		{ role: 'user', content: buildAnalysisUserPrompt(input) },
+		{ role: 'user', content: buildAnalysisUserPrompt(input, playback) },
 	];
 }
 

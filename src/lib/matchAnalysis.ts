@@ -5,6 +5,7 @@
 import { laneLabel, laneOutcomeLabel, positionLabel } from './dotaLabels.ts';
 import { BARRACKS_PER_SIDE, MAP_BUILDINGS, TOWERS_PER_SIDE } from './dotaMap.ts';
 import type { HeroRef, ItemRef } from './gameRefs.ts';
+import { KEY_ITEM_COST } from './guideBuild.ts';
 import type { MatchReview, ReviewMinute, ReviewPlayer } from './matchReview.ts';
 
 /**
@@ -44,6 +45,13 @@ export interface AnalysisPlayerRow {
 	imp: number | null;
 	/** 出过的装备名（含背包与中立物品），认不出名字的格子丢掉。 */
 	items: string[];
+	/**
+	 * 成型件的**购买时间**（单价 ≥ `KEY_ITEM_COST`），按时间排好。
+	 *
+	 * 和 `items` 的区别就是那个时间：复盘里「BKB 26 分钟才有」与「一次都没出」是两回事，
+	 * 而这正好能把「什么时候有的关键道具」和曲线拐点、建筑倒塌对齐。
+	 */
+	keyItems: { name: string; time: number }[];
 }
 
 /** 某一刻的三条曲线读数。用来把「建筑什么时候倒」与「经济差什么时候翻」对上。 */
@@ -169,6 +177,25 @@ function itemNames(player: ReviewPlayer, items: Map<number, ItemRef>): string[] 
 	return names;
 }
 
+/**
+ * 成型件及其首次购买时间。
+ *
+ * 同一个 id 只留第一次：卖掉又买回来的大件不该在时间轴上出现两次，「成型」说的是第一次。
+ * 认不出名字或单价不够的（散件、消耗品）直接丢掉——这条口径与英雄攻略页共用
+ * `guideBuild.KEY_ITEM_COST`，免得两处各定一个阈值。
+ */
+function keyItems(player: ReviewPlayer, items: Map<number, ItemRef>): { name: string; time: number }[] {
+	const seen = new Set<number>();
+	const out: { name: string; time: number }[] = [];
+	for (const entry of player.purchases) {
+		const item = items.get(entry.itemId);
+		if (!item || item.cost < KEY_ITEM_COST || seen.has(entry.itemId)) continue;
+		seen.add(entry.itemId);
+		out.push({ name: item.name, time: entry.time });
+	}
+	return out;
+}
+
 function toRow(player: ReviewPlayer, heroes: Map<number, HeroRef>, items: Map<number, ItemRef>): AnalysisPlayerRow {
 	return {
 		name: player.name,
@@ -190,6 +217,7 @@ function toRow(player: ReviewPlayer, heroes: Map<number, HeroRef>, items: Map<nu
 		heroHealing: player.heroHealing,
 		imp: player.imp,
 		items: itemNames(player, items),
+		keyItems: keyItems(player, items),
 	};
 }
 
