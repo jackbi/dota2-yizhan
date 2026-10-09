@@ -1,6 +1,3 @@
-import type { ChatShape } from './draftPrompt.ts';
-import { DEFAULT_CHAT_SHAPE } from './draftPrompt.ts';
-
 /**
  * 服务商预设。
  *
@@ -15,6 +12,26 @@ import { DEFAULT_CHAT_SHAPE } from './draftPrompt.ts';
  * Chrome 内置模型（Gemini Nano）**不在这张表里**：它没有 HTTP 端点，走的是浏览器里的
  * `LanguageModel`，与本站「填一个地址直接发请求」的结构接不上。想接它得另写一条调用路径。
  */
+
+/**
+ * 请求形状：各服务商认的字段不一样，把差异收成三个开关。
+ *
+ * 默认那套是**最保守**的：只发 OpenAI 兼容的基础字段，不发任何一家专有的东西——专有字段
+ * 正是最容易被别家当未知参数拒掉的。具体谁用哪套见下面 `AI_PROVIDERS` 的表（值有实测依据）。
+ *
+ * 定义放在这一层而不是 `draftPrompt`：它是「按地址决定请求长什么样」的一部分，与预设表同源；
+ * 组装请求体的是 `aiChat.buildChatRequest`。
+ */
+export interface ChatShape {
+	/** 要不要发 DeepSeek 那套 `thinking: { type: 'disabled' }`。 */
+	thinking: boolean;
+	/** 输出上限写在哪个字段上。OpenAI 与 Grok 的新模型已经不认 `max_tokens`。 */
+	maxTokensField: 'max_tokens' | 'max_completion_tokens';
+	/** 发不发 `temperature`。部分推理模型只接受默认值，传了会被 400 拒掉。 */
+	temperature: boolean;
+}
+
+export const DEFAULT_CHAT_SHAPE: ChatShape = { thinking: false, maxTokensField: 'max_tokens', temperature: true };
 
 export interface AiProvider {
 	id: string;

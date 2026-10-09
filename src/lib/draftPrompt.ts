@@ -13,6 +13,7 @@ import type { RosterProfile } from './teamSignature.ts';
 import { signatureScopeLabel } from './teamSignature.ts';
 import { formatNet } from './draftLanes.ts';
 import type { DraftVerdict, VerdictRow } from './draftVerdict.ts';
+import type { PromptMessage } from './aiChat.ts';
 
 /**
  * 提示词与回复解析。**这一层不联网**，只管把打分层算出来的东西摆成模型好用的样子，
@@ -35,11 +36,6 @@ export const ADVICE_TARGET_COUNT = 3;
  * "对面该怎么走"（挑自己缺的位置、禁我们最想要的人）。
  */
 export type PromptRole = 'ours' | 'theirs';
-
-export interface PromptMessage {
-	role: 'system' | 'user';
-	content: string;
-}
 
 export interface PromptInput {
 	advice: Advice;
@@ -491,58 +487,6 @@ export function parseVerdictReply(raw: string): ParsedVerdict | null {
 	const summary = typeof body.summary === 'string' ? body.summary.trim() : '';
 	if (!summary && points.length === 0) return null;
 	return { summary, points: points.slice(0, 8) };
-}
-
-export interface ChatRequestOptions {
-	model: string;
-	messages: PromptMessage[];
-	/** 是否要求 JSON 输出。被 400 拒掉时调用方会去掉它重试。 */
-	jsonMode?: boolean;
-	maxTokens?: number;
-	/**
-	 * 请求形状，按服务商给（见 `aiProviders.shapeFor`）。不传就是下面那套最保守的默认值。
-	 *
-	 * 「被 400 拒掉」那条退让路径在调用方（`draftBoard` 的 `requestChat`）：它是一步步去掉
-	 * `response_format` 与 `temperature`，而不是换一家的形状。
-	 */
-	shape?: ChatShape;
-}
-
-/**
- * 请求形状：各服务商认的字段不一样，把差异收成三个开关。
- *
- * 默认那套是**最保守**的：只发 OpenAI 兼容的基础字段，不发任何一家专有的东西——专有字段
- * 正是最容易被别家当未知参数拒掉的。具体谁用哪套见 `aiProviders` 的表（那里的值有实测依据）。
- */
-export interface ChatShape {
-	/** 要不要发 DeepSeek 那套 `thinking: { type: 'disabled' }`。 */
-	thinking: boolean;
-	/** 输出上限写在哪个字段上。OpenAI 与 Grok 的新模型已经不认 `max_tokens`。 */
-	maxTokensField: 'max_tokens' | 'max_completion_tokens';
-	/** 发不发 `temperature`。部分推理模型只接受默认值，传了会被 400 拒掉。 */
-	temperature: boolean;
-}
-
-export const DEFAULT_CHAT_SHAPE: ChatShape = { thinking: false, maxTokensField: 'max_tokens', temperature: true };
-
-/**
- * 组装 `chat/completions` 请求体。
- *
- * DeepSeek 那一家**必须显式关掉思考**（形状里的 `thinking`）。这不是调优，是不关就没有结果：
- * `deepseek-flash` 默认开着思考，实测同样一条提示词下 900 的 token 上限全被 `reasoning_tokens`
- * 吃光，`content` 是空的（`finish_reason: length`）；把上限提到 4000 也一样空，耗时 21 秒。
- * 关掉之后 1.8 秒返回 288 个 token 的正常 JSON。
- */
-export function buildChatRequest(options: ChatRequestOptions): Record<string, unknown> {
-	const shape = options.shape ?? DEFAULT_CHAT_SHAPE;
-	return {
-		model: options.model,
-		messages: options.messages,
-		...(shape.temperature ? { temperature: 0.3 } : {}),
-		[shape.maxTokensField]: options.maxTokens ?? ADVICE_MAX_TOKENS,
-		...(options.jsonMode === false ? {} : { response_format: { type: 'json_object' } }),
-		...(shape.thinking ? { thinking: { type: 'disabled' } } : {}),
-	};
 }
 
 export interface ParsedPick {

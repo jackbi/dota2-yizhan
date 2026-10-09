@@ -18,6 +18,8 @@ import { readFileSync } from 'node:fs';
 
 const page = readFileSync(new URL('../src/pages/draft.astro', import.meta.url), 'utf8');
 const script = readFileSync(new URL('../src/scripts/draftBoard.ts', import.meta.url), 'utf8');
+/** 模型请求那一层搬去了 `lib/aiChat`（draft 与赛后分析共用），超时与请求头在那里断言。 */
+const aiChat = readFileSync(new URL('../src/lib/aiChat.ts', import.meta.url), 'utf8');
 
 /** 页面上的 id。 */
 const pageIds = new Set([...page.matchAll(/\sid="([^"]+)"/g)].map((match) => match[1]));
@@ -163,11 +165,12 @@ assert.match(script, /if \(sameAiConfig\(next, ai\)\) return;/, '重读配置后
 	'复盘、建议与整局预测三条 await 之后都要丢弃过期回复',
 	);
 // 地址可填之后，填错一个地址就是一次挂起的请求：自动出招会停在那儿，盘面推不动。
-assert.match(script, /signal: AbortSignal\.timeout\(MODEL_TIMEOUT_MS\)/, '模型请求必须带超时，超时后走原有的失败回落');
+assert.match(aiChat, /signal: AbortSignal\.timeout\(/, '模型请求必须带超时，超时后走原有的失败回落');
 // 三条调用路径走同一个入口：退让顺序、超时、按服务商拼的请求头都只写一遍。
-assert.match(script, /async function requestChat\(/, '三条模型调用要走同一个 requestChat，别各写一遍');
-assert.match(script, /headersFor\(ai\.baseUrl, ai\.apiKey\)/, '请求头要按服务商拼（Anthropic 那个跨域开关头在里面）');
-assert.match(script, /shapeFor\(ai\.baseUrl\)/, '请求形状（思考开关、上限字段名）要按地址决定');
+assert.match(script, /import \{ chatErrorMessage, requestChat \} from '\.\.\/lib\/aiChat\.ts';/, '模型请求要走共用的 lib/aiChat');
+assert.ok(!/async function requestChat\(/.test(script), '本页不该再自己实现一份 requestChat');
+assert.match(aiChat, /headersFor\(config\.baseUrl, config\.apiKey\)/, '请求头要按服务商拼（Anthropic 那个跨域开关头在里面）');
+assert.match(aiChat, /shapeFor\(config\.baseUrl\)/, '请求形状（思考开关、上限字段名）要按地址决定');
 
 /**
  * 模型配置只住在 `/settings`。

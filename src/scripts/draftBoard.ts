@@ -6,9 +6,9 @@ import type { DraftData } from '../lib/draftData.ts';
 import { ATTRIBUTE_ICON } from '../lib/heroApi';
 import {
 	ADVICE_TARGET_COUNT,
+	ADVICE_MAX_TOKENS,
 	PREDICTION_MAX_TOKENS,
 	buildAdviceMessages,
-	buildChatRequest,
 	buildPredictionMessages,
 	parsePredictionReplyDetailed,
 	buildVerdictMessages,
@@ -16,10 +16,9 @@ import {
 	parseVerdictReply,
 	VERDICT_MAX_TOKENS,
 } from '../lib/draftPrompt.ts';
-import type { PromptMessage } from '../lib/draftPrompt.ts';
 import type { AiConfig } from '../lib/aiConfig.ts';
-import { AI_STORE_KEY, aiStateLabel, endpointOf, isConfigured, loadAiConfig, sameAiConfig, sameAiTarget } from '../lib/aiConfig.ts';
-import { headersFor, shapeFor } from '../lib/aiProviders.ts';
+import { AI_STORE_KEY, aiStateLabel, isConfigured, loadAiConfig, sameAiConfig, sameAiTarget } from '../lib/aiConfig.ts';
+import { chatErrorMessage, requestChat } from '../lib/aiChat.ts';
 import { adviceNarrative, opponentMoveReason } from '../lib/draftNarrative.ts';
 import type { Advice, AdviceCandidate } from '../lib/draftScore.ts';
 import { advise } from '../lib/draftScore.ts';
@@ -56,34 +55,6 @@ import { formatNet } from '../lib/draftLanes.ts';
  */
 
 const STORE_KEY = 'd2s-draft-v1';
-/**
- * 模型请求的超时。
- *
- * 加了「地址可填」之后这条才变成必需：地址写错、或者服务商那边黑洞掉连接时，`fetch` 会一直挂着，
- * 而自动出招就卡在这上面——盘面停在「正在看数据…」，看得见却推不动，还以为是页面坏了。
- * 30 秒的依据：实测同一条提示词关掉思考后 1.8 秒返回，给慢服务商留足余量，又不至于把一次
- * 点错地址变成永久卡死。超时后走的是既有的失败路径（退回本地依据）。
- */
-const MODEL_TIMEOUT_MS = 30_000;
-
-/**
- * 请求体被 400 拒掉时的退让顺序：每步只去掉一个「不是每家都认」的可选参数。
- *
- * 1. `response_format`（要求 JSON 输出）——不认它的服务商会直接 400；
- * 2. `temperature`——部分推理模型只接受默认值。
- *
- * 换来换去都在参数上，不换服务商的形状（那由 `aiProviders` 的表决定）。解析层本来就能处理
- * 带代码块围栏的回复，所以退到最后一步功能仍然成立。
- */
-const CHAT_FALLBACKS = [
-	{ jsonMode: true, temperature: true },
-	{ jsonMode: false, temperature: true },
-	{ jsonMode: false, temperature: false },
-] as const;
-
-/** 一次模型调用的结果。`status` 为 0 表示请求根本没发出去（网络、跨域或超时）。 */
-type ChatReply = { ok: true; content: string; finishReason: string } | { ok: false; status: number; text: string };
-
 const ATTR_LABEL: Record<string, string> = { STR: '力量', AGI: '敏捷', INT: '智力', UNI: '全才' };
 const ATTR_ORDER = ['STR', 'AGI', 'INT', 'UNI'];
 
@@ -217,8 +188,6 @@ if (data) {
 	let direTeamId = typeof stored.direTeam === 'string' ? stored.direTeam : '';
 	/** 模型配置。只存在这台浏览器；形状与读写见 lib/aiConfig.ts。 */
 	let ai: AiConfig = loadAiConfig();
-	/** 按地址挑出的请求形状：DeepSeek 要关思考、OpenAI/Grok 的上限字段不一样，详见 lib/aiProviders.ts。 */
-	let shape = shapeFor(ai.baseUrl);
 	/**
 	 * 用户对「对面交给 AI」的选择。
 	 *
@@ -1091,7 +1060,7 @@ if (data) {
 					foeTeam: teamNameOf(otherSide(mySide)),
 					foeForm,
 				});
-				const reply = await requestChat(messages, VERDICT_MAX_TOKENS);
+				const reply = await requestChat(ai, messages, { maxTokens: VERDICT_MAX_TOKENS });
 				// 配置在这 30 秒里被别的标签页改了：这份回复是按旧配置问的，不能再写回面板。
 				if (generation !== aiGeneration) return;
 				if (!reply.ok) {
@@ -1331,7 +1300,7 @@ if (data) {
 					signatures: signatures(),
 					forms,
 				});
-				const reply = await requestChat(messages, PREDICTION_MAX_TOKENS);
+				const reply = await requestChat(ai, messages, { maxTokens: PREDICTION_MAX_TOKENS });
 				if (generation !== aiGeneration) return;
 				if (!reply.ok) {
 					if (predictStatus) {
@@ -1772,7 +1741,7 @@ if (data) {
 				'theirs',
 			);
 			// 网络、限流、超时、解析失败都退回数据决策，别让对战卡在这里——所以这里一律返回 null。
-			const reply = await requestChat(messages);
+			const reply = await requestChat(ai, messages, { maxTokens: ADVICE_MAX_TOKENS });
 			if (!reply.ok) return null;
 			const parsed = parseAdviceReply(reply.content, allowedHeroIds(enemyAdvice));
 			if (!parsed) return null;
@@ -2055,7 +2024,6 @@ if (data) {
 				renderPrediction();
 			}
 			ai = next;
-			shape = shapeFor(ai.baseUrl);
 			aiSide = isConfigured(ai) && aiSidePref;
 			if (aiSideInput) aiSideInput.checked = aiSide;
 			syncAiControls();
@@ -2066,51 +2034,6 @@ if (data) {
 
 		function setStatus(text: string): void {
 			if (adviceStatus) adviceStatus.textContent = text;
-		}
-
-		/**
-		 * 发一次模型请求。返回 `ok: false` 时 `status` 是 HTTP 状态码（0 表示没发出去）。
-		 *
-		 * 四条调用路径（建议解释、对手出招、复盘、整局预测）走的是同一段：退让顺序、超时、
-		 * 请求头都在这里，免得四处各写一遍、改了一处漏三处。
-		 */
-		async function requestChat(messages: PromptMessage[], maxTokens?: number): Promise<ChatReply> {
-			let last: { status: number; text: string } = { status: 0, text: '' };
-			for (const step of CHAT_FALLBACKS) {
-				let response: Response;
-				try {
-					response = await fetch(endpointOf(ai), {
-						method: 'POST',
-						// 请求头按服务商拼：Anthropic 那个跨域开关头就挂在这里。
-						headers: headersFor(ai.baseUrl, ai.apiKey),
-						signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
-						body: JSON.stringify(
-							buildChatRequest({
-								model: ai.model,
-								messages,
-								jsonMode: step.jsonMode,
-								maxTokens,
-								shape: { ...shape, temperature: step.temperature },
-							}),
-						),
-					});
-				} catch {
-					// 网络、跨域、超时：换参数再试没有意义，直接交给调用方去说明。
-					return { ok: false, status: 0, text: '' };
-				}
-				if (response.ok) {
-					const body = (await response.json().catch(() => null)) as
-						| { choices?: { message?: { content?: string }; finish_reason?: string }[] }
-						| null;
-					const choice = body?.choices?.[0];
-					return { ok: true, content: choice?.message?.content ?? '', finishReason: choice?.finish_reason ?? '' };
-				}
-				const text = await response.text().catch(() => '');
-				// 只有「参数不认」这类 400 值得退一步；key、额度、限流换了参数也一样。
-				if (response.status !== 400) return { ok: false, status: response.status, text };
-				last = { status: response.status, text };
-			}
-			return { ok: false, status: last.status, text: last.text };
 		}
 
 		/**
@@ -2146,21 +2069,11 @@ if (data) {
 			if (adviceAi) adviceAi.disabled = true;
 			const generation = aiGeneration;
 			try {
-				const reply = await requestChat(messages);
+				const reply = await requestChat(ai, messages, { maxTokens: ADVICE_MAX_TOKENS });
 				// 与复盘那条同理：配置在飞行中被改了，这份按旧配置问来的解释不能挂到面板上。
 				if (generation !== aiGeneration) return;
 				if (!reply.ok) {
-					setStatus(
-						reply.status === 0
-							? '请求发不出去：网络、代理，或这家服务没放开跨域'
-							: reply.status === 401
-							? 'key 无效或已过期'
-							: reply.status === 402
-								? '余额不足或额度用尽'
-								: reply.status === 429
-									? '触发限流，稍后再试'
-									: `请求失败（HTTP ${reply.status}）${reply.text.slice(0, 80)}`,
-					);
+					setStatus(chatErrorMessage(reply));
 					return;
 				}
 				const content = reply.content;
